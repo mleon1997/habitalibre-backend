@@ -1,0 +1,15 @@
+# Dependencias y builds
+node_modules/
+dist/
+build/
+
+# Entornos y llaves
+.env
+.env.*
+!.env.example
+
+# Logs y sistema
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
