@@ -9,10 +9,14 @@
     "test": "echo \"No tests yet\" && exit 0"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "dayjs": "^1.11.19",
+    "express": "^5.1.0",
     "get-stream": "^9.0.1",
+    "helmet": "^8.1.0",
     "html-pdf-node": "^1.0.8",
     "jspdf": "^3.0.3",
+    "mongoose": "^8.19.3",
     "nodemailer": "^7.0.10",
     "pdfkit": "^0.17.2"
   }
