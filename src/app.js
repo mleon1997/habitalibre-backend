@@ -31,11 +31,26 @@ mongoose
    =========================================================== */
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173", // Front local
-      "https://habitalibre.com", // dominio producción (ajústalo cuando despliegues)
-    ],
+    origin: (origin, callback) => {
+      const allowed = [
+        'http://localhost:5173',
+        'https://habitalibre.com',
+        'https://www.habitalibre.com',
+        // opcional: si usas previews de Vercel
+        /\.vercel\.app$/
+      ];
+
+      // Permite clientes sin origin (curl/healthchecks) o si hace match exacto/regex
+      if (!origin ||
+          allowed.includes(origin) ||
+          allowed.some((rule) => rule instanceof RegExp && rule.test(origin))) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS bloqueado para origen: ${origin}`));
+    },
     credentials: true,
+    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+    allowedHeaders: ['Content-Type','Authorization']
   })
 );
 app.use(express.json());

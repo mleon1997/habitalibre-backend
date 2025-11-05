@@ -1,6 +1,7 @@
 // src/server.js
 import app from "./app.js";
 
+
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || "0.0.0.0"; // <- asegura que escuche en todas las interfaces
 
