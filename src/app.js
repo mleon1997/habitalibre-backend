@@ -3,6 +3,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose"; // 👈 asegúrate de importar mongoose
+import 'dotenv/config';
+
 
 // Rutas
 import diagRoutes from "./routes/diag.routes.js";
