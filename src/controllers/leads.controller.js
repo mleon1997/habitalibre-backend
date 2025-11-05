@@ -115,13 +115,20 @@ export async function crearLead(req, res) {
       estado: "nuevo",
     });
 
-    // 4) Enviar correos (en paralelo). OJO: el PDF lo genera internamente mailer.js
+    // 4) Enviar correos (no bloquear respuesta, pero loggear resultado detallado)
     Promise.allSettled([
       enviarCorreoLead(nuevoLead, resultado),     // notificación interna
       enviarCorreoCliente(nuevoLead, resultado),  // correo al cliente + PDF adjunto
-    ]).catch((err) =>
-      console.error("⚠️ Error en envío de correos:", err?.message || err)
-    );
+    ]).then((results) => {
+      results.forEach((r, i) => {
+        const cual = i === 0 ? "enviarCorreoLead" : "enviarCorreoCliente";
+        if (r.status === "rejected") {
+          console.error(`❌ Error en ${cual}:`, r.reason?.message || r.reason);
+        } else {
+          console.log(`✅ ${cual} enviado correctamente`);
+        }
+      });
+    });
 
     const t = ((Date.now() - t0) / 1000).toFixed(2);
     return res.json({
@@ -132,9 +139,7 @@ export async function crearLead(req, res) {
     });
   } catch (err) {
     console.error("❌ Error creando lead:", err);
-    res
-      .status(500)
-      .json({ ok: false, error: "Error interno al crear lead" });
+    res.status(500).json({ ok: false, error: "Error interno al crear lead" });
   }
 }
 
