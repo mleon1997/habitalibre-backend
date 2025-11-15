@@ -1,5 +1,6 @@
 // src/utils/mailer.js
 import nodemailer from "nodemailer";
+import PDFDocument from "pdfkit";
 
 /* ===========================================================
    Variables de entorno
@@ -43,8 +44,8 @@ function getTransporter() {
    Remitente FINAL (siempre hello@habitalibre.com)
    =========================================================== */
 const FINAL_FROM_EMAIL = FROM_EMAIL || SMTP_USER || "hello@habitalibre.com";
-const FINAL_FROM_NAME  = FROM_NAME  || "HabitaLibre";
-const FINAL_FROM       = `"${FINAL_FROM_NAME}" <${FINAL_FROM_EMAIL}>`;
+const FINAL_FROM_NAME = FROM_NAME || "HabitaLibre";
+const FINAL_FROM = `"${FINAL_FROM_NAME}" <${FINAL_FROM_EMAIL}>`;
 
 console.log("FINAL_FROM usándose para todos los correos =>", FINAL_FROM);
 
@@ -83,7 +84,7 @@ export async function sendTestEmail(to) {
   const tx = getTransporter();
 
   const info = await tx.sendMail({
-    from: FINAL_FROM,          // 👈 remitente SIEMPRE de tu dominio
+    from: FINAL_FROM, // 👈 remitente SIEMPRE de tu dominio
     to,
     subject: "Prueba HabitaLibre – SMTP OK",
     text: "Si ves este correo, el SMTP de HabitaLibre está funcionando correctamente.",
@@ -99,7 +100,7 @@ export async function sendTestEmail(to) {
 }
 
 /* ===========================================================
-   Plantilla simple para el cliente
+   Helpers para HTML (cliente e interno)
    =========================================================== */
 function htmlResumenCliente(lead = {}, resultado = {}) {
   const safe = (n) =>
@@ -153,9 +154,6 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   `;
 }
 
-/* ===========================================================
-   Plantilla simple interna (equipo HL)
-   =========================================================== */
 function htmlInterno(lead = {}, resultado = {}) {
   const row = (k, v) =>
     `<tr><td style="padding:6px 8px"><b>${k}:</b></td><td style="padding:6px 8px">${
@@ -200,7 +198,66 @@ function htmlInterno(lead = {}, resultado = {}) {
 }
 
 /* ===========================================================
-   💌 enviarCorreoCliente: correo al lead
+   🧾 Generar PDF resumen (Buffer)
+   =========================================================== */
+async function generarPDFResumenBuffer(lead = {}, resultado = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: "A4", margin: 40 });
+      const chunks = [];
+
+      doc.on("data", (chunk) => chunks.push(chunk));
+      doc.on("end", () => resolve(Buffer.concat(chunks)));
+      doc.on("error", (err) => reject(err));
+
+      const safe = (n) =>
+        typeof n === "number" ? n.toLocaleString("en-US") : n ?? "—";
+      const pct = (n) =>
+        typeof n === "number" ? `${(n * 100).toFixed(1)} %` : "—";
+
+      doc
+        .fontSize(18)
+        .text("Resumen de precalificación HabitaLibre", { align: "center" });
+      doc.moveDown();
+
+      doc.fontSize(12);
+      doc.text(`Nombre: ${lead?.nombre || "—"}`);
+      doc.text(`Email: ${lead?.email || "—"}`);
+      doc.text(`Teléfono: ${lead?.telefono || "—"}`);
+      doc.text(`Ciudad: ${lead?.ciudad || "—"}`);
+      doc.moveDown();
+
+      doc.text(
+        `Producto: ${
+          resultado?.productoElegido || resultado?.tipoCreditoElegido || "—"
+        }`
+      );
+      doc.text(`Capacidad de pago: $ ${safe(resultado?.capacidadPago)}`);
+      doc.text(`Cuota referencial: $ ${safe(resultado?.cuotaEstimada)}`);
+      doc.text(`Stress (+2%): $ ${safe(resultado?.cuotaStress)}`);
+      doc.text(`LTV estimado: ${pct(resultado?.ltv)}`);
+      doc.text(`DTI con hipoteca: ${pct(resultado?.dtiConHipoteca)}`);
+      doc.text(`Monto máximo préstamo: $ ${safe(resultado?.montoMaximo)}`);
+      doc.text(
+        `Precio máximo vivienda: $ ${safe(resultado?.precioMaxVivienda)}`
+      );
+
+      doc.moveDown();
+      doc.fontSize(10).text(
+        "Este resultado es referencial y no constituye una oferta de crédito. " +
+          "Sujeto a validación documental y políticas de cada entidad.",
+        { align: "left" }
+      );
+
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/* ===========================================================
+   💌 enviarCorreoCliente: correo al lead + PDF adjunto
    =========================================================== */
 export async function enviarCorreoCliente(lead, resultado) {
   if (!lead?.email) {
@@ -210,6 +267,13 @@ export async function enviarCorreoCliente(lead, resultado) {
 
   const tx = getTransporter();
 
+  let pdfBuffer = null;
+  try {
+    pdfBuffer = await generarPDFResumenBuffer(lead, resultado);
+  } catch (err) {
+    console.error("❌ Error generando PDF para cliente:", err);
+  }
+
   const info = await tx.sendMail({
     from: FINAL_FROM, // 👈 SIEMPRE hello@habitalibre.com
     to: lead.email,
@@ -218,17 +282,34 @@ export async function enviarCorreoCliente(lead, resultado) {
       : undefined,
     subject: "Tu precalificación HabitaLibre está lista 🏡",
     html: htmlResumenCliente(lead, resultado),
-    text: "Gracias por usar el simulador de HabitaLibre. Revisa tu correo en formato HTML.",
+    text:
+      "Gracias por usar el simulador de HabitaLibre. " +
+      "Adjuntamos un PDF con el resumen de tu precalificación.",
+    attachments: pdfBuffer
+      ? [
+          {
+            filename: "HabitaLibre-precalificacion.pdf",
+            content: pdfBuffer,
+          },
+        ]
+      : [],
   });
 
   return info;
 }
 
 /* ===========================================================
-   💌 enviarCorreoLead: correo interno al equipo
+   💌 enviarCorreoLead: correo interno al equipo (sin / con PDF opcional)
    =========================================================== */
 export async function enviarCorreoLead(lead, resultado) {
   const tx = getTransporter();
+
+  let pdfBuffer = null;
+  try {
+    pdfBuffer = await generarPDFResumenBuffer(lead, resultado);
+  } catch (err) {
+    console.error("❌ Error generando PDF para interno:", err);
+  }
 
   const info = await tx.sendMail({
     from: FINAL_FROM, // 👈 remitente autenticado
@@ -238,6 +319,14 @@ export async function enviarCorreoLead(lead, resultado) {
     replyTo: lead?.email
       ? `"${lead?.nombre || "Cliente"}" <${lead.email}>`
       : undefined,
+    attachments: pdfBuffer
+      ? [
+          {
+            filename: "HabitaLibre-precalificacion.pdf",
+            content: pdfBuffer,
+          },
+        ]
+      : [],
   });
 
   return info;
