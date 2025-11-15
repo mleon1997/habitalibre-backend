@@ -1,6 +1,6 @@
 // src/utils/mailer.js
 import nodemailer from "nodemailer";
-import PDFDocument from "pdfkit";
+import { generarPDFLeadAvanzado } from "./pdf.js";
 
 /* ===========================================================
    Variables de entorno
@@ -84,7 +84,7 @@ export async function sendTestEmail(to) {
   const tx = getTransporter();
 
   const info = await tx.sendMail({
-    from: FINAL_FROM, // 👈 remitente SIEMPRE de tu dominio
+    from: FINAL_FROM,
     to,
     subject: "Prueba HabitaLibre – SMTP OK",
     text: "Si ves este correo, el SMTP de HabitaLibre está funcionando correctamente.",
@@ -100,164 +100,219 @@ export async function sendTestEmail(to) {
 }
 
 /* ===========================================================
-   Helpers para HTML (cliente e interno)
+   Helpers de formato para HTML
+   =========================================================== */
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+const money = (n, d = 2) =>
+  isNum(n)
+    ? `$ ${Number(n).toLocaleString("es-EC", {
+        minimumFractionDigits: d,
+        maximumFractionDigits: d,
+      })}`
+    : "—";
+const pct = (p, d = 1) => (isNum(p) ? `${(p * 100).toFixed(d)} %` : "—");
+
+/* ===========================================================
+   HTML world-class para el CLIENTE
    =========================================================== */
 function htmlResumenCliente(lead = {}, resultado = {}) {
-  const safe = (n) =>
-    typeof n === "number" ? n.toLocaleString("en-US") : n ?? "—";
-  const pct = (n) =>
-    typeof n === "number" ? `${(n * 100).toFixed(1)} %` : "—";
+  const nombre = lead?.nombre?.split(" ")[0] || "¡Hola!";
+  const producto =
+    resultado?.productoElegido || resultado?.tipoCreditoElegido || "Crédito hipotecario";
+  const capacidad = money(resultado?.capacidadPago);
+  const cuota = money(resultado?.cuotaEstimada);
+  const stress = money(resultado?.cuotaStress);
+  const ltv = pct(resultado?.ltv);
+  const dti = pct(resultado?.dtiConHipoteca);
+  const monto = money(resultado?.montoMaximo);
+  const precio = money(resultado?.precioMaxVivienda);
 
   return `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45;color:#0f172a">
-      <h2 style="margin:0 0 6px">¡Hola ${
-        lead?.nombre?.split(" ")[0] || "!"
-      } 👋</h2>
-      <p>Gracias por usar el simulador de <strong>HabitaLibre</strong>. Este es tu resumen tentativo:</p>
+  <div style="margin:0;padding:0;background:#020617;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#020617;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:640px;background:#020617;color:#e5e7eb;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+            <tr>
+              <td style="padding:0 24px 16px 24px;" align="left">
+                <div style="font-size:13px;color:#64748b;margin-bottom:4px;">HabitaLibre · Resumen de precalificación</div>
+                <div style="font-size:24px;font-weight:600;color:#e5e7eb;">${nombre}, tu resultado ya está listo 🏡</div>
+              </td>
+            </tr>
 
-      <table cellpadding="8" cellspacing="0" style="border-collapse:collapse;background:#f8fafc;border-radius:10px">
-        <tr><td><b>Producto</b></td><td>${
-          resultado?.productoElegido || resultado?.tipoCreditoElegido || "—"
-        }</td></tr>
-        <tr><td><b>Capacidad de pago</b></td><td>$ ${safe(
-          resultado?.capacidadPago
-        )}</td></tr>
-        <tr><td><b>Cuota referencial</b></td><td>$ ${safe(
-          resultado?.cuotaEstimada
-        )}</td></tr>
-        <tr><td><b>Stress (+2%)</b></td><td>$ ${safe(
-          resultado?.cuotaStress
-        )}</td></tr>
-        <tr><td><b>LTV estimado</b></td><td>${pct(resultado?.ltv)}</td></tr>
-        <tr><td><b>DTI con hipoteca</b></td><td>${pct(
-          resultado?.dtiConHipoteca
-        )}</td></tr>
-        <tr><td><b>Monto préstamo máx.</b></td><td>$ ${safe(
-          resultado?.montoMaximo
-        )}</td></tr>
-        <tr><td><b>Precio máx. vivienda</b></td><td>$ ${safe(
-          resultado?.precioMaxVivienda
-        )}</td></tr>
-      </table>
+            <!-- Card principal -->
+            <tr>
+              <td style="padding:0 16px 24px 16px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+                  style="border-radius:24px;background:radial-gradient(circle at 0 0,#4f46e5,#0f172a);padding:24px;box-shadow:0 20px 45px rgba(15,23,42,0.7);">
+                  <tr>
+                    <td style="color:#e5e7eb;font-size:14px;">
+                      <div style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#c7d2fe;margin-bottom:4px;">
+                        Precalificación resumida
+                      </div>
+                      <div style="font-size:18px;font-weight:600;margin-bottom:12px;">${producto}</div>
+                      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;">
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
+                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Capacidad de pago</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${capacidad}</div>
+                        </div>
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
+                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Cuota referencial</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${cuota}</div>
+                        </div>
+                      </div>
 
-      <p style="margin-top:12px;font-size:12px;color:#475569">
-        Este resultado es referencial y no constituye una oferta de crédito.
-        Sujeto a validación documental y políticas de cada entidad.
-      </p>
+                      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:10px;">
+                        <div style="flex:1 1 160px;min-width:160px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
+                          <div style="font-size:11px;color:#9ca3af;">Stress (+2%)</div>
+                          <div style="font-size:14px;font-weight:500;margin-top:2px;">${stress}</div>
+                        </div>
+                        <div style="flex:1 1 140px;min-width:140px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
+                          <div style="font-size:11px;color:#9ca3af;">LTV estimado</div>
+                          <div style="font-size:14px;font-weight:500;margin-top:2px;">${ltv}</div>
+                        </div>
+                        <div style="flex:1 1 140px;min-width:140px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
+                          <div style="font-size:11px;color:#9ca3af;">DTI con hipoteca</div>
+                          <div style="font-size:14px;font-weight:500;margin-top:2px;">${dti}</div>
+                        </div>
+                      </div>
 
-      <p style="margin-top:16px">
-        Un asesor de HabitaLibre se pondrá en contacto contigo por <b>${
-          lead?.canal || "WhatsApp"
-        }</b>.
-      </p>
-    </div>
-  `;
-}
+                      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px;">
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
+                          <div style="font-size:11px;color:#9ca3af;">Monto préstamo máx.</div>
+                          <div style="font-size:14px;font-weight:500;margin-top:2px;">${monto}</div>
+                        </div>
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
+                          <div style="font-size:11px;color:#9ca3af;">Precio máx. vivienda</div>
+                          <div style="font-size:14px;font-weight:500;margin-top:2px;">${precio}</div>
+                        </div>
+                      </div>
 
-function htmlInterno(lead = {}, resultado = {}) {
-  const row = (k, v) =>
-    `<tr><td style="padding:6px 8px"><b>${k}:</b></td><td style="padding:6px 8px">${
-      v ?? "—"
-    }</td></tr>`;
-  const safe = (n) =>
-    typeof n === "number" ? n.toLocaleString("en-US") : n ?? "—";
-  const pct = (n) =>
-    typeof n === "number" ? `${(n * 100).toFixed(1)} %` : "—";
+                      <div style="font-size:12px;color:#cbd5f5;margin-top:14px;">
+                        Adjuntamos un reporte detallado en PDF con explicación de cada métrica, stress test de tasa,
+                        tabla de amortización y un plan de acción para mejorar tus probabilidades de aprobación.
+                      </div>
 
-  return `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
-      <h3 style="margin:0 0 8px">🆕 Nuevo lead (HabitaLibre)</h3>
-      <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#f8fafc;border-radius:10px">
-        ${row("Nombre", lead?.nombre)}
-        ${row("Email", lead?.email)}
-        ${row("Teléfono", lead?.telefono)}
-        ${row("Ciudad", lead?.ciudad)}
-        ${row("Canal", lead?.canal)}
-        ${row("Origen", lead?.origen)}
-      </table>
+                      <div style="margin-top:18px;">
+                        <a href="https://habitalibre.com"
+                           style="display:inline-block;padding:10px 18px;border-radius:999px;background:#22c55e;color:#022c22;
+                                  font-size:13px;font-weight:600;text-decoration:none;">
+                          Ver más sobre HabitaLibre
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
 
-      <h4 style="margin:14px 0 6px">Resultado tentativo</h4>
-      <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#f1f5f9;border-radius:10px">
-        ${row(
-          "Producto",
-          resultado?.productoElegido || resultado?.tipoCreditoElegido
-        )}
-        ${row("Capacidad de pago", `$ ${safe(resultado?.capacidadPago)}`)}
-        ${row("Cuota", `$ ${safe(resultado?.cuotaEstimada)}`)}
-        ${row("Stress (+2%)", `$ ${safe(resultado?.cuotaStress)}`)}
-        ${row("LTV", pct(resultado?.ltv))}
-        ${row("DTI", pct(resultado?.dtiConHipoteca))}
-        ${row("Monto máx.", `$ ${safe(resultado?.montoMaximo)}`)}
-        ${row(
-          "Precio máx. vivienda",
-          `$ ${safe(resultado?.precioMaxVivienda)}`
-        )}
-      </table>
-    </div>
+            <!-- Nota legal -->
+            <tr>
+              <td style="padding:0 24px 24px 24px;font-size:11px;color:#94a3b8;">
+                Este resultado es referencial y no constituye una oferta de crédito.
+                Está sujeto a validación documental y a las políticas de cada entidad financiera.
+              </td>
+            </tr>
+
+            <!-- Footer pequeño -->
+            <tr>
+              <td style="padding:0 24px 8px 24px;font-size:11px;color:#64748b;">
+                HabitaLibre · Quito, Ecuador
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </div>
   `;
 }
 
 /* ===========================================================
-   🧾 Generar PDF resumen (Buffer)
+   HTML world-class para correo INTERNO
    =========================================================== */
-async function generarPDFResumenBuffer(lead = {}, resultado = {}) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ size: "A4", margin: 40 });
-      const chunks = [];
+function htmlInterno(lead = {}, resultado = {}) {
+  const producto =
+    resultado?.productoElegido || resultado?.tipoCreditoElegido || "Crédito hipotecario";
 
-      doc.on("data", (chunk) => chunks.push(chunk));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", (err) => reject(err));
+  return `
+  <div style="margin:0;padding:0;background:#0b1120;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0b1120;padding:20px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:680px;background:#020617;color:#e5e7eb;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+            <tr>
+              <td style="padding:16px 24px 8px 24px;">
+                <div style="font-size:13px;color:#93c5fd;margin-bottom:4px;">Nuevo lead capturado</div>
+                <div style="font-size:20px;font-weight:600;">${lead?.nombre || "Cliente"} · ${producto}</div>
+                <div style="font-size:12px;color:#64748b;margin-top:4px;">
+                  Origen: ${lead?.origen || "Simulador web"} · Canal: ${lead?.canal || "Web"}
+                </div>
+              </td>
+            </tr>
 
-      const safe = (n) =>
-        typeof n === "number" ? n.toLocaleString("en-US") : n ?? "—";
-      const pct = (n) =>
-        typeof n === "number" ? `${(n * 100).toFixed(1)} %` : "—";
+            <tr>
+              <td style="padding:0 16px 16px 16px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+                  style="border-radius:20px;background:#020617;border:1px solid #1e293b;padding:16px;">
+                  <tr>
+                    <td style="font-size:13px;color:#e5e7eb;">
+                      <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:8px;">Datos de contacto</div>
+                      <div><strong>Nombre:</strong> ${lead?.nombre || "—"}</div>
+                      <div><strong>Email:</strong> ${lead?.email || "—"}</div>
+                      <div><strong>Teléfono:</strong> ${lead?.telefono || "—"}</div>
+                      <div><strong>Ciudad:</strong> ${lead?.ciudad || "—"}</div>
+                    </td>
+                    <td width="32"></td>
+                    <td style="font-size:13px;color:#e5e7eb;">
+                      <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:8px;">Resumen numérico</div>
+                      <div><strong>Capacidad pago:</strong> ${money(resultado?.capacidadPago)}</div>
+                      <div><strong>Cuota ref.:</strong> ${money(resultado?.cuotaEstimada)}</div>
+                      <div><strong>Stress (+2%):</strong> ${money(resultado?.cuotaStress)}</div>
+                      <div><strong>LTV:</strong> ${pct(resultado?.ltv)}</div>
+                      <div><strong>DTI:</strong> ${pct(resultado?.dtiConHipoteca)}</div>
+                      <div><strong>Monto máx.:</strong> ${money(resultado?.montoMaximo)}</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
 
-      doc
-        .fontSize(18)
-        .text("Resumen de precalificación HabitaLibre", { align: "center" });
-      doc.moveDown();
+            <tr>
+              <td style="padding:0 24px 16px 24px;font-size:12px;color:#9ca3af;">
+                Adjuntamos el reporte PDF completo generado por el motor de scoring de HabitaLibre
+                para que el equipo comercial pueda revisar el detalle antes de contactar al cliente.
+              </td>
+            </tr>
 
-      doc.fontSize(12);
-      doc.text(`Nombre: ${lead?.nombre || "—"}`);
-      doc.text(`Email: ${lead?.email || "—"}`);
-      doc.text(`Teléfono: ${lead?.telefono || "—"}`);
-      doc.text(`Ciudad: ${lead?.ciudad || "—"}`);
-      doc.moveDown();
-
-      doc.text(
-        `Producto: ${
-          resultado?.productoElegido || resultado?.tipoCreditoElegido || "—"
-        }`
-      );
-      doc.text(`Capacidad de pago: $ ${safe(resultado?.capacidadPago)}`);
-      doc.text(`Cuota referencial: $ ${safe(resultado?.cuotaEstimada)}`);
-      doc.text(`Stress (+2%): $ ${safe(resultado?.cuotaStress)}`);
-      doc.text(`LTV estimado: ${pct(resultado?.ltv)}`);
-      doc.text(`DTI con hipoteca: ${pct(resultado?.dtiConHipoteca)}`);
-      doc.text(`Monto máximo préstamo: $ ${safe(resultado?.montoMaximo)}`);
-      doc.text(
-        `Precio máximo vivienda: $ ${safe(resultado?.precioMaxVivienda)}`
-      );
-
-      doc.moveDown();
-      doc.fontSize(10).text(
-        "Este resultado es referencial y no constituye una oferta de crédito. " +
-          "Sujeto a validación documental y políticas de cada entidad.",
-        { align: "left" }
-      );
-
-      doc.end();
-    } catch (err) {
-      reject(err);
-    }
-  });
+            <tr>
+              <td style="padding:0 24px 8px 24px;font-size:11px;color:#64748b;">
+                HabitaLibre · Panel interno
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </div>
+  `;
 }
 
 /* ===========================================================
-   💌 enviarCorreoCliente: correo al lead + PDF adjunto
+   Helper: generar PDF avanzado desde pdf.js
+   =========================================================== */
+async function generarPDFBuffer(lead, resultado) {
+  try {
+    const buffer = await generarPDFLeadAvanzado(lead, resultado);
+    return buffer;
+  } catch (err) {
+    console.error("❌ Error generando PDF avanzado:", err);
+    return null;
+  }
+}
+
+/* ===========================================================
+   💌 enviarCorreoCliente: correo al lead + PDF avanzado
    =========================================================== */
 export async function enviarCorreoCliente(lead, resultado) {
   if (!lead?.email) {
@@ -266,16 +321,10 @@ export async function enviarCorreoCliente(lead, resultado) {
   }
 
   const tx = getTransporter();
-
-  let pdfBuffer = null;
-  try {
-    pdfBuffer = await generarPDFResumenBuffer(lead, resultado);
-  } catch (err) {
-    console.error("❌ Error generando PDF para cliente:", err);
-  }
+  const pdfBuffer = await generarPDFBuffer(lead, resultado);
 
   const info = await tx.sendMail({
-    from: FINAL_FROM, // 👈 SIEMPRE hello@habitalibre.com
+    from: FINAL_FROM,
     to: lead.email,
     replyTo: lead.email
       ? `"${lead.nombre || "Cliente"}" <${lead.email}>`
@@ -284,7 +333,7 @@ export async function enviarCorreoCliente(lead, resultado) {
     html: htmlResumenCliente(lead, resultado),
     text:
       "Gracias por usar el simulador de HabitaLibre. " +
-      "Adjuntamos un PDF con el resumen de tu precalificación.",
+      "Adjuntamos un PDF con el resumen detallado de tu precalificación.",
     attachments: pdfBuffer
       ? [
           {
@@ -299,20 +348,14 @@ export async function enviarCorreoCliente(lead, resultado) {
 }
 
 /* ===========================================================
-   💌 enviarCorreoLead: correo interno al equipo (sin / con PDF opcional)
+   💌 enviarCorreoLead: correo interno al equipo + mismo PDF
    =========================================================== */
 export async function enviarCorreoLead(lead, resultado) {
   const tx = getTransporter();
-
-  let pdfBuffer = null;
-  try {
-    pdfBuffer = await generarPDFResumenBuffer(lead, resultado);
-  } catch (err) {
-    console.error("❌ Error generando PDF para interno:", err);
-  }
+  const pdfBuffer = await generarPDFBuffer(lead, resultado);
 
   const info = await tx.sendMail({
-    from: FINAL_FROM, // 👈 remitente autenticado
+    from: FINAL_FROM,
     to: INTERNAL_RECIPIENTS.join(","),
     subject: `Nuevo lead: ${lead?.nombre || "Cliente"} (${lead?.canal || "—"})`,
     html: htmlInterno(lead, resultado),
