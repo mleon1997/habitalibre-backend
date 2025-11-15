@@ -1,183 +1,197 @@
 // src/controllers/leads.controller.js
 import Lead from "../models/Lead.js";
-import {
-  enviarCorreoCliente,
-  enviarCorreoLead,
-} from "../utils/mailer.js";
+import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
 
 /* ===========================================================
-   Helper para derivar producto y score desde resultado
+   Helpers para extraer datos del resultado
    =========================================================== */
-function derivarProductoYScore(resultado = {}) {
-  if (!resultado || typeof resultado !== "object") return {};
+function extraerScoreHL(resultado) {
+  if (!resultado) return null;
 
-  const producto =
-    resultado.productoElegido ||              // <- sale en tus logs
-    resultado.productoPrincipal ||
+  if (
+    resultado.puntajeHabitaLibre &&
+    typeof resultado.puntajeHabitaLibre.score === "number"
+  ) {
+    return resultado.puntajeHabitaLibre.score;
+  }
+
+  if (typeof resultado.scoreHL === "number") return resultado.scoreHL;
+
+  return null;
+}
+
+function extraerProducto(resultado) {
+  if (!resultado) return null;
+
+  return (
+    resultado.productoElegido ||
+    resultado.tipoCreditoElegido ||
     resultado.producto ||
-    resultado.mejorProducto ||
-    resultado.mejorOpcion?.nombre ||
-    null;
-
-  const scoreHL =
-    resultado.puntajeHabitaLibre?.score ??    // <- también sale en tus logs
-    resultado.scoreHL ??
-    resultado.scoreHabitaLibre ??
-    resultado.score ??
-    null;
-
-  return { producto, scoreHL };
+    null
+  );
 }
 
 /* ===========================================================
-   CREAR NUEVO LEAD (POST /api/leads)
+   POST /api/leads   (crear lead desde el simulador)
+   Body:
+    - nombre, email, telefono, ciudad
+    - aceptaTerminos, aceptaCompartir
+    - resultado: objeto devuelto por /api/precalificar
    =========================================================== */
-export const crearLead = async (req, res) => {
+export async function crearLead(req, res) {
   try {
-    const data = req.body || {};
-    console.log("📥 Nuevo lead recibido:", data);
+    const {
+      nombre,
+      email,
+      telefono,
+      ciudad,
+      aceptaTerminos,
+      aceptaCompartir,
+      resultado,
+    } = req.body || {};
 
-    if (!data.email && !data.telefono) {
+    if (!nombre || !email || !resultado) {
       return res.status(400).json({
         ok: false,
-        message: "Se requiere al menos email o teléfono para crear un lead",
+        msg: "Faltan datos obligatorios (nombre, email o resultado).",
       });
     }
 
-    // Derivar producto y scoreHL si no vinieron explícitos
-    if (!data.producto || data.scoreHL == null) {
-      const derivados = derivarProductoYScore(data.resultado || {});
-      if (!data.producto) data.producto = derivados.producto;
-      if (data.scoreHL == null) data.scoreHL = derivados.scoreHL;
-    }
+    console.info("✅ Nuevo lead recibido:", {
+      nombre,
+      email,
+      telefono,
+      ciudad,
+      aceptaTerminos,
+      aceptaCompartir,
+      productoElegido: resultado?.productoElegido,
+    });
 
-    // Guardar lead
-    const lead = new Lead(data);
-    await lead.save();
+    const scoreHL = extraerScoreHL(resultado);
+    const producto = extraerProducto(resultado);
 
-    // 💌 Enviar correos (cliente + interno) SIN romper si falla el SMTP
+    // Guardar en Mongo
+    const lead = await Lead.create({
+      nombre,
+      email,
+      telefono,
+      ciudad,
+      aceptaTerminos: !!aceptaTerminos,
+      aceptaCompartir: !!aceptaCompartir,
+      producto,
+      scoreHL,
+      canal: "Web",
+      origen: "Simulador Hipoteca Exprés",
+      rawResultado: resultado,
+    });
+
+    // Enviar correos (cliente + interno) — NO rompe la respuesta si falla
     try {
-      const resultado = lead.resultado || {};
       await Promise.all([
         enviarCorreoCliente(lead, resultado),
         enviarCorreoLead(lead, resultado),
       ]);
-      console.log("📧 Correos de nuevo lead enviados correctamente.");
-    } catch (mailErr) {
-      console.error("❌ Error enviando correos de nuevo lead:", mailErr);
-      // NO lanzamos el error para no devolver 500 al cliente
+    } catch (errMail) {
+      console.error("❌ Error enviando correos de lead:", errMail);
     }
 
     return res.status(201).json({
       ok: true,
-      message: "Lead creado correctamente",
-      lead,
+      msg: "Lead creado correctamente",
+      leadId: lead._id,
     });
-  } catch (error) {
-    console.error("❌ Error creando lead:", error);
+  } catch (err) {
+    console.error("❌ Error en crearLead:", err);
     return res.status(500).json({
       ok: false,
-      message: "Error al crear el lead",
+      msg: "Error interno al registrar el lead",
     });
   }
-};
+}
 
 /* ===========================================================
-   LISTAR LEADS (GET /api/leads)
+   GET /api/leads   (listado paginado + filtros suaves)
+   Query:
+    - pagina (1..n)
+    - limit
+    - email, telefono, ciudad
    =========================================================== */
-export const listarLeads = async (req, res) => {
+export async function listarLeads(req, res) {
   try {
-    console.log("🔎 Consultando leads con query:", req.query);
+    const pagina = Math.max(parseInt(req.query.pagina || "1", 10), 1);
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit || "10", 10), 1),
+      100
+    );
 
-    let {
-      pagina = 1,
-      limit = 20,
-      email = "",
-      telefono = "",
-      ciudad = "",
-    } = req.query;
+    const { email, telefono, ciudad } = req.query || {};
+    const filter = {};
 
-    pagina = parseInt(pagina, 10) || 1;
-    limit = parseInt(limit, 10) || 20;
+    if (email) {
+      filter.email = { $regex: email.trim(), $options: "i" };
+    }
+    if (telefono) {
+      filter.telefono = { $regex: telefono.trim(), $options: "i" };
+    }
+    if (ciudad) {
+      filter.ciudad = { $regex: ciudad.trim(), $options: "i" };
+    }
 
-    if (pagina < 1) pagina = 1;
-    if (limit < 1) limit = 20;
-    if (limit > 100) limit = 100;
-
+    const total = await Lead.countDocuments(filter);
+    const totalPaginas = Math.max(1, Math.ceil(total / limit));
     const skip = (pagina - 1) * limit;
 
-    const filtro = {};
-    if (email) filtro.email = { $regex: email, $options: "i" };
-    if (telefono) filtro.telefono = { $regex: telefono, $options: "i" };
-    if (ciudad) filtro.ciudad = { $regex: ciudad, $options: "i" };
-
-    const [rawLeads, total] = await Promise.all([
-      Lead.find(filtro)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Lead.countDocuments(filtro),
-    ]);
-
-    const leads = rawLeads.map((leadDoc) => {
-      const lead = leadDoc.toObject({ getters: true, virtuals: false });
-
-      let { producto, scoreHL } = lead;
-      if (!producto || scoreHL == null) {
-        const derivados = derivarProductoYScore(lead.resultado || {});
-        if (!producto) producto = derivados.producto;
-        if (scoreHL == null) scoreHL = derivados.scoreHL;
-      }
-
-      return {
-        ...lead,
-        producto: producto || null,
-        scoreHL: scoreHL ?? null,
-      };
-    });
-
-    const totalPaginas = Math.max(1, Math.ceil(total / limit));
+    const leads = await Lead.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
 
     return res.json({
       ok: true,
-      leads,
-      total,
       pagina,
       totalPaginas,
+      total,
+      leads,
     });
-  } catch (error) {
-    console.error("❌ Error listando leads:", error);
+  } catch (err) {
+    console.error("❌ Error en listarLeads:", err);
     return res.status(500).json({
       ok: false,
-      message: "Error al obtener los leads",
+      msg: "Error interno al listar leads",
+      leads: [],
+      total: 0,
+      pagina: 1,
+      totalPaginas: 1,
     });
   }
-};
+}
 
 /* ===========================================================
-   ESTADÍSTICAS DE LEADS (GET /api/leads/stats)
+   GET /api/leads/stats  (total, hoy)
    =========================================================== */
-export const statsLeads = async (req, res) => {
+export async function statsLeads(req, res) {
   try {
-    const total = await Lead.countDocuments();
-
+    const total = await Lead.countDocuments({});
     const inicioHoy = new Date();
     inicioHoy.setHours(0, 0, 0, 0);
 
-    const totalHoy = await Lead.countDocuments({
+    const hoy = await Lead.countDocuments({
       createdAt: { $gte: inicioHoy },
     });
 
     return res.json({
       ok: true,
       total,
-      totalHoy,
+      hoy,
     });
-  } catch (error) {
-    console.error("❌ Error obteniendo estadísticas de leads:", error);
+  } catch (err) {
+    console.error("❌ Error en statsLeads:", err);
     return res.status(500).json({
       ok: false,
-      message: "Error al obtener estadísticas de leads",
+      total: 0,
+      hoy: 0,
     });
   }
-};
+}
+
