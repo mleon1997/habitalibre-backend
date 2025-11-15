@@ -1,6 +1,6 @@
 // src/lib/scoreHabitaLibre.js
 
-/** Puntaje HabitaLibre (0–100) con desglose y recomendaciones
+/** Puntaje HabitaLibre (0–100) con desglose, recomendaciones y elegibilidad
  *  Factores y pesos (ajustables):
  *   - DTI (incl. hipoteca) .......... 30%
  *   - LTV ............................ 25%
@@ -9,13 +9,29 @@
  *   - Tipo de ingreso ................ 10%
  *   - Declaración de buró ...........  5%
  *
+ *  Parámetros esperados:
+ *   {
+ *     dtiConHipoteca,
+ *     ltv,
+ *     aniosEstabilidad,
+ *     edad,
+ *     tipoIngreso,
+ *     declaracionBuro,
+ *     tipoCredito,                 // "vip" | "vis" | "biess_vip" | "default"
+ *     esExtranjero,                // boolean (true si NO es ecuatoriano)
+ *     aportesIESS,                 // número total de aportes
+ *     ultimas13Continuas           // boolean: true si las últimas 13 son continuas
+ *   }
+ *
  *  Retorna:
  *   {
  *     score: 0..100,
- *     categoria: "alto" | "medio" | "bajo",          // potencial HL
+ *     categoria: "alto" | "medio" | "bajo",
  *     label: "Alto potencial" | "Ajustable" | "Riesgo alto",
  *     breakdown: { dti:{score,weight,value}, ... },
- *     recomendaciones: [ "...", ... ]
+ *     recomendaciones: [ "...", ... ],
+ *     elegible: boolean,
+ *     motivosElegibilidad: [ "...", ... ],
  *   }
  */
 
@@ -32,7 +48,7 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const invLerp = (a, b, v) => clamp((v - a) / (b - a || 1e-9), 0, 1);
 const lerp = (a, b, t) => a + (b - a) * t;
 
-/* ---- Subscores (0-100) por factor) ---- */
+/* ---- Subscores (0-100) por factor ---- */
 
 /** DTI (incl. hipoteca): mejor <=0.35
  *  Tramos:
@@ -118,7 +134,50 @@ function recomendacionesFrom(b) {
   return rec;
 }
 
-/** API principal: calcula score HL */
+/* ---- Reglas de elegibilidad por tipo de crédito ---- */
+
+function evaluarElegibilidad({
+  tipoCredito = "default",
+  esExtranjero = false,
+  aportesIESS = 0,
+  ultimas13Continuas = false,
+}) {
+  let elegible = true;
+  const motivos = [];
+
+  const t = String(tipoCredito || "").toLowerCase();
+
+  // Regla de nacionalidad
+  if ((t === "vip" || t === "vis") && esExtranjero) {
+    elegible = false;
+    motivos.push(
+      "Los créditos VIP/VIS de banca privada aplican únicamente para ciudadanos ecuatorianos."
+    );
+  }
+
+  // Reglas específicas BIESS VIP
+  if (t === "biess_vip") {
+    const aportes = Number(aportesIESS) || 0;
+
+    if (aportes < 36) {
+      elegible = false;
+      motivos.push(
+        "Para crédito BIESS VIP necesitas al menos 36 aportaciones al IESS."
+      );
+    }
+    if (!ultimas13Continuas) {
+      elegible = false;
+      motivos.push(
+        "Para crédito BIESS VIP las últimas 13 aportaciones deben ser continuas."
+      );
+    }
+    // BIESS VIP sí permite extranjeros → no hacemos restricción por esExtranjero aquí.
+  }
+
+  return { elegible, motivosElegibilidad: motivos };
+}
+
+/** API principal: calcula score HL + elegibilidad */
 export function scoreHabitaLibre({
   dtiConHipoteca,
   ltv,
@@ -126,41 +185,84 @@ export function scoreHabitaLibre({
   edad,
   tipoIngreso,
   declaracionBuro = "ninguno",
+  tipoCredito = "default",       // "vip" | "vis" | "biess_vip" | "default"
+  esExtranjero = false,          // true si NO es ecuatoriano
+  aportesIESS = 0,               // total de aportes (para BIESS)
+  ultimas13Continuas = false,    // true si las últimas 13 aportaciones son continuas
 } = {}) {
   const subs = {
-    dti: { score: Math.round(subscoreDTI(Number(dtiConHipoteca))) , weight: WEIGHTS.dti, value: dtiConHipoteca },
-    ltv: { score: Math.round(subscoreLTV(Number(ltv)))            , weight: WEIGHTS.ltv, value: ltv },
-    estabilidad: { score: Math.round(subscoreEstabilidad(aniosEstabilidad)), weight: WEIGHTS.estabilidad, value: aniosEstabilidad },
-    edad: { score: Math.round(subscoreEdad(edad))                  , weight: WEIGHTS.edad, value: edad },
-    tipoIngreso: { score: Math.round(subscoreTipoIngreso(tipoIngreso)), weight: WEIGHTS.tipoIngreso, value: tipoIngreso },
-    declaracionBuro: { score: Math.round(subscoreDeclaracionBuro(declaracionBuro)), weight: WEIGHTS.declaracionBuro, value: declaracionBuro },
+    dti: {
+      score: Math.round(subscoreDTI(Number(dtiConHipoteca))),
+      weight: WEIGHTS.dti,
+      value: dtiConHipoteca,
+    },
+    ltv: {
+      score: Math.round(subscoreLTV(Number(ltv))),
+      weight: WEIGHTS.ltv,
+      value: ltv,
+    },
+    estabilidad: {
+      score: Math.round(subscoreEstabilidad(aniosEstabilidad)),
+      weight: WEIGHTS.estabilidad,
+      value: aniosEstabilidad,
+    },
+    edad: {
+      score: Math.round(subscoreEdad(edad)),
+      weight: WEIGHTS.edad,
+      value: edad,
+    },
+    tipoIngreso: {
+      score: Math.round(subscoreTipoIngreso(tipoIngreso)),
+      weight: WEIGHTS.tipoIngreso,
+      value: tipoIngreso,
+    },
+    declaracionBuro: {
+      score: Math.round(subscoreDeclaracionBuro(declaracionBuro)),
+      weight: WEIGHTS.declaracionBuro,
+      value: declaracionBuro,
+    },
   };
 
-  const score =
-    Math.round(
-      subs.dti.score * subs.dti.weight +
-      subs.ltv.score * subs.ltv.weight +
-      subs.estabilidad.score * subs.estabilidad.weight +
-      subs.edad.score * subs.edad.weight +
-      subs.tipoIngreso.score * subs.tipoIngreso.weight +
-      subs.declaracionBuro.score * subs.declaracionBuro.weight
-    );
+  const score = Math.round(
+    subs.dti.score * subs.dti.weight +
+    subs.ltv.score * subs.ltv.weight +
+    subs.estabilidad.score * subs.estabilidad.weight +
+    subs.edad.score * subs.edad.weight +
+    subs.tipoIngreso.score * subs.tipoIngreso.weight +
+    subs.declaracionBuro.score * subs.declaracionBuro.weight
+  );
 
   let categoria = "medio";
   let label = "Ajustable";
-  if (score >= 80) { categoria = "alto"; label = "Alto potencial"; }
-  else if (score < 60) { categoria = "bajo"; label = "Riesgo alto"; }
+  if (score >= 80) {
+    categoria = "alto";
+    label = "Alto potencial";
+  } else if (score < 60) {
+    categoria = "bajo";
+    label = "Riesgo alto";
+  }
 
   const recomendaciones = recomendacionesFrom(subs);
 
+  // Elegibilidad por producto (BIESS VIP / VIP / VIS)
+  const { elegible, motivosElegibilidad } = evaluarElegibilidad({
+    tipoCredito,
+    esExtranjero,
+    aportesIESS,
+    ultimas13Continuas,
+  });
+
   return {
     score,
-    categoria,        // "alto" | "medio" | "bajo"
-    label,            // texto amigable
-    breakdown: subs,  // detalle por factor
+    categoria,              // "alto" | "medio" | "bajo"
+    label,                  // texto amigable
+    breakdown: subs,        // detalle por factor
     recomendaciones,
+    elegible,               // boolean
+    motivosElegibilidad,    // array de strings
     weights: WEIGHTS,
   };
 }
 
 export default scoreHabitaLibre;
+

@@ -57,6 +57,7 @@ const LIMITES = {
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
   },
+  // BIESS VIP / preferencial
   BIESS_PREF: {
     priceCap: 107630,
     incomeCap: 2900,
@@ -69,6 +70,7 @@ const LIMITES = {
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
   },
+  // BIESS estándar
   BIESS_STD: {
     priceCap: 460000,
     incomeCap: Infinity,
@@ -119,6 +121,7 @@ export function calcularPrecalificacion(input) {
     tieneVivienda = false,
     declaracionBuro = "ninguno",
     estadoCivil, // opcional
+    nacionalidad = "ecuatoriana",  // 👈 NUEVO
 
     // Requisitos BIESS
     iessAportesTotales = 0,
@@ -130,6 +133,12 @@ export function calcularPrecalificacion(input) {
     typeof afiliadoIess === "string"
       ? afiliadoIess.toLowerCase().startsWith("s")
       : !!afiliadoIess;
+
+  // esExtranjero: todo lo que no sea "ecuatoriana"
+  const esExtranjero =
+    typeof nacionalidad === "string"
+      ? nacionalidad.trim().toLowerCase() !== "ecuatoriana"
+      : false;
 
   // dti base por afiliación (conservador si no)
   const dtiBase = afiliadoBool ? 0.40 : 0.35;
@@ -253,11 +262,11 @@ export function calcularPrecalificacion(input) {
   /* ===========================================================
      Construcción/evaluación de productos
   ========================================================== */
-  const PROD_VIS         = { label: "VIS",                 ...LIMITES.VIS };
-  const PROD_VIP         = { label: "VIP",                 ...LIMITES.VIP };
-  const PROD_BIESS_PREF  = { label: "BIESS preferencial",  ...LIMITES.BIESS_PREF };
-  const PROD_BIESS_STD   = { label: "BIESS",               ...LIMITES.BIESS_STD };
-  const PROD_COM         = { label: "Comercial",           ...LIMITES.COMERCIAL };
+  const PROD_VIS         = { label: "VIS",                ...LIMITES.VIS };
+  const PROD_VIP         = { label: "VIP",                ...LIMITES.VIP };
+  const PROD_BIESS_PREF  = { label: "BIESS preferencial", ...LIMITES.BIESS_PREF }; // BIESS VIP
+  const PROD_BIESS_STD   = { label: "BIESS",              ...LIMITES.BIESS_STD };
+  const PROD_COM         = { label: "Comercial",          ...LIMITES.COMERCIAL };
 
   const evalVIS    = evaluarProducto(PROD_VIS);
   const evalVIP    = evaluarProducto(PROD_VIP);
@@ -286,7 +295,7 @@ export function calcularPrecalificacion(input) {
   const reqDown80 = clamp((n(valorVivienda) * 0.20) - n(entradaDisponible), 0, Number.POSITIVE_INFINITY);
   const reqDown90 = clamp((n(valorVivienda) * 0.10) - n(entradaDisponible), 0, Number.POSITIVE_INFINITY);
 
-  // Riesgo/score HL (simple + tu scoreHabitaLibre)
+  // Riesgo/score HL (simple legacy)
   let riesgoScore = 100;
   const ratioEntrada = (n(valorVivienda) > 0) ? (n(entradaDisponible) / n(valorVivienda)) : 0;
   if (dtiConHipoteca > 0.45) riesgoScore -= 25;
@@ -301,6 +310,17 @@ export function calcularPrecalificacion(input) {
     riesgoScore >= 80 ? "bajo" :
     riesgoScore >= 60 ? "medio" : "alto";
 
+  // 👇 Nuevo: determinar tipo de crédito para scoreHabitaLibre
+  const tipoCreditoForScore = (() => {
+    if (escenarioElegido === evalVIS)   return "vis";
+    if (escenarioElegido === evalVIP)   return "vip";
+    if (escenarioElegido === evalBPREF) return "biess_vip";
+    if (escenarioElegido === evalBSTD)  return "biess_std";
+    return "default";
+  })();
+
+  const ultimas13ContinuasBool = n(iessAportesConsecutivas) >= MIN_IESS_CONSEC;
+
   const puntajeHabitaLibre = scoreHabitaLibre({
     dtiConHipoteca,
     ltv: escenarioElegido.ltv,
@@ -308,6 +328,10 @@ export function calcularPrecalificacion(input) {
     edad: n(edad),
     tipoIngreso,
     declaracionBuro,
+    tipoCredito: tipoCreditoForScore,
+    esExtranjero,
+    aportesIESS: n(iessAportesTotales),
+    ultimas13Continuas: ultimas13ContinuasBool,
   });
 
   /* ===========================================================
@@ -338,7 +362,6 @@ export function calcularPrecalificacion(input) {
   };
 
   // 3) Costos y TCEA (aprox)
-  // TODO: afinar por banco. Por ahora: originación 1.0% (cap 1.200), avalúo 180, seguros 0.15% anual del valor.
   const costos = (() => {
     const monto = n(escenarioElegido.montoPrestamo);
     const originacion = Math.min(monto * 0.010, 1200);
@@ -355,7 +378,13 @@ export function calcularPrecalificacion(input) {
   const opciones = {
     VIP:   { viable: evalVIP.viable,   tasa: evalVIP.tasaAnual,   plazo: evalVIP.plazoMeses,   cuota: evalVIP.cuota,   ltvMax: evalVIP.ltvMax },
     VIS:   { viable: evalVIS.viable,   tasa: evalVIS.tasaAnual,   plazo: evalVIS.plazoMeses,   cuota: evalVIS.cuota,   ltvMax: evalVIS.ltvMax },
-    BIESS: { viable: evalBSTD.viable || evalBPREF.viable, tasa: (evalBPREF.viable ? evalBPREF.tasaAnual : evalBSTD.tasaAnual), plazo: (evalBPREF.viable ? evalBPREF.plazoMeses : evalBSTD.plazoMeses), cuota: (evalBPREF.viable ? evalBPREF.cuota : evalBSTD.cuota), ltvMax: (evalBPREF.viable ? evalBPREF.ltvMax : evalBSTD.ltvMax) },
+    BIESS: {
+      viable: evalBSTD.viable || evalBPREF.viable,
+      tasa: (evalBPREF.viable ? evalBPREF.tasaAnual : evalBSTD.tasaAnual),
+      plazo: (evalBPREF.viable ? evalBPREF.plazoMeses : evalBSTD.plazoMeses),
+      cuota: (evalBPREF.viable ? evalBPREF.cuota : evalBSTD.cuota),
+      ltvMax: (evalBPREF.viable ? evalBPREF.ltvMax : evalBSTD.ltvMax)
+    },
     Privada:{ viable: evalCOM.viable,  tasa: evalCOM.tasaAnual,   plazo: evalCOM.plazoMeses,   cuota: evalCOM.cuota,   ltvMax: evalCOM.ltvMax },
   };
 
@@ -398,7 +427,6 @@ export function calcularPrecalificacion(input) {
   const benchBIE = { nombre: "Opción C (BIESS)",   tasa: 0.0690, plazo: 240 };
   const loan = n(escenarioElegido.montoPrestamo);
   const mkCuota = (t, p) => pmt(t/12, p, loan);
-  // TCEA aprox con mismos costos (para ejemplo)
   const mkTCEA = (t) => t + (loan > 0 ? ((costos.originacion + costos.avaluo + costos.segurosAnuales) / loan) / (n(escenarioElegido.plazoMeses)/12) : 0);
 
   const benchmark = [
@@ -446,7 +474,7 @@ export function calcularPrecalificacion(input) {
     productoElegido: escenarioElegido.producto,
     requeridos: { downTo80: n(reqDown80), downTo90: n(reqDown90) },
 
-    // Perfil (COMPAT)
+    // Perfil (COMPAT + nacionalidad / aportes)
     perfil: {
       label: perfilLabel,
       edad: n(edad),
@@ -456,6 +484,8 @@ export function calcularPrecalificacion(input) {
       ingresoTotal: n(ingresoTotal),
       tieneVivienda: !!tieneVivienda,
       estadoCivil: estadoCivil || null,
+      nacionalidad,
+      esExtranjero,
       iessAportesTotales: n(iessAportesTotales),
       iessAportesConsecutivas: n(iessAportesConsecutivas),
     },
@@ -472,27 +502,27 @@ export function calcularPrecalificacion(input) {
 
     // Riesgos / puntaje (COMPAT + enriquecido)
     riesgoHabitaLibre,
-    puntajeHabitaLibre, // tu función externa
+    puntajeHabitaLibre, // función externa con elegible + motivos
 
-    // ⭐ NUEVO: score interno por bandas
+    // ⭐ Score interno por bandas
     scoreHL: { total: scoreHLtotal, bandas },
 
-    // ⭐ NUEVO: stress test explícito
+    // ⭐ Stress test explícito
     stressTest,
 
-    // ⭐ NUEVO: costos + TCEA aprox
+    // ⭐ Costos + TCEA aprox
     costos,
 
-    // ⭐ NUEVO: matriz limpia de opciones
+    // ⭐ Matriz limpia de opciones
     opciones,
 
-    // ⭐ NUEVO: checklist educativo
+    // ⭐ Checklist educativo
     checklist,
 
-    // ⭐ NUEVO: plan de acción
+    // ⭐ Plan de acción
     accionesClave,
 
-    // ⭐ NUEVO: comparador simple
+    // ⭐ Comparador simple
     benchmark,
   };
 }

@@ -1,4 +1,7 @@
 // src/server.js
+console.log("FROM_EMAIL =>", process.env.FROM_EMAIL);
+console.log("SMTP_USER =>", process.env.SMTP_USER);
+
 import app from "./app.js";
 
 

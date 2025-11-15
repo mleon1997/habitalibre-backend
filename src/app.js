@@ -1,90 +1,105 @@
 // src/app.js
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import mongoose from "mongoose";
-import "dotenv/config";
+import compression from "compression";
+import helmet from "helmet";
 
-// Importar rutas
+// Rutas
 import diagRoutes from "./routes/diag.routes.js";
 import precalificarRoutes from "./routes/precalificar.routes.js";
 import leadsRoutes from "./routes/leads.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { verifySmtp } from "./utils/mailer.js";
 
-// Inicializar app y cargar variables
-dotenv.config();
 const app = express();
 
-/* ===========================================================
-   1️⃣ Conexión a MongoDB
-   =========================================================== */
+/* ================= Base hardening & perf ================= */
+app.set("trust proxy", true);
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // por si sirves PDFs/imagenes
+  })
+);
+app.use(compression());
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+/* ================= MongoDB ================= */
 const mongoUri = process.env.MONGODB_URI;
 mongoose
   .connect(mongoUri)
   .then(() => console.log("✅ Conectado a MongoDB"))
   .catch((err) => console.error("❌ Error conectando a MongoDB:", err.message));
 
-/* ===========================================================
-   2️⃣ Configuración de CORS
-   =========================================================== */
-const envOrigins = (process.env.CORS_ORIGIN || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+/* ================= CORS (único middleware) ================= */
+function parseOrigins(str) {
+  return String(str || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+function normalizeOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return origin;
+  }
+}
 
-const allowedOrigins = [
+const allowList = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:4173",
   "https://habitalibre.com",
   "https://www.habitalibre.com",
-  ...envOrigins,
-];
+  "https://habitalibre-web.onrender.com", // si usas un front temporal en Render
+  ...parseOrigins(process.env.CORS_ORIGIN),
+]
+  .map(normalizeOrigin)
+  .filter(Boolean);
 
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // Permitir peticiones sin origin (Postman, health checks)
-    if (allowedOrigins.includes(origin)) return cb(null, true);
-    console.warn(`🚫 CORS bloqueado para origen no autorizado: ${origin}`);
+    if (!origin) return cb(null, true); // Postman/health checks
+    const norm = normalizeOrigin(origin);
+    if (allowList.includes(norm)) return cb(null, true);
+    console.warn(`🚫 CORS bloqueado para: ${origin} (norm: ${norm})`);
     return cb(new Error(`CORS bloqueado para origen: ${origin}`), false);
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false, // true solo si usas cookies o autenticación basada en sesión
+  credentials: false,
   optionsSuccessStatus: 204,
 };
 
-// Aplicar CORS global
-app.use(cors(corsOptions));
+app.use(cors(corsOptions)); // ← ÚNICO lugar donde aplicamos CORS
+// ⚠️ NO usar app.options('*', ...) en Express 5 (rompe)
 
-// Aceptar preflights OPTIONS (Express 5 no acepta "*", usamos RegExp)
-app.options(/^\/.*$/, cors(corsOptions));
-
-/* ===========================================================
-   3️⃣ Middlewares base
-   =========================================================== */
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-/* ===========================================================
-   4️⃣ Rutas API
-   =========================================================== */
+/* ================= Rutas API ================= */
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
 app.use("/api/leads", leadsRoutes);
 app.use("/api/health", healthRoutes);
 
-/* ===========================================================
-   5️⃣ Ruta 404
-   =========================================================== */
+/* ================= 404 ================= */
 app.use((req, res) => {
   res.status(404).json({ ok: false, error: "Ruta no encontrada" });
 });
 
-/* ===========================================================
-   6️⃣ Verificación SMTP (solo al inicio)
-   =========================================================== */
+/* ================= Error handler JSON ================= */
+app.use((err, req, res, next) => {
+  const code = err.status || 500;
+  const msg = err?.message?.includes("CORS")
+    ? "Origen no permitido por CORS"
+    : err?.message || "Error";
+  console.error("❌ Error middleware:", code, msg);
+  res.status(code).json({ ok: false, error: msg });
+});
+
+/* ================= Verificación SMTP (no bloquea) ================= */
 verifySmtp()
   .then(() => console.log("📧 SMTP verificado correctamente"))
   .catch((err) => console.error("❌ Error verificando SMTP:", err.message));

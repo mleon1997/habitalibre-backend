@@ -1,58 +1,36 @@
 // src/routes/diag.routes.js
 import { Router } from "express";
-import { verifySmtp, enviarCorreoCliente } from "../utils/mailer.js";
+import { verifySmtp } from "../utils/mailer.js";
+import nodemailer from "nodemailer";
 
 const router = Router();
 
-// Verifica la conexión SMTP (handshake TLS + auth)
-router.get("/smtp-verify", async (req, res) => {
+router.get("/send-test", async (req, res) => {
   try {
+    const to = req.query.to || process.env.TEST_EMAIL;
+    if (!to) return res.status(400).json({ ok: false, error: "Falta ?to" });
+
     await verifySmtp();
-    res.json({ ok: true, message: "✅ Conexión SMTP verificada correctamente" });
-  } catch (error) {
-    console.error("❌ Error verificando SMTP:", error?.message || error);
-    res.status(500).json({ ok: false, error: error?.message || String(error) });
-  }
-});
+    const t = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT),
+      secure: String(process.env.SMTP_SECURE || "false") === "true",
+      auth: process.env.SMTP_USER && process.env.SMTP_PASS ? {
+        user: process.env.SMTP_USER, pass: process.env.SMTP_PASS,
+      } : undefined,
+    });
 
-// Envía un correo de prueba al email indicado, con un PDF adjunto generado on-the-fly
-router.post("/mail-test", async (req, res) => {
-  try {
-    const { email = "" } = req.body || {};
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      return res.status(400).json({ ok: false, error: "Email inválido" });
-    }
+    await t.sendMail({
+      from: `${process.env.FROM_NAME || "HabitaLibre"} <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+      to,
+      subject: "Prueba SMTP HabitaLibre",
+      text: "OK",
+    });
 
-    // lead y resultado mínimos de prueba
-    const lead = {
-      nombre: "Prueba HabitaLibre",
-      email: email.trim(),
-      telefono: "+593 990000000",
-      ciudad: "Quito",
-      canal: "Email",
-    };
-
-    const resultado = {
-      capacidadPago: 680,
-      montoMaximo: 95000,
-      precioMaxVivienda: 120000,
-      ltv: 0.79,
-      dtiConHipoteca: 0.36,
-      tasaAnual: 0.095,
-      plazoMeses: 240,
-      cuotaEstimada: 670,
-      cuotaStress: 740,
-      productoElegido: "Banca privada",
-      puntajeHabitaLibre: { score: 78, label: "Bueno", categoria: "medio" },
-    };
-
-    // usa tu función real de envío al cliente (adjunta PDF)
-    await enviarCorreoCliente(lead, resultado);
-
-    res.json({ ok: true, message: `📨 Correo de prueba enviado a ${lead.email}` });
-  } catch (error) {
-    console.error("❌ Error enviando el correo de prueba:", error?.message || error);
-    res.status(500).json({ ok: false, error: error?.message || String(error) });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: e?.message || "Error" });
   }
 });
 

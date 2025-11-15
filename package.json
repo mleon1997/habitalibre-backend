@@ -9,6 +9,8 @@
     "test": "echo \"No tests yet\" && exit 0"
   },
   "dependencies": {
+    "@getbrevo/brevo": "^3.0.1",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dayjs": "^1.11.19",
     "dotenv": "^17.2.3",

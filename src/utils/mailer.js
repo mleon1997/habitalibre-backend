@@ -1,398 +1,244 @@
 // src/utils/mailer.js
 import nodemailer from "nodemailer";
-import dotenv from "dotenv";
-import PDFDocument from "pdfkit";
-import { PassThrough } from "stream";
-import { generarPDFLeadAvanzado } from "./pdf.js";
 
-// Cargar .env antes de leer process.env
-dotenv.config();
-
-/* =========================
-   ENV
-   ========================= */
+/* ===========================================================
+   Variables de entorno
+   =========================================================== */
 const {
   SMTP_HOST,
   SMTP_PORT,
+  SMTP_SECURE,
   SMTP_USER,
   SMTP_PASS,
-  FROM_NAME,
   FROM_EMAIL,
+  FROM_NAME,
   NOTIFY_EMAILS,
 } = process.env;
 
-// Validación temprana de credenciales
-if (!SMTP_USER || !SMTP_PASS) {
-  console.error("❌ Faltan credenciales SMTP. Revisa .env (SMTP_USER / SMTP_PASS).");
+console.log("SMTP_USER :", SMTP_USER);
+console.log("FROM_EMAIL:", FROM_EMAIL);
+
+/* ===========================================================
+   Transporter (singleton)
+   =========================================================== */
+let _transporter = null;
+
+function getTransporter() {
+  if (_transporter) return _transporter;
+
+  _transporter = nodemailer.createTransport({
+    host: SMTP_HOST || "smtp-relay.sendinblue.com",
+    port: Number(SMTP_PORT || 587),
+    secure: String(SMTP_SECURE || "false").toLowerCase() === "true",
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+
+  return _transporter;
 }
 
-/* =========================
-   TRANSPORTER (Brevo/Sendinblue)
-   ========================= */
-export const transporter = nodemailer.createTransport({
-  host: SMTP_HOST || "smtp-relay.sendinblue.com",
-  port: Number(SMTP_PORT || 587),
-  secure: false, // STARTTLS
-  auth: {
-    user: SMTP_USER,
-    pass: SMTP_PASS,
-  },
-  // Evita falsos negativos de certificado cuando el proveedor redirige
-  tls: { servername: SMTP_HOST || "smtp-relay.sendinblue.com" },
-});
+/* ===========================================================
+   Remitente FINAL (siempre hello@habitalibre.com)
+   =========================================================== */
+const FINAL_FROM_EMAIL = FROM_EMAIL || SMTP_USER || "hello@habitalibre.com";
+const FINAL_FROM_NAME  = FROM_NAME  || "HabitaLibre";
+const FINAL_FROM       = `"${FINAL_FROM_NAME}" <${FINAL_FROM_EMAIL}>`;
 
-/* =========================
-   VERIFICACIÓN SMTP
-   ========================= */
+console.log("FINAL_FROM usándose para todos los correos =>", FINAL_FROM);
+
+/* ===========================================================
+   Utilidad: lista de correos internos
+   =========================================================== */
+const INTERNAL_RECIPIENTS = (NOTIFY_EMAILS || FINAL_FROM_EMAIL)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+/* ===========================================================
+   verifySmtp  (usado en /api/diag/smtp-verify)
+   =========================================================== */
 export async function verifySmtp() {
+  const tx = getTransporter();
+
   try {
-    await transporter.verify();
-    console.log("✅ Conexión SMTP verificada correctamente");
-    return true;
+    await tx.verify();
+    return {
+      ok: true,
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+    };
   } catch (err) {
     console.error("❌ Error verificando SMTP:", err?.message || err);
     throw err;
   }
 }
 
-/* =========================
-   HELPERS DE FORMATO
-   ========================= */
-const money = (n, d = 0) =>
-  n == null || Number.isNaN(Number(n))
-    ? "—"
-    : `$${Number(n).toLocaleString("es-EC", {
-        minimumFractionDigits: d,
-        maximumFractionDigits: d,
-      })}`;
+/* ===========================================================
+   sendTestEmail  (usado en /api/diag/send-test)
+   =========================================================== */
+export async function sendTestEmail(to) {
+  const tx = getTransporter();
 
-const pct = (p, d = 1) =>
-  p == null || Number.isNaN(Number(p)) ? "—" : `${(Number(p) * 100).toFixed(d)}%`;
-
-const years = (m) => (m ? `${Math.round(Number(m) / 12)} años` : "—");
-
-/* ============================================================
-   PDF: Timeout wrapper + fallback (para no dejar sin adjunto)
-   ============================================================ */
-async function generatePdfBuffer(lead, resultado) {
-  // Generador real (reporte completo)
-  return await generarPDFLeadAvanzado(lead, resultado);
-}
-
-function withTimeout(promise, ms = 15000, label = "pdf") {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`Timeout ${ms}ms (${label})`)), ms);
-    promise.then(
-      (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(t);
-        reject(e);
-      }
-    );
+  const info = await tx.sendMail({
+    from: FINAL_FROM,          // 👈 remitente SIEMPRE de tu dominio
+    to,
+    subject: "Prueba HabitaLibre – SMTP OK",
+    text: "Si ves este correo, el SMTP de HabitaLibre está funcionando correctamente.",
+    html: `
+      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
+        <h2>Prueba de correo – HabitaLibre</h2>
+        <p>Si ves este correo, el SMTP de HabitaLibre está funcionando correctamente ✅.</p>
+      </div>
+    `,
   });
+
+  return info;
 }
 
-async function generatePdfSafe(lead, resultado, ms = 15000) {
-  const t0 = Date.now();
-  try {
-    const buf = await withTimeout(generatePdfBuffer(lead, resultado), ms, "pdf");
-    console.log(`🧾 PDF generado en ${Date.now() - t0}ms (${Math.round(buf.length / 1024)} KB)`);
-    return buf;
-  } catch (err) {
-    console.warn(`⚠️ No se pudo generar PDF en ${ms}ms: ${err.message}. Enviando fallback.`);
-    return await simpleFallbackPdfBuffer(lead, resultado);
-  }
-}
+/* ===========================================================
+   Plantilla simple para el cliente
+   =========================================================== */
+function htmlResumenCliente(lead = {}, resultado = {}) {
+  const safe = (n) =>
+    typeof n === "number" ? n.toLocaleString("en-US") : n ?? "—";
+  const pct = (n) =>
+    typeof n === "number" ? `${(n * 100).toFixed(1)} %` : "—";
 
-// PDF fallback minimalista (1 página) para asegurar adjunto
-async function simpleFallbackPdfBuffer(lead, resultado) {
-  const stream = new PassThrough();
-  const chunks = [];
-  stream.on("data", (c) => chunks.push(c));
+  return `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45;color:#0f172a">
+      <h2 style="margin:0 0 6px">¡Hola ${
+        lead?.nombre?.split(" ")[0] || "!"
+      } 👋</h2>
+      <p>Gracias por usar el simulador de <strong>HabitaLibre</strong>. Este es tu resumen tentativo:</p>
 
-  return new Promise((resolve, reject) => {
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
-
-    const doc = new PDFDocument({ size: "A4", margin: 56, info: { Title: "Precalificación HabitaLibre (resumen)" } });
-    doc.pipe(stream);
-
-    const nowEC = new Date().toLocaleString("es-EC");
-    doc
-      .fontSize(20)
-      .text("HabitaLibre – Precalificación", { underline: true })
-      .moveDown(0.5);
-
-    doc.fontSize(12).text(`Cliente: ${lead?.nombre || "Cliente"}`);
-    doc.text(`Email: ${lead?.email || "—"}`);
-    doc.text(`Fecha: ${nowEC}`).moveDown(1);
-
-    doc.fontSize(14).text("Resumen:", { underline: true }).moveDown(0.3);
-    doc.fontSize(12);
-    doc.text(`Capacidad de pago: ${money(resultado?.capacidadPago, 0)}`);
-    doc.text(`Monto máximo: ${money(resultado?.montoMaximo, 0)}`);
-    doc.text(`LTV: ${pct(resultado?.ltv, 0)}`);
-    doc.text(
-      `Tasa / Plazo: ${
-        resultado?.tasaAnual != null ? `${(Number(resultado.tasaAnual) * 100).toFixed(2)}%` : "—"
-      } • ${years(resultado?.plazoMeses)}`
-    );
-
-    doc
-      .moveDown(1)
-      .fontSize(10)
-      .fillColor("#64748b")
-      .text(
-        "Este es un PDF de respaldo generado automáticamente si tu reporte detallado no estaba listo a tiempo. " +
-          "Te enviaremos el reporte completo en cuanto esté disponible.",
-        { width: 480 }
-      );
-
-    doc.end();
-  });
-}
-
-/* =========================
-   EMAIL INTERNO (notificación a equipo)
-   ========================= */
-export async function enviarCorreoLead(lead, resultado = {}, opts = {}) {
-  const subject = `Nuevo Lead HabitaLibre: ${lead?.nombre || "Cliente"}`;
-  const to = (NOTIFY_EMAILS || "hello@habitalibre.com")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  const html = `
-    <div style="font-family:Inter,Arial,sans-serif;color:#0f172a">
-      <h2 style="margin:0 0 6px 0;color:#4F46E5">🏡 Nuevo Lead recibido</h2>
-      <table style="border-collapse:collapse;width:100%;max-width:680px;font-size:14px">
-        ${[
-          ["Nombre", lead?.nombre],
-          ["Email", lead?.email],
-          ["Teléfono", lead?.telefono],
-          ["Ciudad", lead?.ciudad],
-          ["Producto sugerido", resultado?.productoElegido || resultado?.tipoCreditoElegido || "—"],
-          ["Monto máximo", money(resultado?.montoMaximo, 0)],
-          ["Capacidad de pago", money(resultado?.capacidadPago, 0)],
-          ["LTV", pct(resultado?.ltv, 0)],
-          ["DTI", pct(resultado?.dtiConHipoteca, 0)],
-        ]
-          .map(
-            ([k, v]) =>
-              `<tr>
-                <td style="padding:8px;border-bottom:1px solid #eee"><b>${k}</b></td>
-                <td style="padding:8px;border-bottom:1px solid #eee">${v ?? "—"}</td>
-              </tr>`
-          )
-          .join("")}
+      <table cellpadding="8" cellspacing="0" style="border-collapse:collapse;background:#f8fafc;border-radius:10px">
+        <tr><td><b>Producto</b></td><td>${
+          resultado?.productoElegido || resultado?.tipoCreditoElegido || "—"
+        }</td></tr>
+        <tr><td><b>Capacidad de pago</b></td><td>$ ${safe(
+          resultado?.capacidadPago
+        )}</td></tr>
+        <tr><td><b>Cuota referencial</b></td><td>$ ${safe(
+          resultado?.cuotaEstimada
+        )}</td></tr>
+        <tr><td><b>Stress (+2%)</b></td><td>$ ${safe(
+          resultado?.cuotaStress
+        )}</td></tr>
+        <tr><td><b>LTV estimado</b></td><td>${pct(resultado?.ltv)}</td></tr>
+        <tr><td><b>DTI con hipoteca</b></td><td>${pct(
+          resultado?.dtiConHipoteca
+        )}</td></tr>
+        <tr><td><b>Monto préstamo máx.</b></td><td>$ ${safe(
+          resultado?.montoMaximo
+        )}</td></tr>
+        <tr><td><b>Precio máx. vivienda</b></td><td>$ ${safe(
+          resultado?.precioMaxVivienda
+        )}</td></tr>
       </table>
-      <p style="color:#64748b;font-size:12px;margin-top:10px">UA: ${lead?.userAgent || "—"} • IP: ${
-    lead?.ip || "—"
-  }</p>
+
+      <p style="margin-top:12px;font-size:12px;color:#475569">
+        Este resultado es referencial y no constituye una oferta de crédito.
+        Sujeto a validación documental y políticas de cada entidad.
+      </p>
+
+      <p style="margin-top:16px">
+        Un asesor de HabitaLibre se pondrá en contacto contigo por <b>${
+          lead?.canal || "WhatsApp"
+        }</b>.
+      </p>
     </div>
   `;
-
-  const attachments = [];
-  if (opts?.pdfBuffer) {
-    const nombreSafe = String(lead?.nombre || "cliente").replace(/[^a-zA-Z0-9\s\-_]/g, "");
-    attachments.push({
-      filename: `Lead-${nombreSafe}.pdf`,
-      content: opts.pdfBuffer,
-      contentType: "application/pdf",
-    });
-  }
-
-  await transporter.sendMail({
-    from: `${FROM_NAME || "HabitaLibre"} <${FROM_EMAIL || SMTP_USER}>`,
-    to,
-    subject,
-    html,
-    attachments,
-  });
-
-  console.log("📩 Correo interno enviado OK");
 }
 
-/* =========================
-   EMAIL AL CLIENTE (resumen + PDF adjunto)
-   ========================= */
-/* =========================
-   EMAIL AL CLIENTE (resumen + PDF adjunto)
-   ========================= */
-export async function enviarCorreoCliente(lead, resultado = {}, opts = {}) {
-  // --- Helper: dejar SOLO lo que usa el PDF y normalizar ---
-  const toNum = (v, def = null) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : def;
-  };
-  const toInt = (v, def = null) => {
-    const n = parseInt(v, 10);
-    return Number.isFinite(n) ? n : def;
-  };
-  const cleanStr = (s, max = 120) => {
-    if (s == null) return null;
-    const t = String(s);
-    return t.length > max ? t.slice(0, max) : t;
-  };
+/* ===========================================================
+   Plantilla simple interna (equipo HL)
+   =========================================================== */
+function htmlInterno(lead = {}, resultado = {}) {
+  const row = (k, v) =>
+    `<tr><td style="padding:6px 8px"><b>${k}:</b></td><td style="padding:6px 8px">${
+      v ?? "—"
+    }</td></tr>`;
+  const safe = (n) =>
+    typeof n === "number" ? n.toLocaleString("en-US") : n ?? "—";
+  const pct = (n) =>
+    typeof n === "number" ? `${(n * 100).toFixed(1)} %` : "—";
 
-  // Mantén SOLO campos usados por pdf.js y limpia NaN/valores raros
-  const R = {
-    capacidadPago: toNum(resultado?.capacidadPago, null),
-    montoMaximo: toNum(resultado?.montoMaximo, null),
-    precioMaxVivienda: toNum(resultado?.precioMaxVivienda, null),
-    tasaAnual: toNum(resultado?.tasaAnual, null),
-    plazoMeses: toInt(resultado?.plazoMeses, null),
-    ltv: toNum(resultado?.ltv, null),
-    dtiConHipoteca: toNum(resultado?.dtiConHipoteca, null),
-    cuotaEstimada: toNum(resultado?.cuotaEstimada, null),
-    cuotaStress: toNum(resultado?.cuotaStress, null),
-    productoElegido: cleanStr(
-      resultado?.productoElegido ?? resultado?.tipoCreditoElegido ?? ""
-    ),
-    valorVivienda: toNum(resultado?.valorVivienda, null),
-    entradaDisponible: toNum(resultado?.entradaDisponible, null),
-    // Ignoramos 'escenarios', 'bounds' grandes, etc. para evitar recursión/profundidad
-  };
+  return `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+      <h3 style="margin:0 0 8px">🆕 Nuevo lead (HabitaLibre)</h3>
+      <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#f8fafc;border-radius:10px">
+        ${row("Nombre", lead?.nombre)}
+        ${row("Email", lead?.email)}
+        ${row("Teléfono", lead?.telefono)}
+        ${row("Ciudad", lead?.ciudad)}
+        ${row("Canal", lead?.canal)}
+        ${row("Origen", lead?.origen)}
+      </table>
 
-  const nombre = (lead?.nombre || "Cliente").split(" ")[0];
-
-  const capacidadPago = money(R.capacidadPago, 0);
-  const montoMaximo = money(R.montoMaximo, 0);
-  const ltv = pct(R.ltv, 0);
-  const tasa = R.tasaAnual != null ? `${(Number(R.tasaAnual) * 100).toFixed(2)}%` : "—";
-  const plazo = years(R.plazoMeses);
-
-  const productoSugerido = (() => {
-    const k = String(R.productoElegido || "").toLowerCase();
-    if (k.includes("vis")) return "Crédito VIS";
-    if (k.includes("vip")) return "Crédito VIP";
-    if (k.includes("biess") && (k.includes("pref") || k.includes("prefer"))) return "BIESS Preferencial";
-    if (k.includes("biess")) return "Crédito BIESS";
-    return "Banca privada";
-  })();
-
-  const tips = [];
-  if ((R.ltv ?? 0) > 0.9) tips.push("Aumenta tu entrada para bajar el LTV (ideal ≤ 80%).");
-  if ((R.dtiConHipoteca ?? 0) > 0.42) tips.push("Reduce deudas mensuales para llevar tu DTI ≤ 42%.");
-  if (R.cuotaStress && R.capacidadPago && R.cuotaStress > R.capacidadPago) {
-    tips.push("Con +2% de tasa, la cuota supera tu capacidad. Considera mayor plazo o sumar ingreso familiar.");
-  }
-  if (!tips.length) tips.push("Perfil sólido. Negocia tasas preferenciales y solicita pre-aprobación.");
-
-  const subject = "Tu precalificación HabitaLibre está lista 🏡";
-
-  // Generar PDF si no vino desde el controlador (con timeout y logs detallados)
-  let pdfBuffer = opts?.pdfBuffer;
-  if (!pdfBuffer) {
-    try {
-      const make = generarPDFLeadAvanzado(lead, R);
-      const timeoutMs = Number(process.env.PDF_TIMEOUT_MS || 30000);
-
-      pdfBuffer = await Promise.race([
-        make,
-        new Promise((_, rej) =>
-          setTimeout(() => rej(new Error(`PDF timeout ${timeoutMs}ms`)), timeoutMs)
-        ),
-      ]);
-    } catch (err) {
-      console.error(
-        `⚠️ No se pudo generar PDF en ${(process.env.PDF_TIMEOUT_MS || 30000)}ms:`,
-        err?.stack || err?.message || err
-      );
-      // No re-lanzamos; seguimos con fallback abajo
-    }
-  }
-
-  // HTML
-  const html = `
-  <div style="font-family:Inter,Arial,sans-serif;background:#f8fafc;padding:28px 0; color:#0f172a;">
-    <div style="max-width:680px;margin:auto;background:#ffffff;border-radius:14px;padding:36px;box-shadow:0 6px 20px rgba(2,6,23,.06);border:1px solid #e5e7eb">
-      <h2 style="margin:0 0 8px 0;color:#4F46E5;font-size:22px;font-weight:800;">Hola ${nombre} 👋</h2>
-      <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6">
-        Gracias por usar <b>HabitaLibre</b>. Abajo va tu <b>resumen ejecutivo</b> y te adjuntamos tu
-        <b>reporte PDF</b> para descargar y compartir con tu banco.
-      </p>
-
-      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:18px 0 8px 0;">
-        <div style="background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px;padding:14px;">
-          <div style="font-size:11px;color:#64748b;letter-spacing:.04em;text-transform:uppercase;">Capacidad de pago</div>
-          <div style="font-size:18px;font-weight:700;margin-top:4px;">${capacidadPago}</div>
-        </div>
-        <div style="background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px;padding:14px;">
-          <div style="font-size:11px;color:#64748b;letter-spacing:.04em;text-transform:uppercase;">Monto máximo</div>
-          <div style="font-size:18px;font-weight:700;margin-top:4px;">${montoMaximo}</div>
-        </div>
-        <div style="background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px;padding:14px;">
-          <div style="font-size:11px;color:#64748b;letter-spacing:.04em;text-transform:uppercase;">LTV estimado</div>
-          <div style="font-size:18px;font-weight:700;margin-top:4px;">${ltv}</div>
-        </div>
-        <div style="background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px;padding:14px;">
-          <div style="font-size:11px;color:#64748b;letter-spacing:.04em;text-transform:uppercase;">Tasa / Plazo</div>
-          <div style="font-size:18px;font-weight:700;margin-top:4px;">${tasa} • ${plazo}</div>
-        </div>
-      </div>
-
-      <div style="margin:12px 0 18px 0;font-size:14px;">
-        <div style="padding:12px 14px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;">
-          <b style="color:#4338ca">Crédito sugerido:</b> ${productoSugerido}
-        </div>
-      </div>
-
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;">
-        <div style="font-size:13px;color:#334155;margin-bottom:6px"><b>Recomendaciones para mejorar tu perfil:</b></div>
-        <ul style="margin:6px 0 0 18px;color:#475569;font-size:13px;line-height:1.5;">
-          ${tips.map((t) => `<li>${t}</li>`).join("")}
-        </ul>
-      </div>
-
-      <div style="text-align:center;margin:24px 0 6px;">
-        <a href="https://wa.me/593999999999?text=${encodeURIComponent(
-          `Hola, ya recibí mi precalificación y quiero continuar con un asesor.`
-        )}"
-           style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;">
-          Hablar con un asesor por WhatsApp
-        </a>
-      </div>
-
-      <p style="font-size:12px;color:#94a3b8;margin-top:18px;border-top:1px solid #e5e7eb;padding-top:12px;">
-        Adjuntamos tu <b>PDF de precalificación</b>. Este correo fue generado automáticamente; no respondas a esta dirección.
-      </p>
-      <p style="font-size:11px;color:#94a3b8;margin:0;">HabitaLibre © ${new Date().getFullYear()} • Quito, Ecuador 🇪🇨</p>
+      <h4 style="margin:14px 0 6px">Resultado tentativo</h4>
+      <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#f1f5f9;border-radius:10px">
+        ${row(
+          "Producto",
+          resultado?.productoElegido || resultado?.tipoCreditoElegido
+        )}
+        ${row("Capacidad de pago", `$ ${safe(resultado?.capacidadPago)}`)}
+        ${row("Cuota", `$ ${safe(resultado?.cuotaEstimada)}`)}
+        ${row("Stress (+2%)", `$ ${safe(resultado?.cuotaStress)}`)}
+        ${row("LTV", pct(resultado?.ltv))}
+        ${row("DTI", pct(resultado?.dtiConHipoteca))}
+        ${row("Monto máx.", `$ ${safe(resultado?.montoMaximo)}`)}
+        ${row(
+          "Precio máx. vivienda",
+          `$ ${safe(resultado?.precioMaxVivienda)}`
+        )}
+      </table>
     </div>
-  </div>`;
-
-  const attachments = [];
-  if (pdfBuffer) {
-    const nombreSafe = String(lead?.nombre || "Cliente").replace(/[^a-zA-Z0-9\s\-_]/g, "");
-    attachments.push({
-      filename: `Precalificacion-${nombreSafe}.pdf`,
-      content: pdfBuffer,
-      contentType: "application/pdf",
-    });
-  } else {
-    // Fallback “bonito” si algo raro ocurre
-    const fallback = Buffer.from(
-      `%PDF-1.4
-% Fallback simple generado por mailer (no detallado)
-`, "utf8");
-    attachments.push({
-      filename: "Precalificacion.pdf",
-      content: fallback,
-      contentType: "application/pdf",
-    });
-  }
-
-  await transporter.sendMail({
-    from: `${FROM_NAME || "HabitaLibre"} <${FROM_EMAIL || SMTP_USER}>`,
-    to: lead?.email,
-    subject,
-    html,
-    attachments,
-  });
-
-  console.log(`📧 Correo enviado al cliente ${lead?.email} con${pdfBuffer ? "" : " SIN"} PDF detallado`);
+  `;
 }
 
+/* ===========================================================
+   💌 enviarCorreoCliente: correo al lead
+   =========================================================== */
+export async function enviarCorreoCliente(lead, resultado) {
+  if (!lead?.email) {
+    console.warn("⚠️ enviarCorreoCliente: lead sin email, se omite envío.");
+    return null;
+  }
+
+  const tx = getTransporter();
+
+  const info = await tx.sendMail({
+    from: FINAL_FROM, // 👈 SIEMPRE hello@habitalibre.com
+    to: lead.email,
+    replyTo: lead.email
+      ? `"${lead.nombre || "Cliente"}" <${lead.email}>`
+      : undefined,
+    subject: "Tu precalificación HabitaLibre está lista 🏡",
+    html: htmlResumenCliente(lead, resultado),
+    text: "Gracias por usar el simulador de HabitaLibre. Revisa tu correo en formato HTML.",
+  });
+
+  return info;
+}
+
+/* ===========================================================
+   💌 enviarCorreoLead: correo interno al equipo
+   =========================================================== */
+export async function enviarCorreoLead(lead, resultado) {
+  const tx = getTransporter();
+
+  const info = await tx.sendMail({
+    from: FINAL_FROM, // 👈 remitente autenticado
+    to: INTERNAL_RECIPIENTS.join(","),
+    subject: `Nuevo lead: ${lead?.nombre || "Cliente"} (${lead?.canal || "—"})`,
+    html: htmlInterno(lead, resultado),
+    replyTo: lead?.email
+      ? `"${lead?.nombre || "Cliente"}" <${lead.email}>`
+      : undefined,
+  });
+
+  return info;
+}

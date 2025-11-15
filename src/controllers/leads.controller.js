@@ -1,154 +1,165 @@
 // src/controllers/leads.controller.js
 import Lead from "../models/Lead.js";
-import { enviarCorreoLead, enviarCorreoCliente } from "../utils/mailer.js";
-import { mapearBancos } from "../lib/scoring.js";
 
-/**
- * Crear lead desde el simulador o formulario web
- * - Si el frontend no envía `resultado`, lo calculamos con mapearBancos()
- * - Guardamos en Mongo
- * - Disparamos correos (interno + cliente con PDF adjunto) en paralelo
- */
+/* ===========================================================
+   Helper para derivar producto y score desde resultado
+   =========================================================== */
+function derivarProductoYScore(resultado = {}) {
+  if (!resultado || typeof resultado !== "object") return {};
 
-const titleCase = (s = "") =>
-  String(s)
-    .toLowerCase()
-    .replace(/(?:^|\s)\S/g, (c) => c.toUpperCase());
+  const producto =
+    resultado.productoPrincipal ||
+    resultado.producto ||
+    resultado.mejorProducto ||
+    resultado.mejorOpcion?.nombre ||
+    null;
 
-const cleanEmail = (e = "") => String(e).trim();
-const safeNum = (v) => (v != null && !Number.isNaN(Number(v)) ? Number(v) : null);
+  const scoreHL =
+    resultado.scoreHL ??
+    resultado.scoreHl ??
+    resultado.scoreHabitaLibre ??
+    resultado.score ??
+    null;
 
-function buildResultadoDesdeBody(body = {}) {
-  // Compatibilidad con payloads previos del front
-  return {
-    capacidadPago: safeNum(body.capacidadPago),
-    montoMaximo: safeNum(body.montoMaximo),
-    ltv: safeNum(body.ltv),
-    tasaAnual: safeNum(body.tasaAnual),
-    plazoMeses: safeNum(body.plazoMeses),
-    dtiConHipoteca: safeNum(body.dtiConHipoteca),
-    precioMaxVivienda: safeNum(body.precioMaxVivienda),
-    cuotaEstimada: safeNum(body.cuotaEstimada),
-    cuotaStress: safeNum(body.cuotaStress),
-    productoElegido: body.productoElegido ?? body.tipoCreditoElegido ?? null,
-    afinidad:
-      body.afinidad ?? body.productoElegido ?? body.tipoCreditoElegido ?? null,
-    puntajeHabitaLibre:
-      body.puntajeHabitaLibre ?? {
-        score: safeNum(body.scoreHL),
-        label: body.scoreLabel ?? null,
-        categoria: body.scoreCategoria ?? null,
-      },
-  };
+  return { producto, scoreHL };
 }
 
-function sanityCheckResultado(R = {}) {
-  const mustHave = [
-    "capacidadPago",
-    "montoMaximo",
-    "precioMaxVivienda",
-    "ltv",
-    "tasaAnual",
-    "plazoMeses",
-    "cuotaEstimada",
-    "cuotaStress",
-    "dtiConHipoteca",
-    "productoElegido",
-  ];
-  const missing = mustHave.filter((k) => R[k] == null || Number.isNaN(R[k]));
-  if (missing.length) {
-    console.warn("⚠️ Campos faltantes/NaN en resultado:", missing);
-  }
-  return { missing, ok: missing.length === 0 };
-}
-
-export async function crearLead(req, res) {
-  const t0 = Date.now();
+/* ===========================================================
+   CREAR NUEVO LEAD (POST /api/leads)
+   =========================================================== */
+export const crearLead = async (req, res) => {
   try {
-    const body = req.body || {};
+    const data = req.body || {};
+    console.log("📥 Nuevo lead recibido:", data);
 
-    // 1) Construir/Calcular resultado
-    let resultado = null;
-
-    if (body.resultado && typeof body.resultado === "object") {
-      // Si el front manda `resultado`, lo usamos tal cual
-      resultado = body.resultado;
-    } else {
-      // Si NO manda, intentamos construir desde campos sueltos...
-      const provisional = buildResultadoDesdeBody(body);
-      const tieneMinimosProvisionales =
-        provisional.capacidadPago != null ||
-        provisional.montoMaximo != null ||
-        provisional.cuotaEstimada != null;
-
-      if (tieneMinimosProvisionales) {
-        resultado = provisional;
-      } else {
-        // ...y si ni eso, calculamos con tu motor de scoring usando el body completo
-        // (mapearBancos aplicará reglas VIS/VIP/BIESS/Comercial con `scoring.js`)
-        resultado = mapearBancos(body);
-      }
+    if (!data.email && !data.telefono) {
+      return res.status(400).json({
+        ok: false,
+        message: "Se requiere al menos email o teléfono para crear un lead",
+      });
     }
 
-    // 2) Sanity check (para detectar por qué veías "—")
-    const sanity = sanityCheckResultado(resultado);
+    // Si no vienen producto / scoreHL pero sí viene resultado, los derivamos
+    if (!data.producto || data.scoreHL == null) {
+      const derivados = derivarProductoYScore(data.resultado || {});
+      if (!data.producto) data.producto = derivados.producto;
+      if (data.scoreHL == null) data.scoreHL = derivados.scoreHL;
+    }
 
-    // 3) Guardar lead
-    const nuevoLead = await Lead.create({
-      ...body,
-      // Persistir un resumen útil para el CRM
-      resumen: {
-        producto: resultado.productoElegido ?? null,
-        montoMaximo: safeNum(resultado.montoMaximo) ?? null,
-        cuotaEstimada: safeNum(resultado.cuotaEstimada) ?? null,
-        tasaAnual: safeNum(resultado.tasaAnual) ?? null,
-        plazoMeses: safeNum(resultado.plazoMeses) ?? null,
-        ltv: safeNum(resultado.ltv) ?? null,
-        dtiConHipoteca: safeNum(resultado.dtiConHipoteca) ?? null,
-      },
-      nombre: titleCase(body?.nombre || body?.firstName || "Cliente"),
-      email: cleanEmail(body?.email || ""),
-      ciudad: titleCase(body?.ciudad || ""),
-      ip: req.headers["x-forwarded-for"] || req.ip,
-      userAgent: req.headers["user-agent"],
-      origen: body.origen || "simulador",
-      estado: "nuevo",
+    const lead = new Lead(data);
+    await lead.save();
+
+    return res.status(201).json({
+      ok: true,
+      message: "Lead creado correctamente",
+      lead,
+    });
+  } catch (error) {
+    console.error("❌ Error creando lead:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Error al crear el lead",
+    });
+  }
+};
+
+/* ===========================================================
+   LISTAR LEADS (GET /api/leads)
+   =========================================================== */
+export const listarLeads = async (req, res) => {
+  try {
+    console.log("🔎 Consultando leads con query:", req.query);
+
+    let {
+      pagina = 1,
+      limit = 20,
+      email = "",
+      telefono = "",
+      ciudad = "",
+    } = req.query;
+
+    pagina = parseInt(pagina, 10) || 1;
+    limit = parseInt(limit, 10) || 20;
+
+    if (pagina < 1) pagina = 1;
+    if (limit < 1) limit = 20;
+    if (limit > 100) limit = 100;
+
+    const skip = (pagina - 1) * limit;
+
+    const filtro = {};
+    if (email) filtro.email = { $regex: email, $options: "i" };
+    if (telefono) filtro.telefono = { $regex: telefono, $options: "i" };
+    if (ciudad) filtro.ciudad = { $regex: ciudad, $options: "i" };
+
+    const [rawLeads, total] = await Promise.all([
+      Lead.find(filtro)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Lead.countDocuments(filtro),
+    ]);
+
+    // 👉 Aquí derivamos producto/scoreHL también para los leads viejos
+    const leads = rawLeads.map((leadDoc) => {
+      const lead = leadDoc.toObject({ getters: true, virtuals: false });
+
+      let { producto, scoreHL } = lead;
+      if (!producto || scoreHL == null) {
+        const derivados = derivarProductoYScore(lead.resultado || {});
+        if (!producto) producto = derivados.producto;
+        if (scoreHL == null) scoreHL = derivados.scoreHL;
+      }
+
+      return {
+        ...lead,
+        producto: producto || null,
+        scoreHL: scoreHL ?? null,
+      };
     });
 
-    // 4) Enviar correos (no bloquear respuesta, pero loggear resultado detallado)
-    Promise.allSettled([
-      enviarCorreoLead(nuevoLead, resultado),     // notificación interna
-      enviarCorreoCliente(nuevoLead, resultado),  // correo al cliente + PDF adjunto
-    ]).then((results) => {
-      results.forEach((r, i) => {
-        const cual = i === 0 ? "enviarCorreoLead" : "enviarCorreoCliente";
-        if (r.status === "rejected") {
-          console.error(`❌ Error en ${cual}:`, r.reason?.message || r.reason);
-        } else {
-          console.log(`✅ ${cual} enviado correctamente`);
-        }
-      });
-    });
+    const totalPaginas = Math.max(1, Math.ceil(total / limit));
 
-    const t = ((Date.now() - t0) / 1000).toFixed(2);
     return res.json({
       ok: true,
-      lead: nuevoLead,
-      resultado, // útil para el front
-      debug: { sanityMissing: sanity.missing, tiempo: `${t}s` },
+      leads,
+      total,
+      pagina,
+      totalPaginas,
     });
-  } catch (err) {
-    console.error("❌ Error creando lead:", err);
-    res.status(500).json({ ok: false, error: "Error interno al crear lead" });
+  } catch (error) {
+    console.error("❌ Error listando leads:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Error al obtener los leads",
+    });
   }
-}
+};
 
-export async function listarLeads(req, res) {
+/* ===========================================================
+   ESTADÍSTICAS DE LEADS (GET /api/leads/stats)
+   =========================================================== */
+export const statsLeads = async (req, res) => {
   try {
-    const leads = await Lead.find().sort({ createdAt: -1 }).limit(300);
-    return res.json({ ok: true, leads });
-  } catch (err) {
-    console.error("❌ Error listando leads:", err);
-    res.status(500).json({ ok: false, error: "Error al listar leads" });
+    const total = await Lead.countDocuments();
+
+    const inicioHoy = new Date();
+    inicioHoy.setHours(0, 0, 0, 0);
+
+    const totalHoy = await Lead.countDocuments({
+      createdAt: { $gte: inicioHoy },
+    });
+
+    return res.json({
+      ok: true,
+      total,
+      totalHoy,
+    });
+  } catch (error) {
+    console.error("❌ Error obteniendo estadísticas de leads:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Error al obtener estadísticas de leads",
+    });
   }
-}
+};
