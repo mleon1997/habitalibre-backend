@@ -1,5 +1,9 @@
 // src/controllers/leads.controller.js
 import Lead from "../models/Lead.js";
+import {
+  enviarCorreoCliente,
+  enviarCorreoLead,
+} from "../utils/mailer.js";
 
 /* ===========================================================
    Helper para derivar producto y score desde resultado
@@ -8,6 +12,7 @@ function derivarProductoYScore(resultado = {}) {
   if (!resultado || typeof resultado !== "object") return {};
 
   const producto =
+    resultado.productoElegido ||              // <- sale en tus logs
     resultado.productoPrincipal ||
     resultado.producto ||
     resultado.mejorProducto ||
@@ -15,8 +20,8 @@ function derivarProductoYScore(resultado = {}) {
     null;
 
   const scoreHL =
+    resultado.puntajeHabitaLibre?.score ??    // <- también sale en tus logs
     resultado.scoreHL ??
-    resultado.scoreHl ??
     resultado.scoreHabitaLibre ??
     resultado.score ??
     null;
@@ -39,15 +44,29 @@ export const crearLead = async (req, res) => {
       });
     }
 
-    // Si no vienen producto / scoreHL pero sí viene resultado, los derivamos
+    // Derivar producto y scoreHL si no vinieron explícitos
     if (!data.producto || data.scoreHL == null) {
       const derivados = derivarProductoYScore(data.resultado || {});
       if (!data.producto) data.producto = derivados.producto;
       if (data.scoreHL == null) data.scoreHL = derivados.scoreHL;
     }
 
+    // Guardar lead
     const lead = new Lead(data);
     await lead.save();
+
+    // 💌 Enviar correos (cliente + interno) SIN romper si falla el SMTP
+    try {
+      const resultado = lead.resultado || {};
+      await Promise.all([
+        enviarCorreoCliente(lead, resultado),
+        enviarCorreoLead(lead, resultado),
+      ]);
+      console.log("📧 Correos de nuevo lead enviados correctamente.");
+    } catch (mailErr) {
+      console.error("❌ Error enviando correos de nuevo lead:", mailErr);
+      // NO lanzamos el error para no devolver 500 al cliente
+    }
 
     return res.status(201).json({
       ok: true,
@@ -100,7 +119,6 @@ export const listarLeads = async (req, res) => {
       Lead.countDocuments(filtro),
     ]);
 
-    // 👉 Aquí derivamos producto/scoreHL también para los leads viejos
     const leads = rawLeads.map((leadDoc) => {
       const lead = leadDoc.toObject({ getters: true, virtuals: false });
 
