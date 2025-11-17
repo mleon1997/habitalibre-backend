@@ -1,5 +1,7 @@
 // src/utils/pdf.js
 import PDFDocument from "pdfkit";
+import fs from "fs";
+import path from "path";
 
 /**
  * HabitaLibre PDF — Reporte educativo y accionable (world-class)
@@ -8,6 +10,9 @@ import PDFDocument from "pdfkit";
  * - Chips, barras, tabla de amortización y sensibilidad de tasa
  * - Proyección a 5 años y plan de mejora
  */
+
+// Ruta del logo (debe existir en el BACKEND: /public/LOGOHL.png)
+const LOGO_PATH = path.join(process.cwd(), "public", "LOGOHL.png");
 
 // ============== Helpers de formato ==============
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -66,8 +71,11 @@ function proyeccionCincoAnios(pv, rateMensual, cuota) {
 
 // ============== Paleta / medidas ==============
 const brand = {
-  primary: "#4F46E5",
-  primaryDark: "#4338CA",
+  // Fondo del topbar = mismo tono oscuro del logo
+  primary: "#020617", // casi negro / slate muy oscuro
+  // Acento turquesa del logo para links y detalles
+  primaryDark: "#22d3ee",
+
   text: "#0f172a",
   mut: "#64748b",
   soft: "#94a3b8",
@@ -114,11 +122,17 @@ function chipAt(doc, x, y, label, value, w = 260, h = 54) {
     .roundedRect(x, y, w, h, 10)
     .fillAndStroke(brand.chipBg, "#e2e8f0")
     .restore();
-  doc.fillColor(brand.mut).fontSize(9).text(String(label).toUpperCase(), x + 12, y + 10);
-  doc.fillColor(brand.text).fontSize(15).text(String(value), x + 12, y + 26, {
-    width: w - 24,
-    height: 20,
-  });
+  doc
+    .fillColor(brand.mut)
+    .fontSize(9)
+    .text(String(label).toUpperCase(), x + 12, y + 10);
+  doc
+    .fillColor(brand.text)
+    .fontSize(15)
+    .text(String(value), x + 12, y + 26, {
+      width: w - 24,
+      height: 20,
+    });
 }
 
 function barScore(doc, x, y, label, v01, hint, color) {
@@ -158,7 +172,7 @@ const explLTV = (ltv) =>
 
 const explDTI = (dti) =>
   !isNum(dti)
-    ? "DTI = deudas mensuales (incluida hipoteca) / ingreso."
+    ? "DTI = deudas mensuales (incluida la hipoteca) / ingreso."
     : dti <= 0.35
     ? "DTI saludable (≤35%): buena señal."
     : dti <= 0.42
@@ -176,23 +190,70 @@ const explTasa = (t) =>
 
 // ============== Portada / pie ==============
 function portada(doc, lead) {
-  doc.rect(0, 0, doc.page.width, 88).fill(brand.primary);
+  // Franja superior full-width con color del logo
+  const headerHeight = 90;
   doc
-    .fillColor("#fff")
-    .fontSize(22)
-    .text("HabitaLibre", M, 30, { continued: true });
-  doc.fontSize(12).text("  •  Informe de Precalificación Hipotecaria");
+    .save()
+    .rect(0, 0, doc.page.width, headerHeight)
+    .fill(brand.primary)
+    .restore();
 
+  const hasLogo = fs.existsSync(LOGO_PATH);
   const W = doc.page.width - M * 2;
 
+  if (hasLogo) {
+    const logoWidth = 95;
+    const logoX = M;
+    const logoY = 14;
+
+    doc.image(LOGO_PATH, logoX, logoY, {
+      width: logoWidth,
+    });
+
+    doc
+      .fillColor("#e5e7eb")
+      .fontSize(11.5)
+      .text(
+        "Informe de Precalificación Hipotecaria",
+        logoX + logoWidth + 18,
+        logoY + 30,
+        {
+          width: doc.page.width - (logoX + logoWidth + 18) - M,
+          align: "left",
+        }
+      );
+  } else {
+    console.warn("[HabitaLibre PDF] Logo no encontrado en:", LOGO_PATH);
+    doc
+      .fillColor("#fff")
+      .fontSize(22)
+      .text("HabitaLibre", M, 32, { continued: true });
+    doc.fontSize(12).text("  •  Informe de Precalificación Hipotecaria");
+  }
+
+  // Línea sutil debajo del header para separar
+  doc
+    .moveTo(M, headerHeight)
+    .lineTo(doc.page.width - M, headerHeight)
+    .strokeColor("#111827")
+    .lineWidth(0.7)
+    .stroke();
+
+  // Título principal
   doc
     .fillColor(brand.text)
     .fontSize(24)
-    .text("Tu guía para conseguir la mejor hipoteca según tu perfil", M, 120, {
-      width: W,
-    })
+    .text(
+      "Tu guía para conseguir la mejor hipoteca según tu perfil",
+      M,
+      headerHeight + 22,
+      {
+        width: W,
+      }
+    )
     .moveDown(0.2);
 
+  // Datos del cliente
   doc
     .fontSize(12)
     .fillColor(brand.mut)
@@ -261,9 +322,7 @@ function planMejora(R) {
   if (isNum(R.ltv) && R.ltv > 0.9)
     tips.push("Aumenta tu entrada para bajar el LTV a ≤ 80%.");
   if (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0.42)
-    tips.push(
-      "Reduce otras deudas para llevar el DTI por debajo de 42%."
-    );
+    tips.push("Reduce otras deudas para llevar el DTI por debajo de 42%.");
   if (
     isNum(R.cuotaStress) &&
     isNum(R.capacidadPago) &&
@@ -294,7 +353,6 @@ function drawAmortTable(doc, rows) {
   }
 
   let y = doc.y + 4;
-  // si estamos muy abajo, nueva página y header arriba
   if (y > doc.page.height - M - 120) {
     doc.addPage();
     y = M;
@@ -304,7 +362,6 @@ function drawAmortTable(doc, rows) {
 
   doc.fillColor(brand.text).fontSize(11);
   rows.forEach((r) => {
-    // salto de página: header repetido
     if (y > doc.page.height - M - 40) {
       doc.addPage();
       y = M;
@@ -325,7 +382,7 @@ function drawAmortTable(doc, rows) {
     y += lineH;
   });
 
-  doc.y = y + 6; // dejar un colchón estable
+  doc.y = y + 6;
 }
 
 // ============== Generador principal ==============
@@ -382,9 +439,173 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   // Portada
   portada(doc, lead);
 
-  // Resumen ejecutivo
-  sectionTitle(doc, "Resumen ejecutivo");
   const W = doc.page.width - M * 2;
+
+  // ========= NUEVA SECCIÓN: Recomendación patrimonial estratégica =========
+  sectionTitle(doc, "Recomendación patrimonial estratégica");
+
+  try {
+    const precioMax = isNum(R.precioMaxVivienda) ? R.precioMaxVivienda : null;
+
+    if (precioMax) {
+      const rangoMin = Math.round(precioMax * 0.9);
+      const rangoMax = Math.round(precioMax);
+
+      doc
+        .fontSize(12)
+        .fillColor(brand.text)
+        .text(
+          "Tus números no solo cuentan una historia financiera:",
+          M,
+          doc.y,
+          { width: W }
+        )
+        .moveDown(0.2);
+
+      doc
+        .fontSize(12)
+        .fillColor(brand.primaryDark)
+        .text("revelan tu potencial patrimonial real.", M, doc.y, {
+          width: W,
+        })
+        .moveDown(0.8);
+
+      doc
+        .fontSize(12.5)
+        .fillColor(brand.text)
+        .text("🎯 Rango recomendado de vivienda:", M, doc.y);
+
+      doc
+        .fontSize(16)
+        .fillColor(brand.primaryDark)
+        .text(
+          `USD ${rangoMin.toLocaleString(
+            "es-EC"
+          )} — USD ${rangoMax.toLocaleString("es-EC")}`,
+          M,
+          doc.y + 6,
+          { width: W }
+        )
+        .moveDown(1);
+
+      doc.fontSize(11.5).fillColor(brand.text);
+      doc.text(
+        "1) Protege tu liquidez: este rango te permite avanzar con seguridad sin comprometer tu estabilidad futura.",
+        M,
+        doc.y,
+        { width: W }
+      );
+      doc.moveDown(0.3);
+      doc.text(
+        "2) Mantiene tus métricas (LTV y DTI) en zonas estables que los bancos consideran de bajo riesgo.",
+        M,
+        doc.y,
+        { width: W }
+      );
+      doc.moveDown(0.3);
+      doc.text(
+        "3) Minimiza riesgos de avalúo y evita diferencias que debas cubrir de tu bolsillo.",
+        M,
+        doc.y,
+        { width: W }
+      );
+      doc.moveDown(0.3);
+      doc.text(
+        "4) Te posiciona en modo “negociador”: las entidades están más dispuestas a competir por un perfil como el tuyo.",
+        M,
+        doc.y,
+        { width: W }
+      );
+      doc.moveDown(0.8);
+
+      // Ajustes que mejorarían el perfil (usa resultado.requeridos)
+      const needs = R?.requeridos || {};
+      if (
+        (isNum(needs.downTo80) && needs.downTo80 > 0) ||
+        (isNum(needs.downTo90) && needs.downTo90 > 0)
+      ) {
+        sectionTitle(doc, "Ajustes que mejorarían tu perfil");
+
+        if (isNum(needs.downTo80) && needs.downTo80 > 0) {
+          doc
+            .fontSize(11.5)
+            .fillColor(brand.text)
+            .text(
+              `• Para llegar a un LTV ≤ 80% (tasa preferencial), necesitarías aprox. USD ${needs.downTo80.toLocaleString(
+                "es-EC"
+              )} adicionales.`,
+              M,
+              doc.y,
+              { width: W }
+            );
+          doc.moveDown(0.3);
+        }
+
+        if (isNum(needs.downTo90) && needs.downTo90 > 0) {
+          doc
+            .fontSize(11.5)
+            .fillColor(brand.text)
+            .text(
+              `• Para LTV ≤ 90% (nivel recomendado), requerirías aprox. USD ${needs.downTo90.toLocaleString(
+                "es-EC"
+              )}.`,
+              M,
+              doc.y,
+              { width: W }
+            );
+          doc.moveDown(0.3);
+        }
+      }
+
+      doc.moveDown(0.5);
+      doc
+        .fontSize(11.5)
+        .fillColor(brand.primaryDark)
+        .text(
+          "Tu meta no es endeudarte: es construir patrimonio.",
+          M,
+          doc.y,
+          { width: W }
+        );
+      doc
+        .fontSize(11)
+        .fillColor(brand.mut)
+        .text(
+          "Este rango es donde tu perfil financiero brilla y donde tomas la mejor decisión.",
+          M,
+          doc.y + 2,
+          { width: W }
+        );
+
+      rule(doc);
+    } else {
+      doc
+        .fontSize(11.5)
+        .fillColor(brand.mut)
+        .text(
+          "Una vez que completes los datos de ingreso, deudas y vivienda, podrá mostrarse tu recomendación patrimonial personalizada.",
+          M,
+          doc.y,
+          { width: W }
+        )
+        .moveDown(0.6);
+      rule(doc);
+    }
+  } catch (err) {
+    console.error("Error en bloque patrimonial del PDF:", err);
+    doc
+      .fontSize(11)
+      .fillColor(brand.bad)
+      .text(
+        "No se pudo generar la sección de recomendación patrimonial.",
+        M,
+        doc.y
+      );
+    rule(doc);
+  }
+
+  // ========= Resumen ejecutivo =========
+  sectionTitle(doc, "Resumen ejecutivo");
   const gap = 20;
   const colW = Math.floor((W - gap) / 2);
   const chipW = Math.min(260, colW);
@@ -461,7 +682,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     );
   rule(doc);
 
-  // Score hipotecario + puntaje global
+  // ========= Score hipotecario + puntaje global =========
   sectionTitle(doc, "Tu “score hipotecario”");
   const scoreX = M;
   let scoreY = doc.y + 4;
@@ -545,7 +766,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   doc.moveDown(0.2);
   rule(doc);
 
-  // Glosario esencial
+  // ========= Glosario esencial =========
   sectionTitle(doc, "Qué significa cada métrica");
   doc.fontSize(11).fillColor(brand.text);
   doc.text(
@@ -575,14 +796,14 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       );
   rule(doc);
 
-  // Plan de acción recomendado
+  // ========= Plan de acción recomendado =========
   sectionTitle(doc, "Plan de acción recomendado");
   const tips = planMejora(R);
   doc.fillColor(brand.text).fontSize(11);
   tips.forEach((t) => doc.text(`• ${t}`, M, doc.y, { width: W }));
   doc.moveDown(0.6);
 
-  // === Stress de tasa (reemplazo completo de esta sección) ===
+  // ========= Stress de tasa =========
   sectionTitle(doc, "¿Qué pasa si sube la tasa? (stress +1% / +2% / +3%)");
 
   if (isNum(R.montoMaximo) && isNum(R.tasaAnual) && isNum(R.plazoMeses)) {
@@ -604,9 +825,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     y0 += 16;
     // Barra base
     doc.save().roundedRect(x0, y0, barW, barH, 5).fill(brand.barBg).restore();
-    const baseFill = Math.round(
-      (totIntBase / (totIntBase * 1.25)) * barW
-    );
+    const baseFill = Math.round((totIntBase / (totIntBase * 1.25)) * barW);
     if (baseFill > 0)
       doc
         .save()
@@ -617,7 +836,6 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
 
     const deltas = [0.01, 0.02, 0.03];
     deltas.forEach((d) => {
-      // chequeo de borde de página manual y estable
       if (y0 > doc.page.height - M - 40) {
         doc.addPage();
         y0 = M;
@@ -655,20 +873,16 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       y0 += 24;
     });
 
-    // fijar doc.y al final del bloque
     doc.y = y0 + 2;
   } else {
     doc
       .fillColor(brand.mut)
       .fontSize(11)
-      .text(
-        "Completa tasa, plazo y monto para ver el stress de cuota.",
-        M
-      );
+      .text("Completa tasa, plazo y monto para ver el stress de cuota.", M);
   }
   rule(doc);
 
-  // Amortización 12 meses y costo total + Proyección 5 años
+  // ========= Amortización 12 meses + Proyección 5 años =========
   if (isNum(R.montoMaximo) && isNum(R.tasaAnual) && isNum(R.plazoMeses)) {
     const r = R.tasaAnual / 12;
     const c = pmt(r, R.plazoMeses, R.montoMaximo);
@@ -681,7 +895,6 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     doc.text(`Capital financiado: ${money(R.montoMaximo, 2)}`, M);
     doc.moveDown(0.3);
 
-    // Tabla segura en múltiples páginas
     const tabla12 = (() => {
       let saldo = toNum(R.montoMaximo);
       const rows = [];
@@ -697,7 +910,6 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     drawAmortTable(doc, tabla12);
     rule(doc);
 
-    // Proyección 5 años
     const proj = proyeccionCincoAnios(R.montoMaximo, r, c);
     sectionTitle(doc, "Proyección a 5 años");
     doc.fontSize(11).fillColor(brand.text);
@@ -716,7 +928,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     doc.moveDown(0.6);
   }
 
-  // === Afinidad por tipo de crédito (reemplazo completo) ===
+  // ========= Afinidad por tipo de crédito =========
   sectionTitle(doc, "Afinidad por tipo de crédito");
 
   const tag = String(R.productoElegido || "").toLowerCase();
@@ -731,7 +943,6 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   let yA = doc.y + 2;
 
   rows.forEach((row) => {
-    // si no caben dos líneas (label+estado) en la página, saltamos ANTES
     if (yA > doc.page.height - M - rowH - 6) {
       doc.addPage();
       yA = M;
@@ -760,7 +971,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   doc.y = yA + 4;
   rule(doc);
 
-  // CTA (no cerrar con un trazo para evitar empuje de página)
+  // ========= CTA =========
   sectionTitle(doc, "¿Listo para avanzar?");
   doc
     .fontSize(12)
@@ -781,10 +992,11 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     });
 
   // === Cierre del generador ===
-  pie(doc); // solo imprime una línea centrada
-  doc.end(); // NO agregues addPage después del pie
+  pie(doc);
+  doc.end();
   return await pdfDone;
 }
 
 // Alias para mailer.js
 export const generarPDFLeadAvanzado = generarPDFLead;
+
