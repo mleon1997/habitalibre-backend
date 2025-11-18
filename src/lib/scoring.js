@@ -105,19 +105,23 @@ const LIMITES = {
     ignoreCapacityPenalties: true,
   },
   // BIESS estándar
+    // BIESS estándar
   BIESS_STD: {
     priceCap: 460000,
     incomeCap: Infinity,
     firstHomeOnly: false,
-    // vivienda puede ser usada, no exigimos requireNewBuild aquí
     requireIESS: true,
     requireContribs: true,
+    // tasaAnual base (para el primer tramo, <= 90k)
     tasaAnual: 0.0699,
     plazoMeses: 300,
     ltvMax: 0.90,
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
+    // 👇 flag para usar tabla escalonada de tasas
+    tieredStdBiess: true,
   },
+
   COMERCIAL: {
     priceCap: Infinity,
     incomeCap: Infinity,
@@ -221,30 +225,52 @@ export function calcularPrecalificacion(input) {
       priceCap,
       incomeCap = Infinity,
       firstHomeOnly = false,
-      requireNewBuild = false,
       requireIESS = false,
       requireContribs = false,
       dtiMax,
       ignoreCapacityPenalties = false,
+      // 👇 nuevo flag para BIESS estándar escalonado
+      tieredStdBiess = false,
     } = prodCfg;
 
     // “Gatekeepers” normativos
     const dentroIngreso = n(ingresoTotal) <= n(incomeCap, Infinity) + 1e-9;
-
-    // primera vivienda (VIS/VIP/BIESS_PREF)
     const primeraViviendaOK = firstHomeOnly ? !tieneVivienda : true;
-
-    // vivienda por estrenar
-    const obraNuevaOK = requireNewBuild ? !!viviendaNuevaBool : true;
-
-    // BIESS: afiliación + aportes
     const iessOK = requireIESS ? afiliadoBool : true;
     const aportesOK = requireContribs
       ? n(iessAportesTotales) >= MIN_IESS_TOTALES &&
         n(iessAportesConsecutivas) >= MIN_IESS_CONSEC
       : true;
 
-    const rate = n(tasaAnual) / 12;
+    // Monto que realmente se quiere pedir (según vivienda y entrada)
+    const montoNecesario = Math.max(
+      0,
+      n(valorVivienda) - n(entradaDisponible)
+    );
+
+    // ===== TASA EFECTIVA ANUAL DEL PRODUCTO =====
+    let tasaEfectivaAnual = n(tasaAnual);
+
+    // Si es BIESS estándar, aplicamos tabla escalonada por montoNecesario
+    if (tieredStdBiess) {
+      const loan = n(montoNecesario);
+
+      if (loan <= 90000) {
+        // Hasta 90k → 6,99%
+        tasaEfectivaAnual = 0.0699;
+      } else if (loan <= 130000) {
+        // 90k–130k → 8,90%
+        tasaEfectivaAnual = 0.089;
+      } else if (loan <= 200000) {
+        // 130k–200k → 9,00%
+        tasaEfectivaAnual = 0.09;
+      } else {
+        // 200k–460k → 9,10%
+        tasaEfectivaAnual = 0.091;
+      }
+    }
+
+    const rate = tasaEfectivaAnual / 12;
 
     // Capacidad específica del producto
     const factorCapProd = ignoreCapacityPenalties ? 1.0 : factorCapacidad;
@@ -255,7 +281,11 @@ export function calcularPrecalificacion(input) {
       0,
       ingresoDisponible * dtiToUse * factorCapProd
     );
-    const montoMaxPorCuota = pvFromPayment(rate, n(plazoMeses), cuotaMaxProducto);
+    const montoMaxPorCuota = pvFromPayment(
+      rate,
+      n(plazoMeses),
+      cuotaMaxProducto
+    );
 
     // Topes para “precio máximo de vivienda”
     const precioPorCapacidad = n(entradaDisponible) + n(montoMaxPorCuota);
@@ -274,13 +304,11 @@ export function calcularPrecalificacion(input) {
     if (precioMaxVivienda === precioPorLtv) binding = "ltv";
     if (precioMaxVivienda === precioPorTope) binding = "tope";
 
-    // Caso actual (con valor ingresado)
-    const montoNecesario = Math.max(
-      0,
-      n(valorVivienda) - n(entradaDisponible)
-    );
+    // LTV real con el monto que se quiere pedir
     const ltv =
-      n(valorVivienda) > 0 ? montoNecesario / n(valorVivienda) : 0;
+      n(valorVivienda) > 0
+        ? montoNecesario / n(valorVivienda)
+        : 0;
 
     // El banco no prestará por encima de tu capacidad (para este producto)
     const montoPrestamo = Math.max(
@@ -290,7 +318,7 @@ export function calcularPrecalificacion(input) {
 
     const cuota = pmt(rate, n(plazoMeses), montoPrestamo);
     const cuotaStress = pmt(
-      (n(tasaAnual) + 0.02) / 12,
+      (n(tasaEfectivaAnual) + 0.02) / 12,
       n(plazoMeses),
       montoPrestamo
     );
@@ -302,7 +330,6 @@ export function calcularPrecalificacion(input) {
     const viable = !!(
       dentroIngreso &&
       primeraViviendaOK &&
-      obraNuevaOK &&
       iessOK &&
       aportesOK &&
       dentroPrecio &&
@@ -312,7 +339,7 @@ export function calcularPrecalificacion(input) {
 
     return {
       producto: label || "—",
-      tasaAnual: n(tasaAnual),
+      tasaAnual: tasaEfectivaAnual,
       plazoMeses: n(plazoMeses),
       ltvMax: n(ltvMax),
       priceCap,
@@ -325,7 +352,6 @@ export function calcularPrecalificacion(input) {
       flags: {
         dentroIngreso,
         primeraViviendaOK,
-        obraNuevaOK,
         iessOK,
         aportesOK,
         dentroPrecio,
@@ -345,7 +371,7 @@ export function calcularPrecalificacion(input) {
       viable,
     };
   }
-
+  
   /* ===========================================================
      Construcción/evaluación de productos
   ========================================================== */
