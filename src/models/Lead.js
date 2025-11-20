@@ -12,6 +12,17 @@ const LeadSchema = new mongoose.Schema(
     producto: { type: String },
     scoreHL: { type: Number },
 
+    // 👇 Horizonte de compra (0-6, 6-12, 12-24, 24+)
+    tiempoCompra: { type: String, index: true },
+
+    // 👇 NUEVO
+    sustentoIndependiente: {
+      type: String,
+      enum: ["declaracion", "movimientos", "ninguno", null],
+      default: null,
+      index: true,
+    },
+
     // 👇 Aquí guardas TODO el resultado del simulador
     resultado: { type: Object },
 

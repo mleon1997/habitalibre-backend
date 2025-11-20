@@ -4,7 +4,7 @@ import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
-   =========================================================== */
+=========================================================== */
 function extraerScoreHL(resultado) {
   if (!resultado) return null;
 
@@ -36,8 +36,10 @@ function extraerProducto(resultado) {
    Body:
     - nombre, email, telefono, ciudad
     - aceptaTerminos, aceptaCompartir
+    - tiempoCompra
+    - sustentoIndependiente  👈 NUEVO
     - resultado: objeto devuelto por /api/precalificar
-   =========================================================== */
+=========================================================== */
 export async function crearLead(req, res) {
   try {
     const {
@@ -48,6 +50,8 @@ export async function crearLead(req, res) {
       aceptaTerminos,
       aceptaCompartir,
       resultado,
+      tiempoCompra,           // horizonte de compra
+      sustentoIndependiente,  // 👈 NUEVO (string: "declaracion" | "movimientos" | "ninguno" | null)
     } = req.body || {};
 
     if (!nombre || !email || !resultado) {
@@ -64,6 +68,8 @@ export async function crearLead(req, res) {
       ciudad,
       aceptaTerminos,
       aceptaCompartir,
+      tiempoCompra,
+      sustentoIndependiente, // 👈 log para debug
       productoElegido: resultado?.productoElegido,
     });
 
@@ -78,14 +84,25 @@ export async function crearLead(req, res) {
       ciudad,
       aceptaTerminos: !!aceptaTerminos,
       aceptaCompartir: !!aceptaCompartir,
+
       producto,
       scoreHL,
-      canal: "Web",
+      tiempoCompra: tiempoCompra || null,
+
+      // 👇 NUEVO: se persist e el sustento de ingresos independientes/mixtos
+      sustentoIndependiente: sustentoIndependiente || null,
+
+      // 👇 usamos el campo correcto definido en el modelo (resultado)
+      resultado,
+
       origen: "Simulador Hipoteca Exprés",
-      rawResultado: resultado,
+      // si quieres conservar "canal", lo guardamos en metadata
+      metadata: {
+        canal: "Web",
+      },
     });
 
-    // Enviar correos (cliente + interno) — NO rompe la respuesta si falla
+    // Enviar correos (cliente + interno)
     try {
       await Promise.all([
         enviarCorreoCliente(lead, resultado),
@@ -114,8 +131,8 @@ export async function crearLead(req, res) {
    Query:
     - pagina (1..n)
     - limit
-    - email, telefono, ciudad
-   =========================================================== */
+    - email, telefono, ciudad, tiempoCompra
+=========================================================== */
 export async function listarLeads(req, res) {
   try {
     const pagina = Math.max(parseInt(req.query.pagina || "1", 10), 1);
@@ -124,7 +141,7 @@ export async function listarLeads(req, res) {
       100
     );
 
-    const { email, telefono, ciudad } = req.query || {};
+    const { email, telefono, ciudad, tiempoCompra } = req.query || {};
     const filter = {};
 
     if (email) {
@@ -135,6 +152,11 @@ export async function listarLeads(req, res) {
     }
     if (ciudad) {
       filter.ciudad = { $regex: ciudad.trim(), $options: "i" };
+    }
+
+    // ⭐ Filtro: Horizonte de compra
+    if (tiempoCompra) {
+      filter.tiempoCompra = tiempoCompra;
     }
 
     const total = await Lead.countDocuments(filter);
@@ -169,7 +191,7 @@ export async function listarLeads(req, res) {
 
 /* ===========================================================
    GET /api/leads/stats  (total, hoy)
-   =========================================================== */
+=========================================================== */
 export async function statsLeads(req, res) {
   try {
     const total = await Lead.countDocuments({});
@@ -194,4 +216,3 @@ export async function statsLeads(req, res) {
     });
   }
 }
-
