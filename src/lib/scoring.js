@@ -92,12 +92,12 @@ const LIMITES = {
     ignoreCapacityPenalties: true,
     minEstabAnos: 1,
   },
-  // BIESS VIP / preferencial (hasta ~90k, tasa 5,99%)
+  // BIESS VIP / preferencial (hasta ~90k de préstamo, tasa 5,99%)
   BIESS_PREF: {
-    priceCap: 90000,        // tope preferencial
+    priceCap: 107630,      // tope típico de VIP
     incomeCap: 2900,
     firstHomeOnly: true,
-    requireNewBuild: true,  // también suele ser VIS/VIP
+    requireNewBuild: true, // VIS/VIP
     requireIESS: true,
     requireContribs: true,
     tasaAnual: 0.0599,
@@ -106,6 +106,7 @@ const LIMITES = {
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
     minEstabAnos: 1,
+    maxLoan: 90000,        // 👈 preferencial hasta 90k de préstamo
   },
   // BIESS estándar (tabla escalonada por monto)
   BIESS_STD: {
@@ -241,6 +242,7 @@ export function calcularPrecalificacion(input) {
       tieredStdBiess = false,
       requireNewBuild = false,
       minEstabAnos,
+      maxLoan = Infinity,
     } = prodCfg;
 
     // “Gatekeepers” normativos
@@ -263,6 +265,8 @@ export function calcularPrecalificacion(input) {
       n(valorVivienda) - n(entradaDisponible)
     );
 
+    const montoDentroDeTope = montoNecesario <= n(maxLoan, Infinity) + 1e-9;
+
     // ===== TASA EFECTIVA ANUAL DEL PRODUCTO =====
     let tasaEfectivaAnual = n(tasaAnual);
 
@@ -280,7 +284,7 @@ export function calcularPrecalificacion(input) {
         // 130k–200k → 9,00%
         tasaEfectivaAnual = 0.09;
       } else {
-        // >200k hasta 460k → 9,00% (mismo último tramo)
+        // >200k hasta 460k → 9,00% (mismo último tramo referencial)
         tasaEfectivaAnual = 0.09;
       }
     }
@@ -349,7 +353,8 @@ export function calcularPrecalificacion(input) {
       dentroLtv &&
       dentroCapacidad &&
       viviendaOK &&
-      estabOK
+      estabOK &&
+      montoDentroDeTope
     );
 
     return {
@@ -374,6 +379,7 @@ export function calcularPrecalificacion(input) {
         dentroCapacidad,
         viviendaOK,
         estabOK,
+        montoDentroDeTope,
       },
       bounds: {
         byCapacity: precioPorCapacidad,
