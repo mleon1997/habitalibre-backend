@@ -19,7 +19,7 @@ const app = express();
 app.set("trust proxy", true);
 app.use(
   helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // por si sirves PDFs/imagenes
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // permite PDFs/images
   })
 );
 app.use(compression());
@@ -33,7 +33,7 @@ mongoose
   .then(() => console.log("✅ Conectado a MongoDB"))
   .catch((err) => console.error("❌ Error conectando a MongoDB:", err.message));
 
-/* ================= CORS (único middleware) ================= */
+/* ================= Helpers CORS ================= */
 function parseOrigins(str) {
   return String(str || "")
     .split(",")
@@ -49,21 +49,25 @@ function normalizeOrigin(origin) {
   }
 }
 
+/* ================= Allowed Origins ================= */
 const allowList = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:4173",
   "https://habitalibre.com",
   "https://www.habitalibre.com",
-  "https://habitalibre-web.onrender.com", // si usas un front temporal en Render
+  "https://habitalibre-web.onrender.com",
   ...parseOrigins(process.env.CORS_ORIGIN),
 ]
   .map(normalizeOrigin)
   .filter(Boolean);
 
+console.log("🔐 ALLOWED ORIGINS:", allowList);
+
+/* ================= CORS ================= */
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // Postman/health checks
+    if (!origin) return cb(null, true); // Postman / health checks
     const norm = normalizeOrigin(origin);
     if (allowList.includes(norm)) return cb(null, true);
     console.warn(`🚫 CORS bloqueado para: ${origin} (norm: ${norm})`);
@@ -75,8 +79,13 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
-app.use(cors(corsOptions)); // ← ÚNICO lugar donde aplicamos CORS
-// ⚠️ NO usar app.options('*', ...) en Express 5 (rompe)
+// 🔥 IMPORTANTE: CORS debe ir ANTES de las rutas
+app.use(cors(corsOptions));
+
+/* ================= HEALTHCHECK (Render lo necesita) ================= */
+app.get("/health", (req, res) => {
+  res.status(200).json({ ok: true });
+});
 
 /* ================= Rutas API ================= */
 app.use("/api/diag", diagRoutes);
@@ -99,7 +108,7 @@ app.use((err, req, res, next) => {
   res.status(code).json({ ok: false, error: msg });
 });
 
-/* ================= Verificación SMTP (no bloquea) ================= */
+/* ================= Verificación SMTP (no bloquea server) ================= */
 verifySmtp()
   .then(() => console.log("📧 SMTP verificado correctamente"))
   .catch((err) => console.error("❌ Error verificando SMTP:", err.message));
