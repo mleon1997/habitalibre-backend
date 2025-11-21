@@ -106,7 +106,7 @@ const LIMITES = {
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
     minEstabAnos: 1,
-    maxLoan: 90000,        // 👈 preferencial hasta 90k de préstamo
+    maxLoan: 90000,        // preferencial hasta 90k de préstamo
   },
   // BIESS estándar (tabla escalonada por monto)
   BIESS_STD: {
@@ -191,6 +191,9 @@ export function calcularPrecalificacion(input) {
   const viviendaNuevaBool =
     typeof viviendaEstrenar === "boolean" ? viviendaEstrenar : true;
 
+  // 🔹 Estabilidad en meses (para comparar contra mínimos)
+  const estabMeses = n(aniosEstabilidad) * 12;
+
   // dti base por afiliación (conservador si no)
   const dtiBase = afiliadoBool ? 0.40 : 0.35;
 
@@ -254,10 +257,11 @@ export function calcularPrecalificacion(input) {
         n(iessAportesConsecutivas) >= MIN_IESS_CONSEC
       : true;
     const viviendaOK = requireNewBuild ? viviendaNuevaBool : true;
-    const estabOK =
-      typeof minEstabAnos === "number"
-        ? n(aniosEstabilidad) >= minEstabAnos
-        : true;
+
+    // 🔹 Convertimos requisito de años a meses y comparamos contra estabMeses
+    const minEstabMeses =
+      typeof minEstabAnos === "number" ? minEstabAnos * 12 : 0;
+    const estabOK = estabMeses >= minEstabMeses;
 
     // Monto que realmente se quiere pedir
     const montoNecesario = Math.max(
