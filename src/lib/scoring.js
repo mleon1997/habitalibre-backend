@@ -32,8 +32,8 @@ const BANK_RULES = [
   {
     id: "andino",
     nombre: "Banco Andino",
-    ltvMax: 0.80,
-    dtiMax: 0.40,
+    ltvMax: 0.8,
+    dtiMax: 0.4,
     minIngreso: 800,
     minEstabilidadMeses: 12,
     edadMin: 22,
@@ -43,7 +43,7 @@ const BANK_RULES = [
   {
     id: "pacifico",
     nombre: "Banco Pacífico",
-    ltvMax: 0.90,
+    ltvMax: 0.9,
     dtiMax: 0.42,
     minIngreso: 900,
     minEstabilidadMeses: 12,
@@ -55,7 +55,7 @@ const BANK_RULES = [
     id: "coopSA",
     nombre: "Coop. Sierra Azul",
     ltvMax: 0.85,
-    dtiMax: 0.40,
+    dtiMax: 0.4,
     minIngreso: 600,
     minEstabilidadMeses: 6,
     edadMin: 21,
@@ -66,13 +66,15 @@ const BANK_RULES = [
 
 /* ===========================================================
    Parámetros VIS/VIP/BIESS (referenciales y consistentes)
+   ⬇️ Ahora incluyen minIngreso
 =========================================================== */
 const LIMITES = {
   VIS: {
     priceCap: 83660,
     incomeCap: 2070,
+    minIngreso: 600,
     firstHomeOnly: true,
-    requireNewBuild: true, // 👈 vivienda por estrenar
+    requireNewBuild: true, // vivienda por estrenar
     tasaAnual: 0.0488,
     plazoMeses: 240,
     ltvMax: 0.95,
@@ -82,8 +84,9 @@ const LIMITES = {
   VIP: {
     priceCap: 107630,
     incomeCap: 2900,
+    minIngreso: 800,
     firstHomeOnly: true,
-    requireNewBuild: true, // 👈 vivienda por estrenar
+    requireNewBuild: true, // vivienda por estrenar
     tasaAnual: 0.0499,
     plazoMeses: 300,
     ltvMax: 0.95,
@@ -94,8 +97,9 @@ const LIMITES = {
   BIESS_PREF: {
     priceCap: 107630,
     incomeCap: 2900,
+    minIngreso: 700,
     firstHomeOnly: true,
-    requireNewBuild: true, // 👈 también suele ser VIS/VIP
+    requireNewBuild: true,
     requireIESS: true,
     requireContribs: true,
     tasaAnual: 0.0599,
@@ -108,13 +112,14 @@ const LIMITES = {
   BIESS_STD: {
     priceCap: 460000,
     incomeCap: Infinity,
+    minIngreso: 700,
     firstHomeOnly: false,
     requireIESS: true,
     requireContribs: true,
     // tasaAnual base (para el primer tramo, <= 90k)
     tasaAnual: 0.0699,
     plazoMeses: 300,
-    ltvMax: 0.90,
+    ltvMax: 0.9,
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
     // 👇 flag para usar tabla escalonada de tasas
@@ -124,11 +129,12 @@ const LIMITES = {
   COMERCIAL: {
     priceCap: Infinity,
     incomeCap: Infinity,
+    minIngreso: 800,
     firstHomeOnly: false,
     tasaAnual: 0.115,
     plazoMeses: 240,
     ltvMax: 0.85,
-    dtiMax: 0.40,
+    dtiMax: 0.4,
     ignoreCapacityPenalties: false,
   },
 };
@@ -169,7 +175,7 @@ export function calcularPrecalificacion(input) {
 
     // Requisitos BIESS
     iessAportesTotales = 0,
-    iessAportesConsecutivas = 0,
+    iessAportesConsecutivos = 0,
   } = input || {};
 
   /* ---- normalizaciones ---- */
@@ -187,7 +193,7 @@ export function calcularPrecalificacion(input) {
     typeof viviendaEstrenar === "boolean" ? viviendaEstrenar : true;
 
   // dti base por afiliación (conservador si no)
-  const dtiBase = afiliadoBool ? 0.40 : 0.35;
+  const dtiBase = afiliadoBool ? 0.4 : 0.35;
 
   // normalizamos años de estabilidad
   const aniosEstNum = n(aniosEstabilidad);
@@ -201,17 +207,17 @@ export function calcularPrecalificacion(input) {
       : 1.0;
 
   // ⚠️ penalizamos fuerte cuando la estabilidad es baja
-  //  - 0 años        → 0.60 (escenario muy conservador)
+  //  - 0 años        → 0.60 (muy conservador)
   //  - 0–1 años      → 0.75
   //  - 1–3 años      → 0.90
   //  - 3+ años       → 1.00
   let factorEstab;
   if (aniosEstNum <= 0) {
-    factorEstab = 0.60;
+    factorEstab = 0.6;
   } else if (aniosEstNum < 1) {
     factorEstab = 0.75;
   } else if (aniosEstNum < 3) {
-    factorEstab = 0.90;
+    factorEstab = 0.9;
   } else {
     factorEstab = 1.0;
   }
@@ -242,7 +248,9 @@ export function calcularPrecalificacion(input) {
       ltvMax,
       priceCap,
       incomeCap = Infinity,
+      minIngreso = 0,
       firstHomeOnly = false,
+      requireNewBuild = false,
       requireIESS = false,
       requireContribs = false,
       dtiMax,
@@ -252,13 +260,18 @@ export function calcularPrecalificacion(input) {
     } = prodCfg;
 
     // “Gatekeepers” normativos
-    const dentroIngreso = n(ingresoTotal) <= n(incomeCap, Infinity) + 1e-9;
+    const dentroIngreso =
+      ingresoTotal >= n(minIngreso) &&
+      ingresoTotal <= n(incomeCap, Infinity) + 1e-9;
+
     const primeraViviendaOK = firstHomeOnly ? !tieneVivienda : true;
     const iessOK = requireIESS ? afiliadoBool : true;
     const aportesOK = requireContribs
       ? n(iessAportesTotales) >= MIN_IESS_TOTALES &&
-        n(iessAportesConsecutivas) >= MIN_IESS_CONSEC
+        n(iessAportesConsecutivos) >= MIN_IESS_CONSEC
       : true;
+
+    const viviendaNuevaOK = requireNewBuild ? !!viviendaNuevaBool : true;
 
     // Monto que realmente se quiere pedir (según vivienda y entrada)
     const montoNecesario = Math.max(0, n(valorVivienda) - n(entradaDisponible));
@@ -345,6 +358,7 @@ export function calcularPrecalificacion(input) {
       primeraViviendaOK &&
       iessOK &&
       aportesOK &&
+      viviendaNuevaOK &&
       dentroPrecio &&
       dentroLtv &&
       dentroCapacidad
@@ -357,6 +371,7 @@ export function calcularPrecalificacion(input) {
       ltvMax: n(ltvMax),
       priceCap,
       incomeCap,
+      minIngreso,
       montoPrestamo,
       cuota,
       cuotaStress,
@@ -367,6 +382,7 @@ export function calcularPrecalificacion(input) {
         primeraViviendaOK,
         iessOK,
         aportesOK,
+        viviendaNuevaOK,
         dentroPrecio,
         dentroLtv,
         dentroCapacidad,
@@ -409,6 +425,27 @@ export function calcularPrecalificacion(input) {
   else if (evalVIP.viable) escenarioElegido = evalVIP;
   else if (evalBPREF.viable) escenarioElegido = evalBPREF;
   else if (evalBSTD.viable) escenarioElegido = evalBSTD;
+
+  // 🔒 Si ningún producto es viable (por ingreso muy bajo, etc.)
+  const hayViable =
+    evalVIS.viable ||
+    evalVIP.viable ||
+    evalBPREF.viable ||
+    evalBSTD.viable ||
+    evalCOM.viable;
+
+  if (!hayViable) {
+    escenarioElegido = {
+      ...escenarioElegido,
+      producto: "Sin oferta viable hoy",
+      montoPrestamo: 0,
+      cuota: 0,
+      cuotaStress: 0,
+      ltv: 0,
+      precioMaxVivienda: 0,
+      viable: false,
+    };
+  }
 
   /* ===========================================================
      Métricas globales / riesgo
@@ -456,7 +493,8 @@ export function calcularPrecalificacion(input) {
     return "default";
   })();
 
-  const ultimas13ContinuasBool = n(iessAportesConsecutivas) >= MIN_IESS_CONSEC;
+  const ultimas13ContinuasBool =
+    n(iessAportesConsecutivos) >= MIN_IESS_CONSEC;
 
   const puntajeHabitaLibre = scoreHabitaLibre({
     dtiConHipoteca,
@@ -653,6 +691,10 @@ export function calcularPrecalificacion(input) {
   else if (evalBSTD.viable) perfilLabel = "BIESS viable";
   else if (evalCOM.viable) perfilLabel = "Comercial viable";
 
+  if (!hayViable) {
+    perfilLabel = "Perfil en construcción (ingreso insuficiente / parámetros no viables)";
+  }
+
   // 🚧 Si la estabilidad es menor a 1 año, lo marcamos explícitamente
   if (aniosEstNum < 1) {
     perfilLabel = "Perfil en construcción (falta estabilidad)";
@@ -701,7 +743,7 @@ export function calcularPrecalificacion(input) {
       nacionalidad,
       esExtranjero,
       iessAportesTotales: n(iessAportesTotales),
-      iessAportesConsecutivas: n(iessAportesConsecutivas),
+      iessAportesConsecutivos: n(iessAportesConsecutivos),
       sustentoIndependiente: sustentoIndependiente || null,
     },
 
