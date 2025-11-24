@@ -75,7 +75,7 @@ const LIMITES = {
     minIngreso: 600,
     firstHomeOnly: true,
     requireNewBuild: true, // vivienda por estrenar
-    tasaAnual: 0.0488,
+    tasaAnual: 0.0499,
     plazoMeses: 240,
     ltvMax: 0.95,
     dtiMax: 0.45,
@@ -349,6 +349,7 @@ export function calcularPrecalificacion(input) {
       montoPrestamo
     );
 
+    // 👇 Aquí es donde se respeta el tope VIS/VIP por valor de vivienda
     const dentroPrecio = n(valorVivienda) <= n(priceCap, Infinity);
     const dentroLtv = ltv <= n(ltvMax) + 1e-9;
     const dentroCapacidad = cuota <= cuotaMaxProducto + 1e-9;
@@ -446,6 +447,9 @@ export function calcularPrecalificacion(input) {
       viable: false,
     };
   }
+
+  // 👇 Flag global para el front (A4/A5)
+  const sinOferta = !hayViable;
 
   /* ===========================================================
      Métricas globales / riesgo
@@ -692,7 +696,8 @@ export function calcularPrecalificacion(input) {
   else if (evalCOM.viable) perfilLabel = "Comercial viable";
 
   if (!hayViable) {
-    perfilLabel = "Perfil en construcción (ingreso insuficiente / parámetros no viables)";
+    perfilLabel =
+      "Perfil en construcción (ingreso insuficiente / parámetros no viables)";
   }
 
   // 🚧 Si la estabilidad es menor a 1 año, lo marcamos explícitamente
@@ -728,6 +733,11 @@ export function calcularPrecalificacion(input) {
     bounds: escenarioElegido.bounds,
     productoElegido: escenarioElegido.producto,
     requeridos: { downTo80: n(reqDown80), downTo90: n(reqDown90) },
+
+    // 👇 Flags globales para el front
+    flags: {
+      sinOferta,
+    },
 
     // Perfil
     perfil: {

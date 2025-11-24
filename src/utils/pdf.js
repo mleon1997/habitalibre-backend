@@ -182,11 +182,7 @@ const explDTI = (dti) =>
 const explTasa = (t) =>
   !isNum(t)
     ? "La tasa es el costo del crédito."
-    : t <= 0.055
-    ? "Tasa competitiva: respáldala con documentación impecable."
-    : t <= 0.09
-    ? "Tasa razonable: aún negociable."
-    : "Tasa elevada: mejora LTV/DTI para acceder a ofertas mejores.";
+    : "La tasa mostrada es referencial; se aplicará cuando definas un monto y plazo de crédito viables.";
 
 // ============== Portada / pie ==============
 function portada(doc, lead) {
@@ -373,7 +369,7 @@ function planMejoraSinOferta(R) {
   return tips;
 }
 
-// === drawAmortTable (reemplazo completo) ===
+// === drawAmortTable ===
 function drawAmortTable(doc, rows) {
   const startX = M;
   const colW = [60, 110, 110, 110, 130]; // Mes, Cuota, Interés, Capital, Saldo
@@ -445,23 +441,29 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     requeridos: resultado?.requeridos || {},
     bounds: resultado?.bounds || {},
     flags: resultado?.flags || {},
-    // 👇 nuevo: ingreso total para plan de acción
+    // nuevo: ingreso total para plan de acción
     ingresoTotal: toNum(resultado?.perfil?.ingresoTotal, null),
   };
 
+  const flagSinOferta = resultado?.flags?.sinOferta;
+
   // Flag principal: sin oferta viable hoy
   const sinOferta =
-    !isNum(R.montoMaximo) ||
-    R.montoMaximo <= 0 ||
-    !isNum(R.precioMaxVivienda) ||
-    R.precioMaxVivienda <= 0;
+    typeof flagSinOferta === "boolean"
+      ? flagSinOferta
+      : !isNum(R.montoMaximo) ||
+        R.montoMaximo <= 0 ||
+        !isNum(R.precioMaxVivienda) ||
+        R.precioMaxVivienda <= 0;
 
   // Crear PDF
   const doc = new PDFDocument({
     size: "A4",
     margins: { top: M, bottom: M, left: M, right: M },
     info: {
-      Title: `Precalificación HabitaLibre - ${lead?.nombre || "Cliente"}`,
+      Title: `Precalificación HabitaLibre - ${
+        lead?.nombre || "Cliente"
+      }`,
       Author: "HabitaLibre",
       Producer: "HabitaLibre PDF Engine",
     },
@@ -686,7 +688,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     x,
     y,
     "Capacidad de pago (est.)",
-    isNum(R.capacidadPago) ? money(R.capacidadPago) : "—",
+    isNum(R.capacidadPago) ? money(R.capacidadPago, 0) : "—",
     chipW,
     chipH
   );
@@ -695,7 +697,9 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     x + chipW + gap,
     y,
     "Monto máximo (est.)",
-    isNum(R.montoMaximo) ? money(R.montoMaximo) : "—",
+    sinOferta || !isNum(R.montoMaximo) || R.montoMaximo <= 0
+      ? "—"
+      : money(R.montoMaximo, 0),
     chipW,
     chipH
   );
@@ -724,7 +728,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     x,
     y,
     "LTV",
-    isNum(R.ltv) ? pct(R.ltv, 1) : "—",
+    sinOferta || !isNum(R.ltv) || R.ltv <= 0 ? "—" : pct(R.ltv, 1),
     chipW,
     chipH
   );
@@ -733,7 +737,9 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     x + chipW + gap,
     y,
     "Precio máx. de vivienda",
-    isNum(R.precioMaxVivienda) ? money(R.precioMaxVivienda) : "—",
+    sinOferta || !isNum(R.precioMaxVivienda) || R.precioMaxVivienda <= 0
+      ? "—"
+      : money(R.precioMaxVivienda, 0),
     chipW,
     chipH
   );
@@ -769,19 +775,19 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
 
   // Normalizaciones de score
   let sLTV = 0.5;
-  if (isNum(R.ltv)) {
+  if (isNum(R.ltv) && R.ltv > 0) {
     if (R.ltv <= 0.8) sLTV = 1;
     else if (R.ltv >= 1) sLTV = 0;
     else sLTV = Math.max(0, 1 - (R.ltv - 0.8) / 0.2);
   }
   let sDTI = 0.5;
-  if (isNum(R.dtiConHipoteca)) {
+  if (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0) {
     if (R.dtiConHipoteca <= 0.35) sDTI = 1;
     else if (R.dtiConHipoteca >= 0.5) sDTI = 0;
     else sDTI = Math.max(0, 1 - (R.dtiConHipoteca - 0.35) / 0.15);
   }
   let sTasa = 0.5;
-  if (isNum(R.tasaAnual)) {
+  if (isNum(R.tasaAnual) && R.tasaAnual > 0) {
     if (R.tasaAnual <= 0.055) sTasa = 1;
     else if (R.tasaAnual >= 0.12) sTasa = 0;
     else sTasa = Math.max(0, 1 - (R.tasaAnual - 0.055) / (0.12 - 0.055));
@@ -798,27 +804,16 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     ? "Hoy tus ingresos y deudas no permiten una cuota hipotecaria sostenible. Tu primer objetivo es reforzar la capacidad de pago."
     : explDTI(R.dtiConHipoteca);
 
-  barScore(
-    doc,
-    scoreX,
-    scoreY,
-    `LTV ${isNum(R.ltv) ? `(${pct(R.ltv, 1)})` : ""}`,
-    sLTV,
-    hintL,
-    colorL
-  );
+  const ltvLabel =
+    sinOferta || !isNum(R.ltv) || R.ltv <= 0 ? "LTV" : `LTV (${pct(R.ltv, 1)})`;
+  const dtiLabel =
+    sinOferta || !isNum(R.dtiConHipoteca) || R.dtiConHipoteca <= 0
+      ? "DTI"
+      : `DTI (${pct(R.dtiConHipoteca, 1)})`;
+
+  barScore(doc, scoreX, scoreY, ltvLabel, sLTV, hintL, colorL);
   scoreY = doc.y + 4;
-  barScore(
-    doc,
-    scoreX,
-    scoreY,
-    `DTI ${
-      isNum(R.dtiConHipoteca) ? `(${pct(R.dtiConHipoteca, 1)})` : ""
-    }`,
-    sDTI,
-    hintD,
-    colorD
-  );
+  barScore(doc, scoreX, scoreY, dtiLabel, sDTI, hintD, colorD);
   scoreY = doc.y + 4;
   barScore(
     doc,
