@@ -338,6 +338,41 @@ function planMejora(R) {
   return tips;
 }
 
+// Plan de acción específico cuando no hay oferta viable
+function planMejoraSinOferta(R) {
+  const tips = [];
+  const ingresoTotal = toNum(R.ingresoTotal, 0);
+
+  tips.push(
+    "Con tus ingresos y deudas actuales, un crédito hipotecario no sería sostenible ni para ti ni para los bancos. Esto no es un 'no' definitivo, es un 'todavía no'."
+  );
+
+  if (ingresoTotal > 0) {
+    tips.push(
+      `Hoy tu ingreso familiar aproximado está alrededor de ${money(
+        ingresoTotal,
+        0
+      )}. Apunta a superar los USD 700–800 mensuales manteniendo tus deudas bajas para que un crédito empiece a ser viable.`
+    );
+  } else {
+    tips.push(
+      "Apunta a que tu ingreso familiar neto supere aproximadamente USD 700–800 mensuales manteniendo tus deudas bajas para que un crédito empiece a ser viable."
+    );
+  }
+
+  tips.push(
+    "Evita tomar nuevas deudas de consumo y prioriza pagar las que ya tienes para liberar capacidad de pago."
+  );
+  tips.push(
+    "Empieza un plan de ahorro de entrada, aunque sea pequeño (por ejemplo USD 3.000–5.000 para una vivienda de interés social). Eso mejorará mucho tus probabilidades cuando tu ingreso suba."
+  );
+  tips.push(
+    "Formaliza tus ingresos (roles de pago claros o RUC/declaraciones e historial bancario ordenado). La formalidad pesa tanto como el monto del ingreso."
+  );
+
+  return tips;
+}
+
 // === drawAmortTable (reemplazo completo) ===
 function drawAmortTable(doc, rows) {
   const startX = M;
@@ -410,7 +445,16 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     requeridos: resultado?.requeridos || {},
     bounds: resultado?.bounds || {},
     flags: resultado?.flags || {},
+    // 👇 nuevo: ingreso total para plan de acción
+    ingresoTotal: toNum(resultado?.perfil?.ingresoTotal, null),
   };
+
+  // Flag principal: sin oferta viable hoy
+  const sinOferta =
+    !isNum(R.montoMaximo) ||
+    R.montoMaximo <= 0 ||
+    !isNum(R.precioMaxVivienda) ||
+    R.precioMaxVivienda <= 0;
 
   // Crear PDF
   const doc = new PDFDocument({
@@ -447,7 +491,31 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   try {
     const precioMax = isNum(R.precioMaxVivienda) ? R.precioMaxVivienda : null;
 
-    if (precioMax) {
+    if (sinOferta) {
+      doc
+        .fontSize(12)
+        .fillColor(brand.text)
+        .text(
+          "Hoy, con tus ingresos, deudas y el valor de vivienda ingresado, ningún tipo de crédito hipotecario resulta sostenible. Esto no significa que no puedas tener casa propia, sino que tu perfil aún está en construcción.",
+          M,
+          doc.y,
+          { width: W }
+        )
+        .moveDown(0.4);
+
+      doc
+        .fontSize(11.5)
+        .fillColor(brand.mut)
+        .text(
+          "En este escenario la prioridad no es escoger un banco, sino reforzar tu capacidad de pago, estabilidad laboral y nivel de ahorro. En las siguientes secciones encontrarás un plan de acción concreto para avanzar.",
+          M,
+          doc.y,
+          { width: W }
+        )
+        .moveDown(0.6);
+
+      rule(doc);
+    } else if (precioMax && precioMax > 0) {
       const rangoMin = Math.round(precioMax * 0.9);
       const rangoMax = Math.round(precioMax);
 
@@ -670,16 +738,28 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     chipH
   );
 
-  const tipo = nombreProducto(R);
-  doc
-    .fontSize(11.5)
-    .fillColor(brand.text)
-    .text(
-      `Según tu perfil actual, tu mejor ruta luce como: ${tipo}. Usa este reporte para negociar condiciones y acelerar tu aprobación.`,
-      M,
-      y + chipH + 12,
-      { width: W }
-    );
+  if (sinOferta) {
+    doc
+      .fontSize(11.5)
+      .fillColor(brand.text)
+      .text(
+        "Según tu perfil actual, hoy no se identifica una oferta hipotecaria viable. Usa este reporte como guía para fortalecer tu perfil y entender qué metas de ingreso, deuda y ahorro necesitas alcanzar.",
+        M,
+        y + chipH + 12,
+        { width: W }
+      );
+  } else {
+    const tipo = nombreProducto(R);
+    doc
+      .fontSize(11.5)
+      .fillColor(brand.text)
+      .text(
+        `Según tu perfil actual, tu mejor ruta luce como: ${tipo}. Usa este reporte para negociar condiciones y acelerar tu aprobación.`,
+        M,
+        y + chipH + 12,
+        { width: W }
+      );
+  }
   rule(doc);
 
   // ========= Score hipotecario + puntaje global =========
@@ -711,13 +791,20 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   const colorD = sDTI >= 0.8 ? brand.ok : sDTI >= 0.5 ? brand.warn : brand.bad;
   const colorT = sTasa >= 0.8 ? brand.ok : sTasa >= 0.5 ? brand.warn : brand.bad;
 
+  const hintL = sinOferta
+    ? "Aún no hay crédito asignado; el LTV se definirá cuando tu capacidad alcance una vivienda específica."
+    : explLTV(R.ltv);
+  const hintD = sinOferta
+    ? "Hoy tus ingresos y deudas no permiten una cuota hipotecaria sostenible. Tu primer objetivo es reforzar la capacidad de pago."
+    : explDTI(R.dtiConHipoteca);
+
   barScore(
     doc,
     scoreX,
     scoreY,
     `LTV ${isNum(R.ltv) ? `(${pct(R.ltv, 1)})` : ""}`,
     sLTV,
-    explLTV(R.ltv),
+    hintL,
     colorL
   );
   scoreY = doc.y + 4;
@@ -729,7 +816,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       isNum(R.dtiConHipoteca) ? `(${pct(R.dtiConHipoteca, 1)})` : ""
     }`,
     sDTI,
-    explDTI(R.dtiConHipoteca),
+    hintD,
     colorD
   );
   scoreY = doc.y + 4;
@@ -744,16 +831,18 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   );
 
   // Termómetro/puntaje global
-  const score = puntajeGlobal(R); // 0..100
+  const scoreRaw = puntajeGlobal(R); // 0..100
+  const score = sinOferta ? Math.min(scoreRaw, 40) : scoreRaw;
   const termW = 360;
   const termFill = Math.round((score / 100) * termW);
   const termColor =
     score >= 80 ? brand.ok : score >= 60 ? brand.warn : brand.bad;
   const yTherm = doc.y + 10;
-  doc
-    .fillColor(brand.text)
-    .fontSize(11.5)
-    .text(`Puntaje global HabitaLibre: ${score}/100`, scoreX, yTherm);
+  const scoreLabel = sinOferta
+    ? `Puntaje global HabitaLibre: ${score}/100 (perfil en construcción)`
+    : `Puntaje global HabitaLibre: ${score}/100`;
+
+  doc.fillColor(brand.text).fontSize(11.5).text(scoreLabel, scoreX, yTherm);
   const yb = yTherm + 16;
   doc.save().roundedRect(scoreX, yb, termW, 10, 5).fill(brand.barBg).restore();
   if (termFill > 0)
@@ -798,7 +887,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
 
   // ========= Plan de acción recomendado =========
   sectionTitle(doc, "Plan de acción recomendado");
-  const tips = planMejora(R);
+  const tips = sinOferta ? planMejoraSinOferta(R) : planMejora(R);
   doc.fillColor(brand.text).fontSize(11);
   tips.forEach((t) => doc.text(`• ${t}`, M, doc.y, { width: W }));
   doc.moveDown(0.6);
@@ -806,7 +895,13 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   // ========= Stress de tasa =========
   sectionTitle(doc, "¿Qué pasa si sube la tasa? (stress +1% / +2% / +3%)");
 
-  if (isNum(R.montoMaximo) && isNum(R.tasaAnual) && isNum(R.plazoMeses)) {
+  if (
+    !sinOferta &&
+    isNum(R.montoMaximo) &&
+    R.montoMaximo > 0 &&
+    isNum(R.tasaAnual) &&
+    isNum(R.plazoMeses)
+  ) {
     const W2 = doc.page.width - M * 2;
     const barW = Math.min(380, W2 - 40);
     const barH = 10;
@@ -878,12 +973,21 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     doc
       .fillColor(brand.mut)
       .fontSize(11)
-      .text("Completa tasa, plazo y monto para ver el stress de cuota.", M);
+      .text(
+        "Cuando tu perfil alcance un monto de crédito viable, aquí verás cómo cambiaría tu cuota si la tasa sube.",
+        M
+      );
   }
   rule(doc);
 
   // ========= Amortización 12 meses + Proyección 5 años =========
-  if (isNum(R.montoMaximo) && isNum(R.tasaAnual) && isNum(R.plazoMeses)) {
+  if (
+    !sinOferta &&
+    isNum(R.montoMaximo) &&
+    R.montoMaximo > 0 &&
+    isNum(R.tasaAnual) &&
+    isNum(R.plazoMeses)
+  ) {
     const r = R.tasaAnual / 12;
     const c = pmt(r, R.plazoMeses, R.montoMaximo);
     const interesesTot = c * R.plazoMeses - R.montoMaximo;
@@ -956,15 +1060,17 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
         width: colHalf,
         continued: false,
       });
+
+    const labelAfinidad = sinOferta
+      ? "No viable hoy (ver plan de acción)"
+      : row.ok
+      ? "Viable / recomendado"
+      : "Pendiente de análisis";
+
     doc
-      .fillColor(row.ok ? brand.ok : brand.mut)
+      .fillColor(sinOferta ? brand.mut : row.ok ? brand.ok : brand.mut)
       .fontSize(11)
-      .text(
-        row.ok ? "Viable / recomendado" : "Pendiente de análisis",
-        M + colHalf,
-        yA,
-        { width: colHalf }
-      );
+      .text(labelAfinidad, M + colHalf, yA, { width: colHalf });
     yA += rowH;
   });
 
@@ -977,7 +1083,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     .fontSize(12)
     .fillColor(brand.text)
     .text(
-      "Agenda una asesoría para acelerar tu aprobación y conseguir mejores condiciones con tu entidad ideal.",
+      "Agenda una asesoría para trazar tu hoja de ruta: ya sea para fortalecer tu perfil y hacerlo viable, o para negociar mejores condiciones con la entidad ideal.",
       M,
       doc.y,
       { width: W }
@@ -999,4 +1105,3 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
 
 // Alias para mailer.js
 export const generarPDFLeadAvanzado = generarPDFLead;
-
