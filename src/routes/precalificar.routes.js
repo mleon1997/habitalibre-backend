@@ -141,6 +141,8 @@ router.post("/", async (req, res) => {
       escenariosHL: resultado.escenarios,
       bounds: resultado.bounds || null,
 
+      flags: resultado.flags,
+
       _echo: {
         ingresoNetoMensual: Number(body.ingresoNetoMensual || 0),
         ingresoPareja: Number(body.ingresoPareja || 0),

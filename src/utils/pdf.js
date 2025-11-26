@@ -1,4 +1,3 @@
-// src/utils/pdf.js
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
@@ -369,6 +368,47 @@ function planMejoraSinOferta(R) {
   return tips;
 }
 
+// Plan de acción cuando el ingreso no está formalizado (Independiente/Mixto sin sustento)
+function planMejoraSinSustento(R) {
+  const tips = [];
+  const ingresoTotal = toNum(R.ingresoTotal, 0);
+
+  tips.push(
+    "Tus ingresos actuales pueden ser suficientes para pensar en una hipoteca, pero hoy los bancos no pueden contarlos como ingresos formales."
+  );
+
+  if (ingresoTotal > 0) {
+    tips.push(
+      `Tu ingreso familiar estimado está alrededor de ${money(
+        ingresoTotal,
+        0
+      )}. El problema no es el monto, sino que no está formalizado de una forma que el banco pueda usar.`
+    );
+  }
+
+  tips.push(
+    "Define tu camino principal: seguir como empleado (contrato + roles de pago) o como independiente (RUC, facturas y declaraciones de impuestos)."
+  );
+
+  tips.push(
+    "Empieza a bancarizar tus ingresos: cobra la mayoría de tus pagos en 1–2 cuentas bancarias a tu nombre. Los bancos analizan tu historial de movimientos reales, no solo lo que declaras en el formulario."
+  );
+
+  tips.push(
+    "Mantén un historial estable por al menos 9–12 meses con ingresos formales (roles o facturación constante) antes de volver a aplicar. Eso puede cambiar por completo la respuesta del banco."
+  );
+
+  tips.push(
+    "Evita nuevas deudas y reduce las que ya tienes para mostrar una capacidad de pago limpia y predecible."
+  );
+
+  tips.push(
+    "En paralelo, arma un plan de ahorro para tu entrada (por ejemplo USD 3.000–5.000). Llegar con ahorros + ingresos formalizados te pone en una posición muy fuerte frente a los bancos."
+  );
+
+  return tips;
+}
+
 // === drawAmortTable ===
 function drawAmortTable(doc, rows) {
   const startX = M;
@@ -445,7 +485,43 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     ingresoTotal: toNum(resultado?.perfil?.ingresoTotal, null),
   };
 
+
   const flagSinOferta = resultado?.flags?.sinOferta;
+// 🧠 Debajo de donde tomas datos de `resultado`, añade:
+const edadCliente = resultado?.perfil?.edad || 0;
+const producto = (resultado?.productoElegido || "").toLowerCase();
+const plazoRecomendadoMeses = resultado?.plazoMeses || 0;
+
+// Plazo "normal" por tipo de producto (los mismos de LIMITES)
+const PLAZO_DEFAULT = {
+  vis: 240,
+  vip: 300,
+  "biess preferencial": 300,
+  biess: 300,
+  comercial: 240,
+};
+
+// Plazo estándar del producto según nuestro diccionario
+const plazoDefaultProducto =
+  PLAZO_DEFAULT[producto] || plazoRecomendadoMeses || 0;
+
+// Límite máximo por edad: que no pase de 75 años al vencimiento
+const maxPlazoPorEdadMeses = Math.max(0, (75 - edadCliente) * 12);
+
+// Se considera “recortado por edad” si:
+// - el plazo recomendado es menor al plazo estándar del producto, y
+// - además el máximo por edad es estrictamente menor al plazo estándar
+const recortadoPorEdad =
+  edadCliente > 0 &&
+  plazoRecomendadoMeses > 0 &&
+  plazoDefaultProducto > 0 &&
+  maxPlazoPorEdadMeses < plazoDefaultProducto - 0.5 &&
+  plazoRecomendadoMeses <= maxPlazoPorEdadMeses + 0.5;
+
+const plazoRecomendadoAnios = (plazoRecomendadoMeses / 12).toFixed(0);
+
+
+
 
   // Flag principal: sin oferta viable hoy
   const sinOferta =
@@ -882,10 +958,43 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
 
   // ========= Plan de acción recomendado =========
   sectionTitle(doc, "Plan de acción recomendado");
-  const tips = sinOferta ? planMejoraSinOferta(R) : planMejora(R);
+
+  let tips;
+  if (resultado?.flags?.sinSustento) {
+    tips = planMejoraSinSustento(R);
+  } else if (sinOferta) {
+    tips = planMejoraSinOferta(R);
+  } else {
+    tips = planMejora(R);
+  }
+
   doc.fillColor(brand.text).fontSize(11);
   tips.forEach((t) => doc.text(`• ${t}`, M, doc.y, { width: W }));
   doc.moveDown(0.6);
+
+  // ⚠️ Bloque extra cuando el plazo está limitado por edad
+if (recortadoPorEdad) {
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor("#b91c1c") // rojo sobrio
+    .text("Importante por tu edad", { continued: false });
+
+  doc.moveDown(0.15);
+
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor("#374151")
+    .text(
+      `Por tu edad actual, la mayoría de bancos limitarán el plazo máximo a unos ${plazoRecomendadoAnios} años. ` +
+        "Eso hace que la cuota sea más alta que en un crédito a 15–20 años. " +
+        "Si participara un garante más joven, algunas entidades podrían ampliar el plazo y reducir la cuota mensual."
+    );
+
+  doc.moveDown(0.4);
+}
+
 
   // ========= Stress de tasa =========
   sectionTitle(doc, "¿Qué pasa si sube la tasa? (stress +1% / +2% / +3%)");

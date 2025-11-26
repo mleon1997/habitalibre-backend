@@ -66,7 +66,7 @@ const BANK_RULES = [
 
 /* ===========================================================
    Parámetros VIS/VIP/BIESS (referenciales y consistentes)
-   ⬇️ Ahora incluyen minIngreso
+   ⬇️ Ahora incluyen minIngreso y BIESS escalonado
 =========================================================== */
 const LIMITES = {
   VIS: {
@@ -108,7 +108,7 @@ const LIMITES = {
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
   },
-  // BIESS estándar
+  // BIESS estándar (con tabla de tasas por monto)
   BIESS_STD: {
     priceCap: 460000,
     incomeCap: Infinity,
@@ -162,6 +162,8 @@ export function calcularPrecalificacion(input) {
     tipoIngreso = "Dependiente",
     aniosEstabilidad = 2,
     afiliadoIess = "No",
+
+    // 👇 Si el front manda "tieneVivienda" o "primeraVivienda"
     tieneVivienda = false,
     declaracionBuro = "ninguno",
     estadoCivil, // opcional
@@ -170,13 +172,45 @@ export function calcularPrecalificacion(input) {
     // 👇 nuevo: cómo sustenta ingresos (solo independiente/mixto)
     sustentoIndependiente = null,
 
-    // 👇 NUEVO: vivienda por estrenar (si no viene, asumimos true para compatibilidad)
+    // 👇 NUEVO: flags extra de vivienda (si vienen del front)
+    // primeraVivienda: "Sí" / "No" / true / false
+    primeraVivienda = null,
+    // viviendaUsada: true/false o "usada"/"nueva"
+    viviendaUsada = null,
+    // viviendaEstrenar: true = por estrenar, false = no
     viviendaEstrenar = true,
 
     // Requisitos BIESS
     iessAportesTotales = 0,
     iessAportesConsecutivos = 0,
   } = input || {};
+
+  // ===========================================================
+  //  Validación global de sustento de ingresos
+  //  - Dependiente  → siempre OK
+  //  - Independiente/Mixto → requiere algún sustento claro
+  // ===========================================================
+  const sustentoOKGlobal = (() => {
+    if (tipoIngreso === "Dependiente") return true;
+
+    const raw = (sustentoIndependiente || "").toString().toLowerCase().trim();
+    if (!raw) return false;
+
+    const okKeywords = [
+      "ruc",
+      "factura",
+      "facturas",
+      "declaracion",
+      "declaración",
+      "roles",
+      "rol de pago",
+      "contrato",
+      "contabilidad",
+      "ingresos formales",
+    ];
+
+    return okKeywords.some((k) => raw.includes(k));
+  })();
 
   /* ---- normalizaciones ---- */
   const afiliadoBool =
@@ -189,8 +223,41 @@ export function calcularPrecalificacion(input) {
       ? nacionalidad.trim().toLowerCase() !== "ecuatoriana"
       : false;
 
+  // ================= NORMALIZACIÓN VIVIENDA =================
+  // 1) ¿Es primera vivienda?
+  const primeraViviendaBool =
+    primeraVivienda === null || primeraVivienda === undefined
+      ? null
+      : typeof primeraVivienda === "string"
+      ? primeraVivienda.trim().toLowerCase().startsWith("s") // "sí"
+      : !!primeraVivienda;
+
+  // Normalizamos tieneVivienda si viene como string
+  const tieneViviendaBoolRaw =
+    typeof tieneVivienda === "string"
+      ? /si|sí|true|1/i.test(tieneVivienda)
+      : !!tieneVivienda;
+
+  // Regla:
+  // - Si explícitamente NOS dicen "no es primera vivienda" → asumimos que YA tiene vivienda
+  // - Si no nos dicen nada, usamos el campo tieneVivienda normalizado
+  const tieneViviendaBool =
+    primeraViviendaBool === null ? tieneViviendaBoolRaw : !primeraViviendaBool;
+
+  // 2) ¿Es vivienda usada o por estrenar?
+  const viviendaUsadaBool =
+    typeof viviendaUsada === "string"
+      ? /usada|segunda/i.test(viviendaUsada.trim().toLowerCase())
+      : !!viviendaUsada;
+
+  // Si nos dicen explícitamente "usada", forzamos estrenar = false
   const viviendaNuevaBool =
-    typeof viviendaEstrenar === "boolean" ? viviendaEstrenar : true;
+    viviendaUsadaBool
+      ? false
+      : typeof viviendaEstrenar === "boolean"
+      ? viviendaEstrenar
+      : true;
+  // ==========================================================
 
   // dti base por afiliación (conservador si no)
   const dtiBase = afiliadoBool ? 0.4 : 0.35;
@@ -207,10 +274,6 @@ export function calcularPrecalificacion(input) {
       : 1.0;
 
   // ⚠️ penalizamos fuerte cuando la estabilidad es baja
-  //  - 0 años        → 0.60 (muy conservador)
-  //  - 0–1 años      → 0.75
-  //  - 1–3 años      → 0.90
-  //  - 3+ años       → 1.00
   let factorEstab;
   if (aniosEstNum <= 0) {
     factorEstab = 0.6;
@@ -240,167 +303,186 @@ export function calcularPrecalificacion(input) {
   /* ===========================================================
      Evaluador genérico por producto/programa
   ========================================================== */
-  function evaluarProducto(prodCfg) {
-    const {
-      label,
-      tasaAnual,
-      plazoMeses,
-      ltvMax,
-      priceCap,
-      incomeCap = Infinity,
-      minIngreso = 0,
-      firstHomeOnly = false,
-      requireNewBuild = false,
-      requireIESS = false,
-      requireContribs = false,
-      dtiMax,
-      ignoreCapacityPenalties = false,
-      // 👇 nuevo flag para BIESS estándar escalonado
-      tieredStdBiess = false,
-    } = prodCfg;
+ function evaluarProducto(prodCfg) {
+  const {
+    label,
+    tasaAnual,
+    plazoMeses,
+    ltvMax,
+    priceCap,
+    incomeCap = Infinity,
+    minIngreso = 0,
+    firstHomeOnly = false,
+    requireNewBuild = false,
+    requireIESS = false,
+    requireContribs = false,
+    dtiMax,
+    ignoreCapacityPenalties = false,
+    // 👇 nuevo flag para BIESS estándar escalonado
+    tieredStdBiess = false,
+  } = prodCfg;
 
-    // “Gatekeepers” normativos
-    const dentroIngreso =
-      ingresoTotal >= n(minIngreso) &&
-      ingresoTotal <= n(incomeCap, Infinity) + 1e-9;
+  // “Gatekeepers” normativos
+  const dentroIngreso =
+    ingresoTotal >= n(minIngreso) &&
+    ingresoTotal <= n(incomeCap, Infinity) + 1e-9;
 
-    const primeraViviendaOK = firstHomeOnly ? !tieneVivienda : true;
-    const iessOK = requireIESS ? afiliadoBool : true;
-    const aportesOK = requireContribs
-      ? n(iessAportesTotales) >= MIN_IESS_TOTALES &&
-        n(iessAportesConsecutivos) >= MIN_IESS_CONSEC
-      : true;
+  const primeraViviendaOK = firstHomeOnly ? !tieneViviendaBool : true;
+  const iessOK = requireIESS ? afiliadoBool : true;
+  const aportesOK = requireContribs
+    ? n(iessAportesTotales) >= MIN_IESS_TOTALES &&
+      n(iessAportesConsecutivos) >= MIN_IESS_CONSEC
+    : true;
 
-    const viviendaNuevaOK = requireNewBuild ? !!viviendaNuevaBool : true;
+  // Si el producto requiere vivienda nueva (VIS/VIP/BIESS pref),
+  // bloqueamos automáticamente inmuebles usados.
+  const viviendaNuevaOK = requireNewBuild ? !!viviendaNuevaBool : true;
 
-    // Monto que realmente se quiere pedir (según vivienda y entrada)
-    const montoNecesario = Math.max(0, n(valorVivienda) - n(entradaDisponible));
+  // ============= LÍMITE DE EDAD AL VENCIMIENTO =============
+  // Regla simple: edad al final del crédito ≤ 75 años
+  const edadNum = n(edad);
+  const plazoOriginal = n(plazoMeses);
+  const maxPlazoPorEdadMeses = Math.max(0, (75 - edadNum) * 12);
 
-    // ===== TASA EFECTIVA ANUAL DEL PRODUCTO =====
-    let tasaEfectivaAnual = n(tasaAnual);
+  // Plazo que realmente se puede usar en función de la edad
+  const plazoEfectivo = Math.min(plazoOriginal, maxPlazoPorEdadMeses);
 
-    // Si es BIESS estándar, aplicamos tabla escalonada por montoNecesario
-    if (tieredStdBiess) {
-      const loan = n(montoNecesario);
+  // Si ya no hay plazo útil (o edad >= 75), el producto se considera no viable
+  const edadOK = plazoEfectivo > 0;
+  // ==========================================================
 
-      if (loan <= 90000) {
-        // Hasta 90k → 6,99%
-        tasaEfectivaAnual = 0.0699;
-      } else if (loan <= 130000) {
-        // 90k–130k → 8,90%
-        tasaEfectivaAnual = 0.089;
-      } else if (loan <= 200000) {
-        // 130k–200k → 9,00%
-        tasaEfectivaAnual = 0.09;
-      } else {
-        // 200k–460k → 9,10%
-        tasaEfectivaAnual = 0.091;
-      }
+  // Monto que realmente se quiere pedir (según vivienda y entrada)
+  const montoNecesario = Math.max(0, n(valorVivienda) - n(entradaDisponible));
+
+  // ===== TASA EFECTIVA ANUAL DEL PRODUCTO =====
+  let tasaEfectivaAnual = n(tasaAnual);
+
+  // Si es BIESS estándar, aplicamos tabla escalonada por montoNecesario
+  if (tieredStdBiess) {
+    const loan = n(montoNecesario);
+
+    if (loan <= 90000) {
+      // Hasta 90k → 6,99%
+      tasaEfectivaAnual = 0.0699;
+    } else if (loan <= 130000) {
+      // 90k–130k → 8,90%
+      tasaEfectivaAnual = 0.089;
+    } else if (loan <= 200000) {
+      // 130k–200k → 9,00%
+      tasaEfectivaAnual = 0.09;
+    } else {
+      // 200k–460k → 9,10%
+      tasaEfectivaAnual = 0.091;
     }
-
-    const rate = tasaEfectivaAnual / 12;
-
-    // Capacidad específica del producto
-    const factorCapProd = ignoreCapacityPenalties ? 1.0 : factorCapacidad;
-    const dtiToUse =
-      typeof dtiMax === "number" && dtiMax > 0 ? dtiMax : dtiBase;
-
-    const cuotaMaxProducto = Math.max(
-      0,
-      ingresoDisponible * dtiToUse * factorCapProd
-    );
-    const montoMaxPorCuota = pvFromPayment(
-      rate,
-      n(plazoMeses),
-      cuotaMaxProducto
-    );
-
-    // Topes para “precio máximo de vivienda”
-    const precioPorCapacidad = n(entradaDisponible) + n(montoMaxPorCuota);
-    const precioPorLtv =
-      1 - n(ltvMax) > 0
-        ? n(entradaDisponible) / (1 - n(ltvMax))
-        : Infinity;
-    const precioPorTope = priceCap ?? Infinity;
-
-    const precioMaxVivienda = Math.min(
-      precioPorCapacidad,
-      precioPorLtv,
-      precioPorTope
-    );
-    let binding = "capacidad";
-    if (precioMaxVivienda === precioPorLtv) binding = "ltv";
-    if (precioMaxVivienda === precioPorTope) binding = "tope";
-
-    // LTV real con el monto que se quiere pedir
-    const ltv =
-      n(valorVivienda) > 0 ? montoNecesario / n(valorVivienda) : 0;
-
-    // El banco no prestará por encima de tu capacidad (para este producto)
-    const montoPrestamo = Math.max(
-      0,
-      Math.min(montoNecesario, n(montoMaxPorCuota))
-    );
-
-    const cuota = pmt(rate, n(plazoMeses), montoPrestamo);
-    const cuotaStress = pmt(
-      (n(tasaEfectivaAnual) + 0.02) / 12,
-      n(plazoMeses),
-      montoPrestamo
-    );
-
-    // 👇 Aquí es donde se respeta el tope VIS/VIP por valor de vivienda
-    const dentroPrecio = n(valorVivienda) <= n(priceCap, Infinity);
-    const dentroLtv = ltv <= n(ltvMax) + 1e-9;
-    const dentroCapacidad = cuota <= cuotaMaxProducto + 1e-9;
-
-    const viable = !!(
-      dentroIngreso &&
-      primeraViviendaOK &&
-      iessOK &&
-      aportesOK &&
-      viviendaNuevaOK &&
-      dentroPrecio &&
-      dentroLtv &&
-      dentroCapacidad
-    );
-
-    return {
-      producto: label || "—",
-      tasaAnual: tasaEfectivaAnual,
-      plazoMeses: n(plazoMeses),
-      ltvMax: n(ltvMax),
-      priceCap,
-      incomeCap,
-      minIngreso,
-      montoPrestamo,
-      cuota,
-      cuotaStress,
-      ltv,
-      precioMaxVivienda,
-      flags: {
-        dentroIngreso,
-        primeraViviendaOK,
-        iessOK,
-        aportesOK,
-        viviendaNuevaOK,
-        dentroPrecio,
-        dentroLtv,
-        dentroCapacidad,
-      },
-      bounds: {
-        byCapacity: precioPorCapacidad,
-        byLtv: precioPorLtv,
-        byCap: precioPorTope,
-        binding,
-        cuotaMaxProducto,
-        montoMaxPorCuota,
-        dtiUsado: dtiToUse,
-        factorCapProd,
-      },
-      viable,
-    };
   }
+
+  const rate = tasaEfectivaAnual / 12;
+
+  // Capacidad específica del producto
+  const factorCapProd = ignoreCapacityPenalties ? 1.0 : factorCapacidad;
+  const dtiToUse =
+    typeof dtiMax === "number" && dtiMax > 0 ? dtiMax : dtiBase;
+
+  const cuotaMaxProducto = Math.max(
+    0,
+    ingresoDisponible * dtiToUse * factorCapProd
+  );
+
+  // 👇 usamos plazoEfectivo en lugar de plazoOriginal
+  const montoMaxPorCuota = pvFromPayment(
+    rate,
+    plazoEfectivo,
+    cuotaMaxProducto
+  );
+
+  // Topes para “precio máximo de vivienda”
+  const precioPorCapacidad = n(entradaDisponible) + n(montoMaxPorCuota);
+  const precioPorLtv =
+    1 - n(ltvMax) > 0 ? n(entradaDisponible) / (1 - n(ltvMax)) : Infinity;
+  const precioPorTope = priceCap ?? Infinity;
+
+  const precioMaxVivienda = Math.min(
+    precioPorCapacidad,
+    precioPorLtv,
+    precioPorTope
+  );
+  let binding = "capacidad";
+  if (precioMaxVivienda === precioPorLtv) binding = "ltv";
+  if (precioMaxVivienda === precioPorTope) binding = "tope";
+
+  // LTV real con el monto que se quiere pedir
+  const ltv =
+    n(valorVivienda) > 0 ? montoNecesario / n(valorVivienda) : 0;
+
+  // El banco no prestará por encima de tu capacidad (para este producto)
+  const montoPrestamo = Math.max(
+    0,
+    Math.min(montoNecesario, n(montoMaxPorCuota))
+  );
+
+  const cuota = pmt(rate, plazoEfectivo, montoPrestamo);
+  const cuotaStress = pmt(
+    (tasaEfectivaAnual + 0.02) / 12,
+    plazoEfectivo,
+    montoPrestamo
+  );
+
+  // 👇 Aquí es donde se respeta el tope VIS/VIP por valor de vivienda
+  const dentroPrecio = n(valorVivienda) <= n(priceCap, Infinity);
+  const dentroLtv = ltv <= n(ltvMax) + 1e-9;
+  const dentroCapacidad = cuota <= cuotaMaxProducto + 1e-9;
+
+  const viable = !!(
+    dentroIngreso &&
+    primeraViviendaOK &&
+    iessOK &&
+    aportesOK &&
+    viviendaNuevaOK &&
+    dentroPrecio &&
+    dentroLtv &&
+    dentroCapacidad &&
+    edadOK // 👈 ahora también depende de la edad
+  );
+
+  return {
+    producto: label || "—",
+    tasaAnual: tasaEfectivaAnual,
+    plazoMeses: plazoEfectivo, // 👈 lo que devolvemos ya respeta edad
+    ltvMax: n(ltvMax),
+    priceCap,
+    incomeCap,
+    minIngreso,
+    montoPrestamo,
+    cuota,
+    cuotaStress,
+    ltv,
+    precioMaxVivienda,
+    flags: {
+      dentroIngreso,
+      primeraViviendaOK,
+      iessOK,
+      aportesOK,
+      viviendaNuevaOK,
+      dentroPrecio,
+      dentroLtv,
+      dentroCapacidad,
+      edadOK,
+      plazoOriginal,
+      plazoEfectivo,
+    },
+    bounds: {
+      byCapacity: precioPorCapacidad,
+      byLtv: precioPorLtv,
+      byCap: precioPorTope,
+      binding,
+      cuotaMaxProducto,
+      montoMaxPorCuota,
+      dtiUsado: dtiToUse,
+      factorCapProd,
+    },
+    viable,
+  };
+}
 
   /* ===========================================================
      Construcción/evaluación de productos
@@ -427,15 +509,23 @@ export function calcularPrecalificacion(input) {
   else if (evalBPREF.viable) escenarioElegido = evalBPREF;
   else if (evalBSTD.viable) escenarioElegido = evalBSTD;
 
-  // 🔒 Si ningún producto es viable (por ingreso muy bajo, etc.)
-  const hayViable =
+  // 🔒 Viabilidad básica (solo por reglas de cada producto)
+  const hayViableBasico =
     evalVIS.viable ||
     evalVIP.viable ||
     evalBPREF.viable ||
     evalBSTD.viable ||
     evalCOM.viable;
 
-  if (!hayViable) {
+  // 🔒 Freno de mano global:
+  // Si es Independiente/Mixto y NO tiene sustentoOKGlobal, se fuerza "sin oferta viable"
+  const sinSustentoCritico =
+    (tipoIngreso === "Independiente" || tipoIngreso === "Mixto") &&
+    !sustentoOKGlobal;
+
+  const hayViableFinal = hayViableBasico && !sinSustentoCritico;
+
+  if (!hayViableFinal) {
     escenarioElegido = {
       ...escenarioElegido,
       producto: "Sin oferta viable hoy",
@@ -448,8 +538,8 @@ export function calcularPrecalificacion(input) {
     };
   }
 
-  // 👇 Flag global para el front (A4/A5)
-  const sinOferta = !hayViable;
+  // 👇 Flag global para el front (A4/A5 + PDF)
+  const sinOferta = !hayViableFinal;
 
   /* ===========================================================
      Métricas globales / riesgo
@@ -618,7 +708,7 @@ export function calcularPrecalificacion(input) {
     ],
   };
 
-  // 6) Plan de acción (personalizado)
+  // 6) Plan de acción (simple, se enriquece en PDF)
   const accionesClave = [];
   if (dtiConHipoteca > 0.42) {
     const gapUSD = Math.ceil((dtiConHipoteca - 0.42) * ingresoTotal);
@@ -695,7 +785,7 @@ export function calcularPrecalificacion(input) {
   else if (evalBSTD.viable) perfilLabel = "BIESS viable";
   else if (evalCOM.viable) perfilLabel = "Comercial viable";
 
-  if (!hayViable) {
+  if (!hayViableFinal) {
     perfilLabel =
       "Perfil en construcción (ingreso insuficiente / parámetros no viables)";
   }
@@ -734,9 +824,10 @@ export function calcularPrecalificacion(input) {
     productoElegido: escenarioElegido.producto,
     requeridos: { downTo80: n(reqDown80), downTo90: n(reqDown90) },
 
-    // 👇 Flags globales para el front
+    // 👇 Flags globales para el front + PDF
     flags: {
       sinOferta,
+      sinSustento: sinSustentoCritico,
     },
 
     // Perfil
@@ -747,7 +838,7 @@ export function calcularPrecalificacion(input) {
       aniosEstabilidad: aniosEstNum,
       afiliadoIess: afiliadoBool ? "Sí" : "No",
       ingresoTotal: n(ingresoTotal),
-      tieneVivienda: !!tieneVivienda,
+      tieneVivienda: !!tieneViviendaBool,
       viviendaEstrenar: !!viviendaNuevaBool,
       estadoCivil: estadoCivil || null,
       nacionalidad,
@@ -755,6 +846,7 @@ export function calcularPrecalificacion(input) {
       iessAportesTotales: n(iessAportesTotales),
       iessAportesConsecutivos: n(iessAportesConsecutivos),
       sustentoIndependiente: sustentoIndependiente || null,
+      sustentoOKGlobal,
     },
 
     // Escenarios comparativos
@@ -786,7 +878,7 @@ export function calcularPrecalificacion(input) {
     // Checklist educativo
     checklist,
 
-    // Plan de acción
+    // Plan de acción (simple, el PDF lo refina)
     accionesClave,
 
     // Comparador simple

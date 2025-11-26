@@ -115,10 +115,16 @@ const pct = (p, d = 1) => (isNum(p) ? `${(p * 100).toFixed(d)} %` : "—");
 /* ===========================================================
    HTML world-class para el CLIENTE
    =========================================================== */
+/* ===========================================================
+   HTML world-class para el CLIENTE
+   =========================================================== */
 function htmlResumenCliente(lead = {}, resultado = {}) {
   const nombre = lead?.nombre?.split(" ")[0] || "¡Hola!";
   const producto =
-    resultado?.productoElegido || resultado?.tipoCreditoElegido || "Crédito hipotecario";
+    resultado?.productoElegido ||
+    resultado?.tipoCreditoElegido ||
+    "Crédito hipotecario";
+
   const capacidad = money(resultado?.capacidadPago);
   const cuota = money(resultado?.cuotaEstimada);
   const stress = money(resultado?.cuotaStress);
@@ -126,6 +132,7 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   const dti = pct(resultado?.dtiConHipoteca);
   const monto = money(resultado?.montoMaximo);
   const precio = money(resultado?.precioMaxVivienda);
+  const precioRaw = resultado?.precioMaxVivienda;
 
   return `
   <div style="margin:0;padding:0;background:#020617;">
@@ -137,6 +144,10 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
               <td style="padding:0 24px 16px 24px;" align="left">
                 <div style="font-size:13px;color:#64748b;margin-bottom:4px;">HabitaLibre · Resumen de precalificación</div>
                 <div style="font-size:24px;font-weight:600;color:#e5e7eb;">${nombre}, tu resultado ya está listo 🏡</div>
+                <div style="font-size:13px;color:#cbd5f5;margin-top:6px;max-width:520px;line-height:1.5;">
+                  Con la información que ingresaste estimamos el rango de vivienda y de crédito que podrían aprobarte.
+                  En el PDF adjunto verás el detalle de tu simulación, stress test de tasa, tabla de amortización y un plan de acción para mejorar aún más tus probabilidades.
+                </div>
               </td>
             </tr>
 
@@ -147,50 +158,73 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                   style="border-radius:24px;background:radial-gradient(circle at 0 0,#4f46e5,#0f172a);padding:24px;box-shadow:0 20px 45px rgba(15,23,42,0.7);">
                   <tr>
                     <td style="color:#e5e7eb;font-size:14px;">
-                      <div style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#c7d2fe;margin-bottom:4px;">
-                        Precalificación resumida
-                      </div>
-                      <div style="font-size:18px;font-weight:600;margin-bottom:12px;">${producto}</div>
-                      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;">
-                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
-                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Capacidad de pago</div>
-                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${capacidad}</div>
+
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
+                        <div>
+                          <div style="font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#c7d2fe;margin-bottom:4px;">
+                            Precalificación aprobada
+                          </div>
+                          <div style="font-size:18px;font-weight:600;margin-bottom:4px;">${producto}</div>
+                          ${
+                            isNum(precioRaw)
+                              ? `<div style="font-size:13px;color:#bbf7d0;max-width:340px;">
+                                   Con tu perfil actual puedes buscar vivienda hasta
+                                   <span style="font-weight:600;color:#4ade80;">${precio}</span> aprox.
+                                 </div>`
+                              : ""
+                          }
                         </div>
-                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
-                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Cuota referencial</div>
-                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${cuota}</div>
+                        <div style="padding:4px 10px;border-radius:999px;background:rgba(34,197,94,0.16);border:1px solid rgba(74,222,128,0.4);font-size:11px;color:#bbf7d0;font-weight:500;">
+                          ✔ Precalificación vigente según los datos ingresados
                         </div>
                       </div>
 
+                      <!-- Fila 1: Precio máx. + Monto máx. -->
+                      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;">
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
+                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Precio máx. vivienda</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${precio}</div>
+                        </div>
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
+                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Monto préstamo máx.</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${monto}</div>
+                        </div>
+                      </div>
+
+                      <!-- Fila 2: Cuota + Capacidad -->
+                      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;">
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.85);padding:12px 14px;">
+                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Cuota estimada</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${cuota}</div>
+                        </div>
+                        <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.85);padding:12px 14px;">
+                          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Capacidad de pago</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${capacidad}</div>
+                        </div>
+                      </div>
+
+                      <!-- Stress / LTV / DTI -->
                       <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:10px;">
-                        <div style="flex:1 1 160px;min-width:160px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
-                          <div style="font-size:11px;color:#9ca3af;">Stress (+2%)</div>
+                        <div style="flex:1 1 160px;min-width:160px;border-radius:14px;background:rgba(15,23,42,0.9);padding:10px 12px;">
+                          <div style="font-size:11px;color:#9ca3af;">Stress (+2% tasa)</div>
                           <div style="font-size:14px;font-weight:500;margin-top:2px;">${stress}</div>
                         </div>
-                        <div style="flex:1 1 140px;min-width:140px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
+                        <div style="flex:1 1 140px;min-width:140px;border-radius:14px;background:rgba(15,23,42,0.9);padding:10px 12px;">
                           <div style="font-size:11px;color:#9ca3af;">LTV estimado</div>
                           <div style="font-size:14px;font-weight:500;margin-top:2px;">${ltv}</div>
                         </div>
-                        <div style="flex:1 1 140px;min-width:140px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
+                        <div style="flex:1 1 140px;min-width:140px;border-radius:14px;background:rgba(15,23,42,0.9);padding:10px 12px;">
                           <div style="font-size:11px;color:#9ca3af;">DTI con hipoteca</div>
                           <div style="font-size:14px;font-weight:500;margin-top:2px;">${dti}</div>
                         </div>
                       </div>
 
-                      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px;">
-                        <div style="flex:1 1 180px;min-width:180px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
-                          <div style="font-size:11px;color:#9ca3af;">Monto préstamo máx.</div>
-                          <div style="font-size:14px;font-weight:500;margin-top:2px;">${monto}</div>
-                        </div>
-                        <div style="flex:1 1 180px;min-width:180px;border-radius:14px;background:rgba(15,23,42,0.85);padding:10px 12px;">
-                          <div style="font-size:11px;color:#9ca3af;">Precio máx. vivienda</div>
-                          <div style="font-size:14px;font-weight:500;margin-top:2px;">${precio}</div>
-                        </div>
-                      </div>
-
-                      <div style="font-size:12px;color:#cbd5f5;margin-top:14px;">
+                      <div style="font-size:12px;color:#cbd5f5;margin-top:10px;line-height:1.5;">
                         Adjuntamos un reporte detallado en PDF con explicación de cada métrica, stress test de tasa,
                         tabla de amortización y un plan de acción para mejorar tus probabilidades de aprobación.
+                        <br/><br/>
+                        Si lo deseas, podemos acompañarte a comparar bancos y preparar tu carpeta para que llegues
+                        a la entidad financiera con todo listo.
                       </div>
 
                       <div style="margin-top:18px;">
@@ -227,6 +261,7 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   </div>
   `;
 }
+
 
 /* ===========================================================
    HTML world-class para correo INTERNO
