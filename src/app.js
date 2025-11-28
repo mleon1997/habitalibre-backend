@@ -11,6 +11,7 @@ import diagRoutes from "./routes/diag.routes.js";
 import precalificarRoutes from "./routes/precalificar.routes.js";
 import leadsRoutes from "./routes/leads.routes.js";
 import healthRoutes from "./routes/health.routes.js";
+import authRoutes from "./routes/auth.routes.js"; // 🔐 NUEVO
 import { verifySmtp } from "./utils/mailer.js";
 
 const app = express();
@@ -88,10 +89,16 @@ app.get("/health", (req, res) => {
 });
 
 /* ================= Rutas API ================= */
+// Rutas públicas
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
-app.use("/api/leads", leadsRoutes);
 app.use("/api/health", healthRoutes);
+
+// 🔐 Auth admin (login) – NUEVO
+app.use("/api/auth", authRoutes);
+
+// Rutas protegidas (leads se protege dentro del router con middleware)
+app.use("/api/leads", leadsRoutes);
 
 /* ================= 404 ================= */
 app.use((req, res) => {
