@@ -705,40 +705,119 @@ if (!hayViableFinal) {
     ],
   };
 
-  // 6) Plan de acción (simple, se enriquece en PDF)
+   // 6) Plan de acción (dinámico y coherente con los datos)
   const accionesClave = [];
-  if (dtiConHipoteca > 0.42) {
-    const gapUSD = Math.ceil((dtiConHipoteca - 0.42) * ingresoTotal);
-    accionesClave.push(
-      `Reduce deudas por ~${gapUSD.toLocaleString(
-        "es-EC"
-      )} USD para llevar tu DTI ≤ 42%.`
-    );
+  const ingresoNum = n(ingresoTotal);
+  const ingresoFmt = Math.round(ingresoNum).toLocaleString("es-EC", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+
+  if (!hayViableFinal) {
+    // 🔴 Perfil en construcción: foco en volverlo viable
+
+    // DTI alto → reducir deudas
+    if (dtiConHipoteca > 0.42 && ingresoNum > 0) {
+      const gapUSD = Math.ceil((dtiConHipoteca - 0.42) * ingresoNum);
+      accionesClave.push(
+        `Reduce deudas de consumo por aproximadamente $ ${gapUSD.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} para llevar tu DTI total por debajo de 42%.`
+      );
+    }
+
+    // LTV muy alto → aumentar entrada
+    if (escenarioElegido.ltv >= 0.9 && n(valorVivienda) > 0) {
+      const extraDown = Math.ceil(
+        (escenarioElegido.ltv - 0.9) * n(valorVivienda)
+      );
+      accionesClave.push(
+        `Aumenta tu entrada en alrededor de $ ${extraDown.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} para que el banco no financie más del 90% del valor de la vivienda.`
+      );
+    } else if (
+      escenarioElegido.ltv > 0 &&
+      escenarioElegido.ltv >= 0.8 &&
+      n(valorVivienda) > 0
+    ) {
+      const extraDown = Math.ceil(
+        (escenarioElegido.ltv - 0.8) * n(valorVivienda)
+      );
+      accionesClave.push(
+        `Si puedes, eleva tu entrada en unos $ ${extraDown.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} para acercarte a un LTV de 80% y mejorar tasas y condiciones.`
+      );
+    }
+
+    // Ingreso objetivo SOLO cuando el cuello es ingreso bajo
+    if (ingresoNum < 900) {
+      const targetLow = Math.round(Math.max(700, ingresoNum * 1.1) / 10) * 10;
+      const targetHigh = Math.round((targetLow * 1.2) / 10) * 10;
+      accionesClave.push(
+        `Hoy tu ingreso familiar aproximado está alrededor de $ ${ingresoFmt}. Procura llevarlo en el mediano plazo a un rango cercano a $ ${targetLow.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} – $ ${targetHigh.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} mensuales, manteniendo bajo tu nivel de deudas. Eso hará que la cuota hipotecaria empiece a ser sostenible.`
+      );
+    } else if (ingresoNum >= 900 && ingresoNum < 1600) {
+      const targetLow = Math.round((ingresoNum * 1.15) / 10) * 10;
+      const targetHigh = Math.round((ingresoNum * 1.35) / 10) * 10;
+      accionesClave.push(
+        `Hoy tu ingreso familiar aproximado está alrededor de $ ${ingresoFmt}. A medida que lo acerques a un rango de $ ${targetLow.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} – $ ${targetHigh.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} mensuales sin subir tus deudas, tus probabilidades de aprobación aumentarán de forma importante.`
+      );
+    }
+
+    if (!accionesClave.length) {
+      accionesClave.push(
+        "Tu perfil está en construcción. El foco principal es ordenar ingresos, deudas y entrada para que la cuota hipotecaria sea sostenible para ti y para los bancos."
+      );
+    }
+  } else {
+    // 🟢 Perfil ya viable: foco en optimizar condiciones
+
+    if (dtiConHipoteca > 0.42 && ingresoNum > 0) {
+      const gapUSD = Math.ceil((dtiConHipoteca - 0.42) * ingresoNum);
+      accionesClave.push(
+        `Aunque tu perfil ya es viable, bajar tu DTI por debajo de 42% reduciendo deudas en unos $ ${gapUSD.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} te ayudará a negociar mejores condiciones.`
+      );
+    }
+
+    if (escenarioElegido.ltv > 0.85 && n(valorVivienda) > 0) {
+      const extraDown = Math.ceil(
+        (escenarioElegido.ltv - 0.85) * n(valorVivienda)
+      );
+      accionesClave.push(
+        `Si aumentas tu entrada en aproximadamente $ ${extraDown.toLocaleString(
+          "es-EC",
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+        )} y bajas el LTV hacia 80–85%, podrás acceder a mejores tasas o a más entidades.`
+      );
+    }
+
+    if (!accionesClave.length) {
+      accionesClave.push(
+        "Perfil sólido. Solicita preaprobación en 2–3 entidades y compara TCEA (costo total del crédito), no solo la tasa."
+      );
+    }
   }
-  if (escenarioElegido.ltv > 0.9) {
-    const extraDown = Math.ceil(
-      (escenarioElegido.ltv - 0.9) * n(valorVivienda)
-    );
-    accionesClave.push(
-      `Aumenta entrada en ~${extraDown.toLocaleString(
-        "es-EC"
-      )} USD para LTV ≤ 90%.`
-    );
-  } else if (escenarioElegido.ltv > 0.8) {
-    const extraDown = Math.ceil(
-      (escenarioElegido.ltv - 0.8) * n(valorVivienda)
-    );
-    accionesClave.push(
-      `Eleva la entrada ~${extraDown.toLocaleString(
-        "es-EC"
-      )} USD para LTV ≤ 80% (mejor tasa/TCEA).`
-    );
-  }
-  if (!accionesClave.length) {
-    accionesClave.push(
-      "Perfil sólido. Solicita preaprobación en 2–3 entidades y compara TCEA, no solo tasa."
-    );
-  }
+
 
   // 7) Benchmark (3 “ofertas tipo” sin marca, para educar)
   const benchVIP = { nombre: "Opción A (VIP)", tasa: 0.0499, plazo: 300 };
