@@ -120,10 +120,15 @@ const pct = (p, d = 1) => (isNum(p) ? `${(p * 100).toFixed(d)} %` : "—");
    =========================================================== */
 function htmlResumenCliente(lead = {}, resultado = {}) {
   const nombre = lead?.nombre?.split(" ")[0] || "¡Hola!";
-  const producto =
+  const productoBase =
     resultado?.productoElegido ||
     resultado?.tipoCreditoElegido ||
     "Crédito hipotecario";
+
+  const sinOferta = resultado?.flags?.sinOferta === true;
+
+  // Si no hay oferta viable, el producto ya viene como "Sin oferta viable hoy"
+  const producto = productoBase;
 
   const capacidad = money(resultado?.capacidadPago);
   const cuota = money(resultado?.cuotaEstimada);
@@ -133,6 +138,23 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   const monto = money(resultado?.montoMaximo);
   const precio = money(resultado?.precioMaxVivienda);
   const precioRaw = resultado?.precioMaxVivienda;
+
+  // Textos condicionales
+  const pillLabel = sinOferta
+    ? "Perfil en construcción"
+    : "Precalificación aprobada";
+
+  const introParrafo = sinOferta
+    ? `Con la información que ingresaste, hoy no se identifica una oferta hipotecaria sostenible para ti ni para los bancos. Esto no es un “no” definitivo, es un “todavía no”. En el PDF adjunto verás qué fortalecer (ingresos, deudas y entrada) para que tu perfil se vuelva viable.`
+    : `Con la información que ingresaste estimamos el rango de vivienda y de crédito que podrían aprobarte. En el PDF adjunto verás el detalle de tu simulación, stress test de tasa, tabla de amortización y un plan de acción para mejorar aún más tus probabilidades.`;
+
+  const textoBajadaProducto = sinOferta
+    ? `Hoy tu perfil aún está en construcción. En el PDF te mostramos un plan de acción concreto para acercarte a una hipoteca sostenible.`
+    : `Con tu perfil actual puedes buscar vivienda hasta <span style="font-weight:600;color:#4ade80;">${precio}</span> aprox.`;
+
+  // En modo sinOferta mostramos “—” en los campos de monto/precio
+  const precioMostrar = sinOferta ? "—" : precio;
+  const montoMostrar = sinOferta ? "—" : monto;
 
   return `
   <div style="margin:0;padding:0;background:#020617;">
@@ -145,8 +167,7 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                 <div style="font-size:13px;color:#64748b;margin-bottom:4px;">HabitaLibre · Resumen de precalificación</div>
                 <div style="font-size:24px;font-weight:600;color:#e5e7eb;">${nombre}, tu resultado ya está listo 🏡</div>
                 <div style="font-size:13px;color:#cbd5f5;margin-top:6px;max-width:520px;line-height:1.5;">
-                  Con la información que ingresaste estimamos el rango de vivienda y de crédito que podrían aprobarte.
-                  En el PDF adjunto verás el detalle de tu simulación, stress test de tasa, tabla de amortización y un plan de acción para mejorar aún más tus probabilidades.
+                  ${introParrafo}
                 </div>
               </td>
             </tr>
@@ -162,20 +183,37 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
                         <div>
                           <div style="font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#c7d2fe;margin-bottom:4px;">
-                            Precalificación aprobada
+                            ${pillLabel}
                           </div>
                           <div style="font-size:18px;font-weight:600;margin-bottom:4px;">${producto}</div>
                           ${
-                            isNum(precioRaw)
+                            sinOferta
+                              ? `<div style="font-size:13px;color:#fee2e2;max-width:360px;">
+                                   ${textoBajadaProducto}
+                                 </div>`
+                              : precioRaw && isNum(precioRaw)
                               ? `<div style="font-size:13px;color:#bbf7d0;max-width:340px;">
-                                   Con tu perfil actual puedes buscar vivienda hasta
-                                   <span style="font-weight:600;color:#4ade80;">${precio}</span> aprox.
+                                   ${textoBajadaProducto}
                                  </div>`
                               : ""
                           }
                         </div>
-                        <div style="padding:4px 10px;border-radius:999px;background:rgba(34,197,94,0.16);border:1px solid rgba(74,222,128,0.4);font-size:11px;color:#bbf7d0;font-weight:500;">
-                          ✔ Precalificación vigente según los datos ingresados
+                        <div style="padding:4px 10px;border-radius:999px;background:${
+                          sinOferta
+                            ? "rgba(248,113,113,0.16)"
+                            : "rgba(34,197,94,0.16)"
+                        };border:1px solid ${
+    sinOferta
+      ? "rgba(248,113,113,0.5)"
+      : "rgba(74,222,128,0.4)"
+  };font-size:11px;color:${
+    sinOferta ? "#fecaca" : "#bbf7d0"
+  };font-weight:500;">
+                          ${
+                            sinOferta
+                              ? "Sin oferta viable hoy · perfil en ajuste"
+                              : "✔ Precalificación vigente según los datos ingresados"
+                          }
                         </div>
                       </div>
 
@@ -183,11 +221,11 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                       <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;">
                         <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
                           <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Precio máx. vivienda</div>
-                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${precio}</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${precioMostrar}</div>
                         </div>
                         <div style="flex:1 1 180px;min-width:180px;border-radius:16px;background:rgba(15,23,42,0.75);padding:12px 14px;border:1px solid rgba(148,163,184,0.3);">
                           <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;">Monto préstamo máx.</div>
-                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${monto}</div>
+                          <div style="font-size:18px;font-weight:600;margin-top:4px;">${montoMostrar}</div>
                         </div>
                       </div>
 
@@ -221,10 +259,10 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
 
                       <div style="font-size:12px;color:#cbd5f5;margin-top:10px;line-height:1.5;">
                         Adjuntamos un reporte detallado en PDF con explicación de cada métrica, stress test de tasa,
-                        tabla de amortización y un plan de acción para mejorar tus probabilidades de aprobación.
+                        tabla de amortización y un plan de acción para que sepas exactamente qué mejorar paso a paso.
                         <br/><br/>
                         Si lo deseas, podemos acompañarte a comparar bancos y preparar tu carpeta para que llegues
-                        a la entidad financiera con todo listo.
+                        a la entidad financiera con todo listo cuando tu perfil sea viable.
                       </div>
 
                       <div style="margin-top:18px;">
