@@ -334,35 +334,80 @@ function planMejora(R) {
 }
 
 // Plan de acción específico cuando no hay oferta viable
-function planMejoraSinOferta(R) {
+function planMejoraSinOferta(R = {}) {
   const tips = [];
-  const ingresoTotal = toNum(R.ingresoTotal, 0);
 
+  const ingresoTotal = toNum(R.ingresoTotal, 0);
+  const dtiCon = toNum(R.dtiConHipoteca, 0);
+  const valorVivienda = toNum(R.valorVivienda, 0);
+  const entrada = toNum(R.entradaDisponible, 0);
+  const ratioEntrada =
+    valorVivienda > 0 ? entrada / valorVivienda : 0;
+
+  const ingresoStr = ingresoTotal
+    ? money(ingresoTotal, 0)
+    : "tu ingreso actual";
+
+  const ingresoBajo = ingresoTotal > 0 && ingresoTotal < 800; // referencia VIS
+  const dtiAlto = dtiCon > 0.45;
+  const entradaBaja = ratioEntrada < 0.1; // < 10 % de entrada
+
+  // Mensaje marco
   tips.push(
     "Con tus ingresos y deudas actuales, un crédito hipotecario no sería sostenible ni para ti ni para los bancos. Esto no es un 'no' definitivo, es un 'todavía no'."
   );
 
-  if (ingresoTotal > 0) {
+  tips.push(
+    `Hoy tu ingreso familiar aproximado está alrededor de ${ingresoStr}. El reto principal es ajustar la combinación entre ingreso, deudas y entrada para que una cuota hipotecaria sea sostenible.`
+  );
+
+  // 1) Ingreso
+  if (ingresoBajo) {
+    const metaIngreso = Math.max(800, Math.round(ingresoTotal * 1.2));
     tips.push(
-      `Hoy tu ingreso familiar aproximado está alrededor de ${money(
-        ingresoTotal,
+      `Con un ingreso en ese rango es difícil que un banco vea margen para una cuota. Un objetivo razonable sería acercarte al menos a ${money(
+        metaIngreso,
         0
-      )}. Apunta a superar los USD 700–800 mensuales manteniendo tus deudas bajas para que un crédito empiece a ser viable.`
-    );
-  } else {
-    tips.push(
-      "Apunta a que tu ingreso familiar neto supere aproximadamente USD 700–800 mensuales manteniendo tus deudas bajas para que un crédito empiece a ser viable."
+      )} de ingreso familiar neto, manteniendo tus deudas de consumo bajo control.`
     );
   }
 
+  // 2) Deudas / DTI
+  if (dtiAlto && ingresoTotal > 0) {
+    const gapUSD = Math.ceil((dtiCon - 0.42) * ingresoTotal);
+    tips.push(
+      `Hoy tus deudas de consumo pesan demasiado en tu presupuesto (DTI alto). Como referencia, reducir tus deudas en alrededor de ${money(
+        gapUSD,
+        0
+      )} al mes (pagando saldos o cancelando obligaciones) te acercaría a un nivel de endeudamiento más sano para una hipoteca.`
+    );
+  } else {
+    tips.push(
+      "Evita tomar nuevas deudas de consumo y prioriza pagar las que ya tienes para liberar capacidad de pago."
+    );
+  }
+
+  // 3) Entrada / ahorro
+  if (entradaBaja && valorVivienda > 0) {
+    const entrada20 = Math.round(valorVivienda * 0.2);
+    const extraDown = Math.max(0, entrada20 - entrada);
+    if (extraDown > 0) {
+      tips.push(
+        `Tu entrada hoy es muy ajustada para el valor de vivienda que buscas. Un objetivo práctico sería acumular al menos ${money(
+          extraDown,
+          0
+        )} adicionales para acercarte a una entrada del 20 % sobre ese tipo de vivienda.`
+      );
+    }
+  } else {
+    tips.push(
+      "Mantén un plan de ahorro para entrada, aunque sea pequeño y constante. Acercarte a una entrada del 20 % mejora mucho las condiciones de tasa y aprobación."
+    );
+  }
+
+  // 4) Formalización
   tips.push(
-    "Evita tomar nuevas deudas de consumo y prioriza pagar las que ya tienes para liberar capacidad de pago."
-  );
-  tips.push(
-    "Empieza un plan de ahorro de entrada, aunque sea pequeño (por ejemplo USD 3.000–5.000 para una vivienda de interés social). Eso mejorará mucho tus probabilidades cuando tu ingreso suba."
-  );
-  tips.push(
-    "Formaliza tus ingresos (roles de pago claros o RUC/declaraciones e historial bancario ordenado). La formalidad pesa tanto como el monto del ingreso."
+    "Formaliza tus ingresos (roles de pago claros o RUC/declaraciones e historial bancario ordenado). La forma en que demuestras tu ingreso pesa tanto como el monto."
   );
 
   return tips;
