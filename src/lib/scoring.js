@@ -131,7 +131,7 @@ const LIMITES = {
     incomeCap: Infinity,
     minIngreso: 800,
     firstHomeOnly: false,
-    tasaAnual: 0.115,
+    tasaAnual: 0.075,
     plazoMeses: 240,
     ltvMax: 0.85,
     dtiMax: 0.4,
@@ -523,20 +523,17 @@ export function calcularPrecalificacion(input) {
     (tipoIngreso === "Independiente" || tipoIngreso === "Mixto") &&
     !sustentoOKGlobal;
 
-  const hayViableFinal = hayViableBasico && !sinSustentoCritico;
+const hayViableFinal = hayViableBasico && !sinSustentoCritico;
 
-  if (!hayViableFinal) {
-    escenarioElegido = {
-      ...escenarioElegido,
-      producto: "Sin oferta viable hoy",
-      montoPrestamo: 0,
-      cuota: 0,
-      cuotaStress: 0,
-      ltv: 0,
-      precioMaxVivienda: 0,
-      viable: false,
-    };
-  }
+// ❌ No matamos los montos, solo cambiamos el label
+if (!hayViableFinal) {
+  escenarioElegido = {
+    ...escenarioElegido,
+    producto: "Sin oferta viable hoy",
+    viable: false,
+  };
+}
+
 
   // 👇 Flag global para el front (A4/A5 + PDF)
   const sinOferta = !hayViableFinal;
