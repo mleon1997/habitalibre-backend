@@ -1,6 +1,7 @@
 // src/controllers/leads.controller.js
 import Lead from "../models/Lead.js";
 import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
+import { generarCodigoHLDesdeObjectId } from "../utils/codigoHL.js";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
@@ -37,7 +38,7 @@ function extraerProducto(resultado) {
     - nombre, email, telefono, ciudad
     - aceptaTerminos, aceptaCompartir
     - tiempoCompra
-    - sustentoIndependiente  👈 NUEVO
+    - sustentoIndependiente
     - resultado: objeto devuelto por /api/precalificar
 =========================================================== */
 export async function crearLead(req, res) {
@@ -50,8 +51,8 @@ export async function crearLead(req, res) {
       aceptaTerminos,
       aceptaCompartir,
       resultado,
-      tiempoCompra,           // horizonte de compra
-      sustentoIndependiente,  // 👈 NUEVO (string: "declaracion" | "movimientos" | "ninguno" | null)
+      tiempoCompra, // horizonte de compra
+      sustentoIndependiente, // "declaracion" | "movimientos" | "ninguno" | null
     } = req.body || {};
 
     if (!nombre || !email || !resultado) {
@@ -69,15 +70,15 @@ export async function crearLead(req, res) {
       aceptaTerminos,
       aceptaCompartir,
       tiempoCompra,
-      sustentoIndependiente, // 👈 log para debug
+      sustentoIndependiente,
       productoElegido: resultado?.productoElegido,
     });
 
     const scoreHL = extraerScoreHL(resultado);
     const producto = extraerProducto(resultado);
 
-    // Guardar en Mongo
-    const lead = await Lead.create({
+    // 1) Guardar lead en Mongo (sin código todavía)
+    let lead = await Lead.create({
       nombre,
       email,
       telefono,
@@ -89,24 +90,32 @@ export async function crearLead(req, res) {
       scoreHL,
       tiempoCompra: tiempoCompra || null,
 
-      // 👇 NUEVO: se persist e el sustento de ingresos independientes/mixtos
+      // sustento de ingresos independientes/mixtos
       sustentoIndependiente: sustentoIndependiente || null,
 
-      // 👇 usamos el campo correcto definido en el modelo (resultado)
+      // resultado completo del simulador
       resultado,
 
       origen: "Simulador Hipoteca Exprés",
-      // si quieres conservar "canal", lo guardamos en metadata
       metadata: {
         canal: "Web",
       },
     });
 
-    // Enviar correos (cliente + interno)
+    // 2) Generar Código HabitaLibre a partir del _id y guardarlo
+    const codigoHL = generarCodigoHLDesdeObjectId(lead._id);
+    lead.codigoHL = codigoHL;
+    await lead.save();
+
+    // 3) Objetos "planos" para el mailer/PDF, incluyendo codigoHL
+    const leadPlano = lead.toObject();
+    const resultadoConCodigo = { ...resultado, codigoHL };
+
+    // 4) Enviar correos (cliente + interno) con el código incluido
     try {
       await Promise.all([
-        enviarCorreoCliente(lead, resultado),
-        enviarCorreoLead(lead, resultado),
+        enviarCorreoCliente(leadPlano, resultadoConCodigo),
+        enviarCorreoLead(leadPlano, resultadoConCodigo),
       ]);
     } catch (errMail) {
       console.error("❌ Error enviando correos de lead:", errMail);
@@ -116,6 +125,7 @@ export async function crearLead(req, res) {
       ok: true,
       msg: "Lead creado correctamente",
       leadId: lead._id,
+      codigoHL,
     });
   } catch (err) {
     console.error("❌ Error en crearLead:", err);
@@ -154,7 +164,7 @@ export async function listarLeads(req, res) {
       filter.ciudad = { $regex: ciudad.trim(), $options: "i" };
     }
 
-    // ⭐ Filtro: Horizonte de compra
+    // Horizonte de compra
     if (tiempoCompra) {
       filter.tiempoCompra = tiempoCompra;
     }

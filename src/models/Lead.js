@@ -15,7 +15,7 @@ const LeadSchema = new mongoose.Schema(
     // 👇 Horizonte de compra (0-6, 6-12, 12-24, 24+)
     tiempoCompra: { type: String, index: true },
 
-    // 👇 NUEVO
+    // 👇 NUEVO: sustento de ingresos para análisis
     sustentoIndependiente: {
       type: String,
       enum: ["declaracion", "movimientos", "ninguno", null],
@@ -30,6 +30,14 @@ const LeadSchema = new mongoose.Schema(
     aceptaCompartir: Boolean,
     origen: String,
     metadata: Object,
+
+    // 👇 NUEVO: Código HabitaLibre para tracking con bancos
+    codigoHL: {
+      type: String,
+      unique: true,
+      sparse: true,   // permite que algunos leads no tengan código sin romper el índice
+      index: true,
+    },
   },
   { timestamps: true }
 );

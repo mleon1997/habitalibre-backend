@@ -115,9 +115,6 @@ const pct = (p, d = 1) => (isNum(p) ? `${(p * 100).toFixed(d)} %` : "—");
 /* ===========================================================
    HTML world-class para el CLIENTE
    =========================================================== */
-/* ===========================================================
-   HTML world-class para el CLIENTE
-   =========================================================== */
 function htmlResumenCliente(lead = {}, resultado = {}) {
   const nombre = lead?.nombre?.split(" ")[0] || "¡Hola!";
   const productoBase =
@@ -126,8 +123,6 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
     "Crédito hipotecario";
 
   const sinOferta = resultado?.flags?.sinOferta === true;
-
-  // Si no hay oferta viable, el producto ya viene como "Sin oferta viable hoy"
   const producto = productoBase;
 
   const capacidad = money(resultado?.capacidadPago);
@@ -138,6 +133,9 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   const monto = money(resultado?.montoMaximo);
   const precio = money(resultado?.precioMaxVivienda);
   const precioRaw = resultado?.precioMaxVivienda;
+
+  // 👇 Nuevo: Código HabitaLibre
+  const codigoHL = lead?.codigoHL || resultado?.codigoHL || null;
 
   // Textos condicionales
   const pillLabel = sinOferta
@@ -152,7 +150,6 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
     ? `Hoy tu perfil aún está en construcción. En el PDF te mostramos un plan de acción concreto para acercarte a una hipoteca sostenible.`
     : `Con tu perfil actual puedes buscar vivienda hasta <span style="font-weight:600;color:#4ade80;">${precio}</span> aprox.`;
 
-  // En modo sinOferta mostramos “—” en los campos de monto/precio
   const precioMostrar = sinOferta ? "—" : precio;
   const montoMostrar = sinOferta ? "—" : monto;
 
@@ -169,6 +166,15 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                 <div style="font-size:13px;color:#cbd5f5;margin-top:6px;max-width:520px;line-height:1.5;">
                   ${introParrafo}
                 </div>
+                ${
+                  codigoHL
+                    ? `<div style="font-size:11px;color:#a5b4fc;margin-top:8px;">
+                        Código HabitaLibre para tu trámite: 
+                        <span style="font-weight:600;color:#bfdbfe;">${codigoHL}</span><br/>
+                        Si llevas este reporte a un banco, pide que registren este código como referencia HabitaLibre.
+                       </div>`
+                    : ""
+                }
               </td>
             </tr>
 
@@ -300,13 +306,14 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   `;
 }
 
-
 /* ===========================================================
    HTML world-class para correo INTERNO
    =========================================================== */
 function htmlInterno(lead = {}, resultado = {}) {
   const producto =
     resultado?.productoElegido || resultado?.tipoCreditoElegido || "Crédito hipotecario";
+
+  const codigoHL = lead?.codigoHL || resultado?.codigoHL || "—";
 
   return `
   <div style="margin:0;padding:0;background:#0b1120;">
@@ -317,7 +324,12 @@ function htmlInterno(lead = {}, resultado = {}) {
             <tr>
               <td style="padding:16px 24px 8px 24px;">
                 <div style="font-size:13px;color:#93c5fd;margin-bottom:4px;">Nuevo lead capturado</div>
-                <div style="font-size:20px;font-weight:600;">${lead?.nombre || "Cliente"} · ${producto}</div>
+                <div style="font-size:20px;font-weight:600;">
+                  ${lead?.nombre || "Cliente"} · ${producto}
+                </div>
+                <div style="font-size:12px;color:#a5b4fc;margin-top:4px;">
+                  Código HabitaLibre: <strong>${codigoHL}</strong>
+                </div>
                 <div style="font-size:12px;color:#64748b;margin-top:4px;">
                   Origen: ${lead?.origen || "Simulador web"} · Canal: ${lead?.canal || "Web"}
                 </div>
@@ -335,6 +347,7 @@ function htmlInterno(lead = {}, resultado = {}) {
                       <div><strong>Email:</strong> ${lead?.email || "—"}</div>
                       <div><strong>Teléfono:</strong> ${lead?.telefono || "—"}</div>
                       <div><strong>Ciudad:</strong> ${lead?.ciudad || "—"}</div>
+                      <div><strong>Código HL:</strong> ${codigoHL}</div>
                     </td>
                     <td width="32"></td>
                     <td style="font-size:13px;color:#e5e7eb;">
@@ -376,7 +389,14 @@ function htmlInterno(lead = {}, resultado = {}) {
    =========================================================== */
 async function generarPDFBuffer(lead, resultado) {
   try {
-    const buffer = await generarPDFLeadAvanzado(lead, resultado);
+    // 👇 Nos aseguramos de que el PDF reciba siempre el código HL si existe
+    const codigoHL = lead?.codigoHL || resultado?.codigoHL || null;
+    const leadConCodigo = codigoHL ? { ...lead, codigoHL } : lead;
+    const resultadoConCodigo = codigoHL
+      ? { ...resultado, codigoHL }
+      : resultado;
+
+    const buffer = await generarPDFLeadAvanzado(leadConCodigo, resultadoConCodigo);
     return buffer;
   } catch (err) {
     console.error("❌ Error generando PDF avanzado:", err);

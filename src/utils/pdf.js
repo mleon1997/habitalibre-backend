@@ -141,7 +141,8 @@ function barScore(doc, x, y, label, v01, hint, color) {
   doc.fillColor(brand.text).fontSize(11.5).text(label, x, y);
   const yb = y + 16;
   doc.save().roundedRect(x, yb, W, H, 5).fill(brand.barBg).restore();
-  if (v > 0) doc.save().roundedRect(x, yb, v, H, 5).fill(color || brand.ok).restore();
+  if (v > 0)
+    doc.save().roundedRect(x, yb, v, H, 5).fill(color || brand.ok).restore();
   doc.fillColor(brand.mut).fontSize(10).text(hint, x, yb + 14, {
     width: W,
   });
@@ -184,7 +185,7 @@ const explTasa = (t) =>
     : "La tasa mostrada es referencial; se aplicará cuando definas un monto y plazo de crédito viables.";
 
 // ============== Portada / pie ==============
-function portada(doc, lead) {
+function portada(doc, lead, codigoHL) {
   // Franja superior full-width con color del logo
   const headerHeight = 90;
   doc
@@ -253,21 +254,26 @@ function portada(doc, lead) {
     .fontSize(12)
     .fillColor(brand.mut)
     .text(`Cliente: ${titleCase(lead?.nombre || "—")}`, M)
-    .text(`Email: ${safe(lead?.email)}`, M)
-    .text(`Fecha: ${new Date().toLocaleString("es-EC")}`, M)
-    .moveDown(0.3);
+    .text(`Email: ${safe(lead?.email)}`, M);
+
+  if (codigoHL) {
+    doc.text(`Código HabitaLibre: ${codigoHL}`, M);
+  }
+
+  doc.text(`Fecha: ${new Date().toLocaleString("es-EC")}`, M).moveDown(0.3);
 
   // Marca de versión visible
   doc
     .fontSize(10)
     .fillColor(brand.soft)
-    .text("HabitaLibre – Reporte avanzado v2", M, doc.y, { width: W });
+    .text("HabitaLibre – Reporte avanzado", M, doc.y, { width: W });
 
   rule(doc);
 }
 
-function pie(doc) {
-  const y = doc.page.height - M + 14;
+function pie(doc, codigoHL) {
+  const y = doc.page.height - M + 8;
+
   doc
     .fontSize(9.5)
     .fillColor(brand.soft)
@@ -277,6 +283,19 @@ function pie(doc) {
       y,
       { width: doc.page.width - M * 2, align: "center" }
     );
+
+  if (codigoHL) {
+    doc
+      .moveDown(0.2)
+      .fontSize(9)
+      .fillColor(brand.mut)
+      .text(
+        `Si presentas este informe en un banco o cooperativa aliada, menciona tu Código HabitaLibre: ${codigoHL}.`,
+        M,
+        doc.y,
+        { width: doc.page.width - M * 2, align: "center" }
+      );
+  }
 }
 
 // ============== Lógica de nombre de producto ==============
@@ -341,8 +360,7 @@ function planMejoraSinOferta(R = {}) {
   const dtiCon = toNum(R.dtiConHipoteca, 0);
   const valorVivienda = toNum(R.valorVivienda, 0);
   const entrada = toNum(R.entradaDisponible, 0);
-  const ratioEntrada =
-    valorVivienda > 0 ? entrada / valorVivienda : 0;
+  const ratioEntrada = valorVivienda > 0 ? entrada / valorVivienda : 0;
 
   const ingresoStr = ingresoTotal
     ? money(ingresoTotal, 0)
@@ -508,6 +526,15 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     lead?.email || lead?.nombre || "sin-identificar"
   );
 
+  // Código único HabitaLibre para tracking (si no viene, puedes generarlo antes)
+  const codigoHL =
+    resultado?.codigoHL ||
+    lead?.codigoHL ||
+    lead?.codigoHabitaLibre ||
+    resultado?.idHL ||
+    lead?._id ||
+    null;
+
   // Normalizar entrada
   const R = {
     capacidadPago: toNum(resultado?.capacidadPago, null),
@@ -530,43 +557,39 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     ingresoTotal: toNum(resultado?.perfil?.ingresoTotal, null),
   };
 
-
   const flagSinOferta = resultado?.flags?.sinOferta;
-// 🧠 Debajo de donde tomas datos de `resultado`, añade:
-const edadCliente = resultado?.perfil?.edad || 0;
-const producto = (resultado?.productoElegido || "").toLowerCase();
-const plazoRecomendadoMeses = resultado?.plazoMeses || 0;
 
-// Plazo "normal" por tipo de producto (los mismos de LIMITES)
-const PLAZO_DEFAULT = {
-  vis: 240,
-  vip: 300,
-  "biess preferencial": 300,
-  biess: 300,
-  comercial: 240,
-};
+  // ===== Lógica de plazo recortado por edad (para bloque explicativo) =====
+  const edadCliente = resultado?.perfil?.edad || 0;
+  const producto = (resultado?.productoElegido || "").toLowerCase();
+  const plazoRecomendadoMeses = resultado?.plazoMeses || 0;
 
-// Plazo estándar del producto según nuestro diccionario
-const plazoDefaultProducto =
-  PLAZO_DEFAULT[producto] || plazoRecomendadoMeses || 0;
+  // Plazo "normal" por tipo de producto
+  const PLAZO_DEFAULT = {
+    vis: 240,
+    vip: 300,
+    "biess preferencial": 300,
+    biess: 300,
+    comercial: 240,
+  };
 
-// Límite máximo por edad: que no pase de 75 años al vencimiento
-const maxPlazoPorEdadMeses = Math.max(0, (75 - edadCliente) * 12);
+  const plazoDefaultProducto =
+    PLAZO_DEFAULT[producto] || plazoRecomendadoMeses || 0;
 
-// Se considera “recortado por edad” si:
-// - el plazo recomendado es menor al plazo estándar del producto, y
-// - además el máximo por edad es estrictamente menor al plazo estándar
-const recortadoPorEdad =
-  edadCliente > 0 &&
-  plazoRecomendadoMeses > 0 &&
-  plazoDefaultProducto > 0 &&
-  maxPlazoPorEdadMeses < plazoDefaultProducto - 0.5 &&
-  plazoRecomendadoMeses <= maxPlazoPorEdadMeses + 0.5;
+  // Límite máximo por edad: que no pase de 75 años al vencimiento
+  const maxPlazoPorEdadMeses = Math.max(0, (75 - edadCliente) * 12);
 
-const plazoRecomendadoAnios = (plazoRecomendadoMeses / 12).toFixed(0);
+  const recortadoPorEdad =
+    edadCliente > 0 &&
+    plazoRecomendadoMeses > 0 &&
+    plazoDefaultProducto > 0 &&
+    maxPlazoPorEdadMeses < plazoDefaultProducto - 0.5 &&
+    plazoRecomendadoMeses <= maxPlazoPorEdadMeses + 0.5;
 
-
-
+  const plazoRecomendadoAnios =
+    plazoRecomendadoMeses > 0
+      ? (plazoRecomendadoMeses / 12).toFixed(0)
+      : null;
 
   // Flag principal: sin oferta viable hoy
   const sinOferta =
@@ -584,7 +607,7 @@ const plazoRecomendadoAnios = (plazoRecomendadoMeses / 12).toFixed(0);
     info: {
       Title: `Precalificación HabitaLibre - ${
         lead?.nombre || "Cliente"
-      }`,
+      }${codigoHL ? ` (${codigoHL})` : ""}`,
       Author: "HabitaLibre",
       Producer: "HabitaLibre PDF Engine",
     },
@@ -604,7 +627,7 @@ const plazoRecomendadoAnios = (plazoRecomendadoMeses / 12).toFixed(0);
   });
 
   // Portada
-  portada(doc, lead);
+  portada(doc, lead, codigoHL);
 
   const W = doc.page.width - M * 2;
 
@@ -994,9 +1017,7 @@ const plazoRecomendadoAnios = (plazoRecomendadoMeses / 12).toFixed(0);
     doc
       .fillColor(brand.mut)
       .text(
-        `~${Math.round(
-          R.plazoMeses / 12
-        )} años: balance cuota/costo total.`,
+        `~${Math.round(R.plazoMeses / 12)} años: balance cuota/costo total.`,
         M
       );
   rule(doc);
@@ -1018,28 +1039,27 @@ const plazoRecomendadoAnios = (plazoRecomendadoMeses / 12).toFixed(0);
   doc.moveDown(0.6);
 
   // ⚠️ Bloque extra cuando el plazo está limitado por edad
-if (recortadoPorEdad) {
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .fillColor("#b91c1c") // rojo sobrio
-    .text("Importante por tu edad", { continued: false });
+  if (recortadoPorEdad && plazoRecomendadoAnios) {
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor("#b91c1c") // rojo sobrio
+      .text("Importante por tu edad", { continued: false });
 
-  doc.moveDown(0.15);
+    doc.moveDown(0.15);
 
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor("#374151")
-    .text(
-      `Por tu edad actual, la mayoría de bancos limitarán el plazo máximo a unos ${plazoRecomendadoAnios} años. ` +
-        "Eso hace que la cuota sea más alta que en un crédito a 15–20 años. " +
-        "Si participara un garante más joven, algunas entidades podrían ampliar el plazo y reducir la cuota mensual."
-    );
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor("#374151")
+      .text(
+        `Por tu edad actual, la mayoría de bancos limitarán el plazo máximo a unos ${plazoRecomendadoAnios} años. ` +
+          "Eso hace que la cuota sea más alta que en un crédito a 15–20 años. " +
+          "Si participara un garante más joven, algunas entidades podrían ampliar el plazo y reducir la cuota mensual."
+      );
 
-  doc.moveDown(0.4);
-}
-
+    doc.moveDown(0.4);
+  }
 
   // ========= Stress de tasa =========
   sectionTitle(doc, "¿Qué pasa si sube la tasa? (stress +1% / +2% / +3%)");
@@ -1246,8 +1266,21 @@ if (recortadoPorEdad) {
       underline: true,
     });
 
+  if (codigoHL) {
+    doc
+      .moveDown(0.3)
+      .fontSize(11)
+      .fillColor(brand.mut)
+      .text(
+        `Cuando hables con un banco, puedes compartir este informe y mencionar tu Código HabitaLibre: ${codigoHL}. Así sabrán que ya estás precalificado digitalmente.`,
+        M,
+        doc.y,
+        { width: W }
+      );
+  }
+
   // === Cierre del generador ===
-  pie(doc);
+  pie(doc, codigoHL);
   doc.end();
   return await pdfDone;
 }
