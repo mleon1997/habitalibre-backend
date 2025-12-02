@@ -113,6 +113,199 @@ const money = (n, d = 2) =>
 const pct = (p, d = 1) => (isNum(p) ? `${(p * 100).toFixed(d)} %` : "—");
 
 /* ===========================================================
+   Render: ranking de bancos (cliente)
+   =========================================================== */
+function renderTopBancosCliente(resultado = {}) {
+  const bancosTop3 =
+    resultado.bancosTop3 && resultado.bancosTop3.length
+      ? resultado.bancosTop3
+      : (resultado.bancosProbabilidad || []).slice(0, 3);
+
+  if (!bancosTop3 || bancosTop3.length === 0) return "";
+
+  const mejorBanco = resultado.mejorBanco || bancosTop3[0];
+
+  const filas = bancosTop3
+    .map((b, idx) => {
+      const nombre = b.banco || b.nombre || "Banco";
+
+      // 🔹 Tomamos la probabilidad de varias posibles claves
+      let rawScore = null;
+      if (isNum(b.probScore)) rawScore = b.probScore;          // ya viene 0–100
+      else if (isNum(b.probPct)) rawScore = b.probPct;         // ya viene 0–100
+      else if (isNum(b.probabilidad)) rawScore = b.probabilidad * 100; // 0–1 => %
+      else if (isNum(b.prob)) rawScore = b.prob * 100;         // 0–1 => %
+      else if (isNum(b.score)) rawScore = b.score;             // 0–100
+
+      const probScore = rawScore !== null ? Math.round(rawScore) : null;
+      const probLabel = b.probLabel || "Probabilidad media";
+
+      // 🔹 Tipo de producto desde varias claves posibles
+      const tipoProducto =
+        b.tipoProducto ||
+        b.tipoCredito ||
+        b.tipo ||
+        b.producto ||
+        "";
+
+      const filaIdx = idx + 1;
+      const scoreTexto =
+        probScore !== null ? `${probScore}%` : "—";
+
+      return `
+        <tr>
+          <td style="padding:6px 10px;font-size:12px;color:#e5e7eb;border-bottom:1px solid rgba(30,64,175,0.4);">
+            <span style="opacity:0.8;">${filaIdx}.</span> ${nombre}
+          </td>
+          <td style="padding:6px 10px;font-size:12px;color:#bfdbfe;border-bottom:1px solid rgba(30,64,175,0.4);text-align:center;">
+            ${probLabel}
+            ${probScore !== null ? `<span style="opacity:0.8;"> · ${scoreTexto}</span>` : ""}
+          </td>
+          <td style="padding:6px 10px;font-size:11px;color:#94a3b8;border-bottom:1px solid rgba(30,64,175,0.4);text-align:right;">
+            ${tipoProducto || "—"}
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  // Mejor banco para el texto de arriba
+  const mejorNombre = mejorBanco?.banco || mejorBanco?.nombre || "la entidad con mejor ajuste";
+
+  let mejorRaw = null;
+  if (isNum(mejorBanco?.probScore)) mejorRaw = mejorBanco.probScore;
+  else if (isNum(mejorBanco?.probPct)) mejorRaw = mejorBanco.probPct;
+  else if (isNum(mejorBanco?.probabilidad)) mejorRaw = mejorBanco.probabilidad * 100;
+  else if (isNum(mejorBanco?.prob)) mejorRaw = mejorBanco.prob * 100;
+  else if (isNum(mejorBanco?.score)) mejorRaw = mejorBanco.score;
+
+  const mejorScore =
+    mejorRaw !== null ? `${Math.round(mejorRaw)}%` : "";
+  const mejorLabel = mejorBanco?.probLabel || "Alta";
+
+  return `
+    <div style="margin-top:18px;border-radius:18px;background:rgba(15,23,42,0.92);border:1px solid rgba(59,130,246,0.5);padding:14px 16px;">
+      <div style="font-size:12px;font-weight:600;color:#bfdbfe;margin-bottom:4px;">
+        ¿Dónde tienes más probabilidad de aprobación?
+      </div>
+      <div style="font-size:11px;color:#cbd5f5;margin-bottom:10px;line-height:1.5;">
+        Según tu perfil actual, la entidad que mejor encaja hoy es 
+        <span style="font-weight:600;color:#a5b4fc;">${mejorNombre}</span>
+        (${mejorLabel}${mejorScore ? ` · ${mejorScore}` : ""}).<br/>
+        Te recomendamos empezar tu trámite allí y luego comparar con 1–2 bancos adicionales.
+      </div>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+             style="border-collapse:collapse;border-radius:12px;overflow:hidden;background:rgba(15,23,42,0.9);">
+        <thead>
+          <tr>
+            <th style="font-size:11px;color:#9ca3af;font-weight:500;padding:6px 10px;text-align:left;border-bottom:1px solid rgba(30,64,175,0.7);">
+              Banco
+            </th>
+            <th style="font-size:11px;color:#9ca3af;font-weight:500;padding:6px 10px;text-align:center;border-bottom:1px solid rgba(30,64,175,0.7);">
+              Probabilidad
+            </th>
+            <th style="font-size:11px;color:#9ca3af;font-weight:500;padding:6px 10px;text-align:right;border-bottom:1px solid rgba(30,64,175,0.7);">
+              Tipo de producto
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filas}
+        </tbody>
+      </table>
+      <div style="font-size:10px;color:#64748b;margin-top:8px;">
+        Estas probabilidades son referenciales y se basan en la información que ingresaste
+        + políticas promedio de cada entidad. El banco siempre tomará la decisión final.
+      </div>
+    </div>
+  `;
+}
+
+/* ===========================================================
+   Render: ranking de bancos (interno)
+   =========================================================== */
+function renderTopBancosInterno(resultado = {}) {
+  const bancosTop3 =
+    resultado.bancosTop3 && resultado.bancosTop3.length
+      ? resultado.bancosTop3
+      : (resultado.bancosProbabilidad || []).slice(0, 3);
+
+  if (!bancosTop3 || bancosTop3.length === 0) return "";
+
+  const mejorBanco = resultado.mejorBanco || bancosTop3[0];
+
+  const filas = bancosTop3
+    .map((b, idx) => {
+      const nombre = b.banco || b.nombre || "Banco";
+
+      let rawScore = null;
+      if (isNum(b.probScore)) rawScore = b.probScore;
+      else if (isNum(b.probPct)) rawScore = b.probPct;
+      else if (isNum(b.probabilidad)) rawScore = b.probabilidad * 100;
+      else if (isNum(b.prob)) rawScore = b.prob * 100;
+      else if (isNum(b.score)) rawScore = b.score;
+
+      const probScore = rawScore !== null ? Math.round(rawScore) : null;
+      const probLabel = b.probLabel || "Media";
+
+      const dtiBanco = isNum(b.dtiBanco) ? b.dtiBanco : null;
+      const dtiTexto =
+        dtiBanco !== null ? `${(dtiBanco * 100).toFixed(0)}%` : "—";
+
+      const scoreTexto =
+        probScore !== null ? `${probScore}%` : "—";
+      const filaIdx = idx + 1;
+
+      return `
+        <tr>
+          <td style="padding:4px 8px;font-size:12px;color:#e5e7eb;border-bottom:1px solid #1f2937;">
+            ${filaIdx}. ${nombre}
+          </td>
+          <td style="padding:4px 8px;font-size:12px;color:#bfdbfe;border-bottom:1px solid #1f2937;text-align:center;">
+            ${probLabel}${probScore !== null ? ` · ${scoreTexto}` : ""}
+          </td>
+          <td style="padding:4px 8px;font-size:12px;color:#9ca3af;border-bottom:1px solid #1f2937;text-align:center;">
+            DTI ref.: ${dtiTexto}
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const mejorNombre = mejorBanco?.banco || mejorBanco?.nombre || "—";
+
+  let mejorRaw = null;
+  if (isNum(mejorBanco?.probScore)) mejorRaw = mejorBanco.probScore;
+  else if (isNum(mejorBanco?.probPct)) mejorRaw = mejorBanco.probPct;
+  else if (isNum(mejorBanco?.probabilidad)) mejorRaw = mejorBanco.probabilidad * 100;
+  else if (isNum(mejorBanco?.prob)) mejorRaw = mejorBanco.prob * 100;
+  else if (isNum(mejorBanco?.score)) mejorRaw = mejorBanco.score;
+
+  const mejorScore =
+    mejorRaw !== null ? `${Math.round(mejorRaw)}%` : "";
+  const mejorLabel = mejorBanco?.probLabel || "";
+
+  return `
+    <div style="margin-top:12px;border-radius:16px;background:#020617;border:1px solid #1f2937;padding:10px 12px;">
+      <div style="font-size:12px;font-weight:600;color:#93c5fd;margin-bottom:4px;">
+        Ranking de probabilidad por banco (HabitaLibre)
+      </div>
+      <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;">
+        Mejor ajuste actual: <strong>${mejorNombre}</strong> (${mejorLabel}${
+    mejorScore ? ` · ${mejorScore}` : ""
+  }).
+      </div>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+             style="border-collapse:collapse;">
+        <tbody>
+          ${filas}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/* ===========================================================
    HTML world-class para el CLIENTE
    =========================================================== */
 function htmlResumenCliente(lead = {}, resultado = {}) {
@@ -152,6 +345,9 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
 
   const precioMostrar = sinOferta ? "—" : precio;
   const montoMostrar = sinOferta ? "—" : monto;
+
+  // 🔹 Bloque de bancos recomendados (HTML)
+  const bloqueBancos = renderTopBancosCliente(resultado);
 
   return `
   <div style="margin:0;padding:0;background:#020617;">
@@ -263,7 +459,10 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                         </div>
                       </div>
 
-                      <div style="font-size:12px;color:#cbd5f5;margin-top:10px;line-height:1.5;">
+                      <!-- Ranking de bancos -->
+                      ${bloqueBancos}
+
+                      <div style="font-size:12px;color:#cbd5f5;margin-top:14px;line-height:1.5;">
                         Adjuntamos un reporte detallado en PDF con explicación de cada métrica, stress test de tasa,
                         tabla de amortización y un plan de acción para que sepas exactamente qué mejorar paso a paso.
                         <br/><br/>
@@ -315,6 +514,9 @@ function htmlInterno(lead = {}, resultado = {}) {
 
   const codigoHL = lead?.codigoHL || resultado?.codigoHL || "—";
 
+  // 🔹 Ranking bancos interno
+  const bloqueBancosInterno = renderTopBancosInterno(resultado);
+
   return `
   <div style="margin:0;padding:0;background:#0b1120;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0b1120;padding:20px 0;">
@@ -337,11 +539,11 @@ function htmlInterno(lead = {}, resultado = {}) {
             </tr>
 
             <tr>
-              <td style="padding:0 16px 16px 16px;">
+              <td style="padding:0 16px 12px 16px;">
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
                   style="border-radius:20px;background:#020617;border:1px solid #1e293b;padding:16px;">
                   <tr>
-                    <td style="font-size:13px;color:#e5e7eb;">
+                    <td style="font-size:13px;color:#e5e7eb;vertical-align:top;">
                       <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:8px;">Datos de contacto</div>
                       <div><strong>Nombre:</strong> ${lead?.nombre || "—"}</div>
                       <div><strong>Email:</strong> ${lead?.email || "—"}</div>
@@ -350,7 +552,7 @@ function htmlInterno(lead = {}, resultado = {}) {
                       <div><strong>Código HL:</strong> ${codigoHL}</div>
                     </td>
                     <td width="32"></td>
-                    <td style="font-size:13px;color:#e5e7eb;">
+                    <td style="font-size:13px;color:#e5e7eb;vertical-align:top;">
                       <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:8px;">Resumen numérico</div>
                       <div><strong>Capacidad pago:</strong> ${money(resultado?.capacidadPago)}</div>
                       <div><strong>Cuota ref.:</strong> ${money(resultado?.cuotaEstimada)}</div>
@@ -361,6 +563,13 @@ function htmlInterno(lead = {}, resultado = {}) {
                     </td>
                   </tr>
                 </table>
+              </td>
+            </tr>
+
+            <!-- Ranking bancos interno -->
+            <tr>
+              <td style="padding:0 16px 12px 16px;">
+                ${bloqueBancosInterno}
               </td>
             </tr>
 

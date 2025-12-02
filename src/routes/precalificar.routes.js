@@ -1,6 +1,8 @@
 // src/routes/precalificar.routes.js
 import { Router } from "express";
-import calcularPrecalificacion from "../lib/scoring.js";
+import calcularPrecalificacion, {
+  evaluarProbabilidadPorBanco,
+} from "../lib/scoring.js";
 
 const router = Router();
 
@@ -67,13 +69,15 @@ router.post("/", async (req, res) => {
     // Normalizamos afiliadoIess (el motor nuevo usa afiliadoIess)
     const afiliadoIessRaw = body.afiliadoIess ?? body.afiliadoIESS;
 
-    // 🚨 Aquí agregamos los campos que faltaban
+    // 🚨 Aportes IESS (aceptamos ambos nombres por si acaso)
     const iessAportesTotales = Number(body.iessAportesTotales || 0);
-    const iessAportesConsecutivas = Number(body.iessAportesConsecutivas || 0);
+    const iessAportesConsecutivos = Number(
+      body.iessAportesConsecutivos ?? body.iessAportesConsecutivas ?? 0
+    );
 
     console.log("➡️  APORTES IESS RECIBIDOS:", {
       totales: iessAportesTotales,
-      consecutivos: iessAportesConsecutivas,
+      consecutivos: iessAportesConsecutivos,
     });
 
     // Input final enviado al motor
@@ -81,11 +85,11 @@ router.post("/", async (req, res) => {
       ...body,
       afiliadoIess: afiliadoIessRaw,
       iessAportesTotales,
-      iessAportesConsecutivas,
+      iessAportesConsecutivos,
     };
 
-    // 🚀 Motor principal HabitaLibre (scoring avanzado)
-    const resultado = calcularPrecalificacion(input);
+    // 🚀 Motor principal HabitaLibre (scoring avanzado) usando la versión con bancos
+    const resultado = evaluarProbabilidadPorBanco(input);
 
     // Mapeo de escenarios a forma legacy (VIS, VIP, BIESS, PRIVADA)
     const escHL = resultado.escenarios || {};
@@ -109,6 +113,11 @@ router.post("/", async (req, res) => {
       afiliadoIESS: afiliadoFlag,
       edad: edadNum,
     });
+
+    // ⚠️ Bancos: nos traemos lo que devuelva scoring.js
+    const bancosProbabilidad = resultado.bancosProbabilidad || [];
+    const bancosTop3 = resultado.bancosTop3 || [];
+    const mejorBanco = resultado.mejorBanco || null;
 
     // Construimos la respuesta manteniendo compatibilidad
     const respuesta = {
@@ -143,6 +152,11 @@ router.post("/", async (req, res) => {
 
       flags: resultado.flags,
 
+      // 🔹 NUEVO: probabilidad por banco para email / front
+      bancosProbabilidad,
+      bancosTop3,
+      mejorBanco,
+
       _echo: {
         ingresoNetoMensual: Number(body.ingresoNetoMensual || 0),
         ingresoPareja: Number(body.ingresoPareja || 0),
@@ -154,7 +168,7 @@ router.post("/", async (req, res) => {
         nacionalidad: body.nacionalidad || "ecuatoriana",
         estadoCivil: body.estadoCivil || "soltero",
         iessAportesTotales,
-        iessAportesConsecutivas,
+        iessAportesConsecutivos,
       },
     };
 
@@ -163,6 +177,7 @@ router.post("/", async (req, res) => {
       cuotaEstimada: Math.round(respuesta.cuotaEstimada || 0),
       capacidadPago: Math.round(respuesta.capacidadPago || 0),
       dtiConHipoteca: respuesta.dtiConHipoteca,
+      bancosProbabilidad: respuesta.bancosProbabilidad?.length || 0,
     });
 
     return res.json(respuesta);

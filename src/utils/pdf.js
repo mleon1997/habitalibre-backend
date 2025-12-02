@@ -160,6 +160,30 @@ function miniBar(doc, x, y, label, current, total, color = brand.primary) {
   if (v > 0) doc.save().roundedRect(x, yb, v, H, 5).fill(color).restore();
 }
 
+// ============== Bancos recomendados (helpers nuevos) ==============
+function getTopBancos(resultado = {}) {
+  const rawTop =
+    Array.isArray(resultado.bancosTop3) && resultado.bancosTop3.length
+      ? resultado.bancosTop3
+      : Array.isArray(resultado.bancosProbabilidad)
+      ? resultado.bancosProbabilidad
+      : [];
+
+  const top = rawTop.slice(0, 3);
+  let mejor = resultado.mejorBanco;
+  if (!mejor && top.length) mejor = top[0];
+
+  return { top, mejor };
+}
+
+function colorProbabilidad(label) {
+  const t = String(label || "").toLowerCase();
+  if (t.includes("alta")) return brand.ok;
+  if (t.includes("media")) return brand.warn;
+  if (t.includes("baja")) return brand.bad;
+  return brand.primary;
+}
+
 // ============== Textos educativos ==============
 const explLTV = (ltv) =>
   !isNum(ltv)
@@ -558,6 +582,9 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   };
 
   const flagSinOferta = resultado?.flags?.sinOferta;
+
+  // ==== Bancos recomendados (nuevo bloque de datos) ====
+  const { top: bancosTop, mejor: mejorBanco } = getTopBancos(resultado || {});
 
   // ===== Lógica de plazo recortado por edad (para bloque explicativo) =====
   const edadCliente = resultado?.perfil?.edad || 0;
@@ -1061,6 +1088,98 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     doc.moveDown(0.4);
   }
 
+  // ========= NUEVA SECCIÓN: Dónde tienes más probabilidad de aprobación =========
+  if (bancosTop && bancosTop.length) {
+    sectionTitle(doc, "Dónde tienes más probabilidad de aprobación");
+
+    const mejorNombre =
+      mejorBanco?.banco || mejorBanco?.nombre || "la entidad con mejor ajuste";
+    const mejorLabel = mejorBanco?.probLabel || "Probabilidad media";
+    const mejorScore = isNum(mejorBanco?.probScore)
+      ? `${mejorBanco.probScore}%`
+      : "";
+
+    const textoIntro = sinOferta
+      ? "Aunque hoy tu perfil aún está en construcción, con la información que ingresaste podemos estimar en qué tipo de entidades tendrás mejor encaje cuando fortalezcas tu capacidad de pago."
+      : "Con tu perfil actual, estas son las entidades donde, en principio, tienes mejor probabilidad de encajar. Úsalas como guía para priorizar tu trámite.";
+
+    doc
+      .fontSize(11.5)
+      .fillColor(brand.text)
+      .text(textoIntro, M, doc.y, { width: W })
+      .moveDown(0.4);
+
+    doc
+      .fontSize(11)
+      .fillColor(brand.primaryDark)
+      .text(
+        `Mejor ajuste estimado: ${mejorNombre} (${mejorLabel}${
+          mejorScore ? ` · ${mejorScore}` : ""
+        })`,
+        M,
+        doc.y,
+        { width: W }
+      )
+      .moveDown(0.6);
+
+    let yB = doc.y;
+    bancosTop.forEach((b, idx) => {
+      if (yB > doc.page.height - M - 40) {
+        doc.addPage();
+        yB = M;
+      }
+
+      const nombre = b.banco || b.nombre || "Banco";
+      const probScore = isNum(b.probScore) ? b.probScore : null;
+      const probLabel = b.probLabel || "";
+      const tipoProducto = b.tipoProducto || "";
+      const labelLinea = `${idx + 1}. ${nombre}${
+        tipoProducto ? ` · ${tipoProducto}` : ""
+      }`;
+      const color = colorProbabilidad(probLabel);
+
+      miniBar(
+        doc,
+        M,
+        yB,
+        labelLinea,
+        probScore != null ? probScore : 0,
+        100,
+        color
+      );
+      yB = doc.y + 4;
+
+      if (probLabel || probScore != null) {
+        doc
+          .fontSize(9.5)
+          .fillColor(brand.mut)
+          .text(
+            `Probabilidad estimada: ${
+              probLabel || "Media"
+            }${probScore != null ? ` · ${probScore}%` : ""}`,
+            M,
+            yB,
+            { width: W }
+          );
+        yB = doc.y + 6;
+      }
+    });
+
+    doc.y = yB + 2;
+
+    doc
+      .fontSize(9.5)
+      .fillColor(brand.soft)
+      .text(
+        "Estas probabilidades son referenciales y se basan en tu perfil + políticas promedio de cada tipo de entidad. La decisión final siempre la toma el banco o cooperativa.",
+        M,
+        doc.y,
+        { width: W }
+      );
+
+    rule(doc);
+  }
+
   // ========= Stress de tasa =========
   sectionTitle(doc, "¿Qué pasa si sube la tasa? (stress +1% / +2% / +3%)");
 
@@ -1287,3 +1406,4 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
 
 // Alias para mailer.js
 export const generarPDFLeadAvanzado = generarPDFLead;
+
