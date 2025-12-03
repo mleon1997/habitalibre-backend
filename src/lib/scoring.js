@@ -378,11 +378,8 @@ export function calcularPrecalificacion(input) {
       : true;
   // ==========================================================
 
-  // 
   // dti base general (NO penalizamos IESS)
-const dtiBase = 0.40;
-
-
+  const dtiBase = 0.4;
 
   // normalizamos años de estabilidad
   const aniosEstNum = n(aniosEstabilidad);
@@ -838,6 +835,44 @@ const dtiBase = 0.40;
     },
   };
 
+  // 4b) Rutas viables + ruta recomendada (para UI/PDF y bancos)
+  const rutasViables = [];
+
+  if (opciones.VIS.viable) {
+    rutasViables.push({ tipo: "VIS", ...opciones.VIS });
+  }
+  if (opciones.VIP.viable) {
+    rutasViables.push({ tipo: "VIP", ...opciones.VIP });
+  }
+  if (opciones.BIESS.viable) {
+    rutasViables.push({ tipo: "BIESS", ...opciones.BIESS });
+  }
+  if (opciones.Privada.viable) {
+    rutasViables.push({ tipo: "Privada", ...opciones.Privada });
+  }
+
+  let rutaRecomendada = null;
+
+  // Prioridad: VIS > VIP > BIESS vs Privada (comparando cuota) > solo BIESS > solo Privada
+  if (opciones.VIS.viable) {
+    rutaRecomendada = { tipo: "VIS", ...opciones.VIS };
+  } else if (opciones.VIP.viable) {
+    rutaRecomendada = { tipo: "VIP", ...opciones.VIP };
+  } else if (opciones.BIESS.viable && opciones.Privada.viable) {
+    const cuotaBiess = n(opciones.BIESS.cuota);
+    const cuotaPriv = n(opciones.Privada.cuota);
+    // Si la cuota privada es igual o mejor (1% o más barata), recomendamos privada
+    if (cuotaPriv <= cuotaBiess * 0.99) {
+      rutaRecomendada = { tipo: "Privada", ...opciones.Privada };
+    } else {
+      rutaRecomendada = { tipo: "BIESS", ...opciones.BIESS };
+    }
+  } else if (opciones.BIESS.viable) {
+    rutaRecomendada = { tipo: "BIESS", ...opciones.BIESS };
+  } else if (opciones.Privada.viable) {
+    rutaRecomendada = { tipo: "Privada", ...opciones.Privada };
+  }
+
   // 5) Checklist educativo
   const checklist = {
     documentos: [
@@ -1101,6 +1136,10 @@ const dtiBase = 0.40;
     // Matriz limpia de opciones
     opciones,
 
+    // NUEVO: rutas viables y ruta recomendada
+    rutasViables,
+    rutaRecomendada,
+
     // Checklist educativo
     checklist,
 
@@ -1128,6 +1167,9 @@ export function evaluarProbabilidadPorBanco(input) {
     riesgoHabitaLibre,
     flags,
     perfil,
+    productoElegido,
+    escenarios,
+    rutaRecomendada,
   } = base;
 
   const {
@@ -1162,6 +1204,12 @@ export function evaluarProbabilidadPorBanco(input) {
     n(plazoMeses) || (input?.plazoAnios ? n(input.plazoAnios) * 12 : 240);
 
   const tasaAnualBase = n(tasaAnual) || 0.08;
+
+  // Viabilidad por tipo de producto (para penalizar bancos que no aplican)
+  const vipViable = escenarios?.vip?.viable;
+  const visViable = escenarios?.vis?.viable;
+  const biessViable = escenarios?.biess?.viable;
+  const comViable = escenarios?.comercial?.viable;
 
   const resultados = BANK_PROFILES.map((bank) => {
     const {
@@ -1257,15 +1305,26 @@ export function evaluarProbabilidadPorBanco(input) {
     if (declaracionBuro === "regularizado") score -= 10;
     if (declaracionBuro === "mora") score -= 40;
 
-    // Riesgo HL alto → penalización ligera
-   if (bank.tipo !== "VIP" && bank.tipo !== "VIS") {
-  if (riesgoHabitaLibre === "alto") score -= 10;
-}
-
+    // Riesgo HL alto → penalización ligera (para no matar VIS/VIP)
+    if (bank.tipo !== "VIP" && bank.tipo !== "VIS") {
+      if (riesgoHabitaLibre === "alto") score -= 10;
+    }
 
     // Si ya el motor dice "sin sustento" → castigo fuerte
     if (flags?.sinSustento) {
       score -= 30;
+    }
+
+    // Penalización por tipo de producto NO viable según escenarios
+    if (bank.tipo === "VIP") {
+      // Si ni VIP ni VIS son viables, este banco VIP pierde relevancia
+      if (vipViable === false && visViable === false) score -= 60;
+    }
+    if (bank.tipo === "BIESS") {
+      if (biessViable === false) score -= 60;
+    }
+    if (bank.tipo === "NORMAL") {
+      if (comViable === false) score -= 60;
     }
 
     score = clamp(score, 0, 100);
@@ -1289,15 +1348,52 @@ export function evaluarProbabilidadPorBanco(input) {
     };
   });
 
-  // Ordenamos de mayor a menor score
-  resultados.sort((a, b) => b.score - a.score);
+  // ===========================================================
+  // ORDENAMIENTO: priorizar el tipo de la RUTA RECOMENDADA
+  // ===========================================================
+  const tipoRutaBase =
+    rutaRecomendada?.tipo || (productoElegido || "").toString();
+  const tipoRutaLower = tipoRutaBase.toLowerCase();
+
+  resultados.sort((a, b) => {
+    // Ruta recomendada BIESS → BIESS va primero
+    if (tipoRutaLower.includes("biess")) {
+      const aIsBiess = a.tipo === "BIESS";
+      const bIsBiess = b.tipo === "BIESS";
+      if (aIsBiess !== bIsBiess) return aIsBiess ? -1 : 1;
+    }
+
+    // Ruta recomendada VIS/VIP → VIP/VIS primero
+    if (
+      tipoRutaLower.includes("vip") ||
+      tipoRutaLower.includes("vis")
+    ) {
+      const aIsVipVis = a.tipo === "VIP" || a.tipo === "VIS";
+      const bIsVipVis = b.tipo === "VIP" || b.tipo === "VIS";
+      if (aIsVipVis !== bIsVipVis) return aIsVipVis ? -1 : 1;
+    }
+
+    // Ruta recomendada Privada / Comercial / Normal → NORMAL primero
+    if (
+      tipoRutaLower.includes("privada") ||
+      tipoRutaLower.includes("comercial") ||
+      tipoRutaLower.includes("normal")
+    ) {
+      const aIsNormal = a.tipo === "NORMAL";
+      const bIsNormal = b.tipo === "NORMAL";
+      if (aIsNormal !== bIsNormal) return aIsNormal ? -1 : 1;
+    }
+
+    // En caso de empate o sin priorización → por score
+    return b.score - a.score;
+  });
 
   // 👇 Estructura que espera mailer.js
   const bancosProbabilidad = resultados.map((r) => ({
     banco: r.banco,
     tipoProducto: r.tipo,
-    probScore: r.score,         // 0–100
-    probLabel: r.probabilidad,  // Alta / Media / Baja...
+    probScore: r.score, // 0–100
+    probLabel: r.probabilidad, // Alta / Media / Baja...
     dtiBanco: r.dtiUsadoBanco,
   }));
 
@@ -1334,7 +1430,6 @@ export function mapearBancos(input) {
 
   return { ...base, opciones };
 }
-
 
 /* ===========================================================
    Exports

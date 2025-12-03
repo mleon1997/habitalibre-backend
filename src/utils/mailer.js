@@ -131,26 +131,21 @@ function renderTopBancosCliente(resultado = {}) {
 
       // 🔹 Tomamos la probabilidad de varias posibles claves
       let rawScore = null;
-      if (isNum(b.probScore)) rawScore = b.probScore;          // ya viene 0–100
-      else if (isNum(b.probPct)) rawScore = b.probPct;         // ya viene 0–100
+      if (isNum(b.probScore)) rawScore = b.probScore; // ya viene 0–100
+      else if (isNum(b.probPct)) rawScore = b.probPct; // ya viene 0–100
       else if (isNum(b.probabilidad)) rawScore = b.probabilidad * 100; // 0–1 => %
-      else if (isNum(b.prob)) rawScore = b.prob * 100;         // 0–1 => %
-      else if (isNum(b.score)) rawScore = b.score;             // 0–100
+      else if (isNum(b.prob)) rawScore = b.prob * 100; // 0–1 => %
+      else if (isNum(b.score)) rawScore = b.score; // 0–100
 
       const probScore = rawScore !== null ? Math.round(rawScore) : null;
       const probLabel = b.probLabel || "Probabilidad media";
 
       // 🔹 Tipo de producto desde varias claves posibles
       const tipoProducto =
-        b.tipoProducto ||
-        b.tipoCredito ||
-        b.tipo ||
-        b.producto ||
-        "";
+        b.tipoProducto || b.tipoCredito || b.tipo || b.producto || "";
 
       const filaIdx = idx + 1;
-      const scoreTexto =
-        probScore !== null ? `${probScore}%` : "—";
+      const scoreTexto = probScore !== null ? `${probScore}%` : "—";
 
       return `
         <tr>
@@ -159,7 +154,11 @@ function renderTopBancosCliente(resultado = {}) {
           </td>
           <td style="padding:6px 10px;font-size:12px;color:#bfdbfe;border-bottom:1px solid rgba(30,64,175,0.4);text-align:center;">
             ${probLabel}
-            ${probScore !== null ? `<span style="opacity:0.8;"> · ${scoreTexto}</span>` : ""}
+            ${
+              probScore !== null
+                ? `<span style="opacity:0.8;"> · ${scoreTexto}</span>`
+                : ""
+            }
           </td>
           <td style="padding:6px 10px;font-size:11px;color:#94a3b8;border-bottom:1px solid rgba(30,64,175,0.4);text-align:right;">
             ${tipoProducto || "—"}
@@ -170,17 +169,18 @@ function renderTopBancosCliente(resultado = {}) {
     .join("");
 
   // Mejor banco para el texto de arriba
-  const mejorNombre = mejorBanco?.banco || mejorBanco?.nombre || "la entidad con mejor ajuste";
+  const mejorNombre =
+    mejorBanco?.banco || mejorBanco?.nombre || "la entidad con mejor ajuste";
 
   let mejorRaw = null;
   if (isNum(mejorBanco?.probScore)) mejorRaw = mejorBanco.probScore;
   else if (isNum(mejorBanco?.probPct)) mejorRaw = mejorBanco.probPct;
-  else if (isNum(mejorBanco?.probabilidad)) mejorRaw = mejorBanco.probabilidad * 100;
+  else if (isNum(mejorBanco?.probabilidad))
+    mejorRaw = mejorBanco.probabilidad * 100;
   else if (isNum(mejorBanco?.prob)) mejorRaw = mejorBanco.prob * 100;
   else if (isNum(mejorBanco?.score)) mejorRaw = mejorBanco.score;
 
-  const mejorScore =
-    mejorRaw !== null ? `${Math.round(mejorRaw)}%` : "";
+  const mejorScore = mejorRaw !== null ? `${Math.round(mejorRaw)}%` : "";
   const mejorLabel = mejorBanco?.probLabel || "Alta";
 
   return `
@@ -252,8 +252,7 @@ function renderTopBancosInterno(resultado = {}) {
       const dtiTexto =
         dtiBanco !== null ? `${(dtiBanco * 100).toFixed(0)}%` : "—";
 
-      const scoreTexto =
-        probScore !== null ? `${probScore}%` : "—";
+      const scoreTexto = probScore !== null ? `${probScore}%` : "—";
       const filaIdx = idx + 1;
 
       return `
@@ -277,12 +276,12 @@ function renderTopBancosInterno(resultado = {}) {
   let mejorRaw = null;
   if (isNum(mejorBanco?.probScore)) mejorRaw = mejorBanco.probScore;
   else if (isNum(mejorBanco?.probPct)) mejorRaw = mejorBanco.probPct;
-  else if (isNum(mejorBanco?.probabilidad)) mejorRaw = mejorBanco.probabilidad * 100;
+  else if (isNum(mejorBanco?.probabilidad))
+    mejorRaw = mejorBanco.probabilidad * 100;
   else if (isNum(mejorBanco?.prob)) mejorRaw = mejorBanco.prob * 100;
   else if (isNum(mejorBanco?.score)) mejorRaw = mejorBanco.score;
 
-  const mejorScore =
-    mejorRaw !== null ? `${Math.round(mejorRaw)}%` : "";
+  const mejorScore = mejorRaw !== null ? `${Math.round(mejorRaw)}%` : "";
   const mejorLabel = mejorBanco?.probLabel || "";
 
   return `
@@ -306,6 +305,128 @@ function renderTopBancosInterno(resultado = {}) {
 }
 
 /* ===========================================================
+   Render: Afinidad por tipo de crédito (cliente)
+   =========================================================== */
+function renderAfinidadCredito(resultado = {}) {
+  const esc = resultado.escenarios || {};
+  const echo = resultado._echo || {};
+  const flags = resultado.flags || {};
+  const sinOferta = flags.sinOferta === true;
+
+  // Normalizamos por si vienen en mayúsculas/minúsculas
+  const escNorm = {
+    vip: esc.vip || esc.VIP || null,
+    vis: esc.vis || esc.VIS || null,
+    biess: esc.biess || esc.BIESS || null,
+    privada: esc.privada || esc.PRIVADA || esc.comercial || null,
+  };
+
+  function esViable(nodo) {
+    if (!nodo) return false;
+    if (typeof nodo.viable === "boolean") return nodo.viable;
+    if (typeof nodo.score === "number") return nodo.score >= 0.5;
+    return false;
+  }
+
+  // Heurística BIESS similar a la del PDF
+  const afiliadoBIESS =
+    !!echo.afiliadoIESS || !!resultado?.perfil?.afiliadoIess;
+
+  const aportesTotales = Number(
+    echo.iessAportesTotales ?? echo.aportesTotalesIess ?? 0
+  );
+  const aportesConsecutivos = Number(
+    echo.iessAportesConsecutivos ?? echo.aportesConsecutivosIess ?? 0
+  );
+
+  const ltv = isNum(resultado.ltv) ? resultado.ltv : null;
+  const dti = isNum(resultado.dtiConHipoteca)
+    ? resultado.dtiConHipoteca
+    : null;
+
+  const biessHeuristico =
+    !sinOferta &&
+    afiliadoBIESS &&
+    aportesTotales >= 36 &&
+    aportesConsecutivos >= 24 &&
+    isNum(ltv) &&
+    ltv <= 0.9 &&
+    isNum(dti) &&
+    dti <= 0.4;
+
+  // Filas base
+  const filas = [
+    { id: "VIP", label: "VIP", ok: esViable(escNorm.vip) },
+    { id: "VIS", label: "VIS", ok: esViable(escNorm.vis) },
+    {
+      id: "BIESS",
+      label: "BIESS",
+      ok: esViable(escNorm.biess) || biessHeuristico,
+    },
+    {
+      id: "PRIVADA",
+      label: "Banca Privada",
+      ok: esViable(escNorm.privada),
+    },
+  ];
+
+  // ¿Cuál es el producto “estrella” según el motor?
+  let recomendadoKey = null;
+  if (!sinOferta && resultado.productoElegido) {
+    const tag = String(resultado.productoElegido || "").toLowerCase();
+    if (/vip/.test(tag)) recomendadoKey = "VIP";
+    else if (/vis/.test(tag)) recomendadoKey = "VIS";
+    else if (/biess/.test(tag)) recomendadoKey = "BIESS";
+    else recomendadoKey = "PRIVADA";
+  }
+
+  // Asignamos status de texto
+  filas.forEach((row) => {
+    let status;
+    if (sinOferta) {
+      status = "No viable hoy (ver plan)";
+    } else if (row.id === recomendadoKey && row.ok) {
+      status = "Recomendado";
+    } else if (row.ok) {
+      status = "Viable";
+    } else {
+      status = "Pendiente de análisis";
+    }
+    row.status = status;
+  });
+
+  // Si no hay nada especial que mostrar, devolvemos vacío
+  if (!filas.some((f) => f.ok) && sinOferta) return "";
+
+  return `
+    <div style="margin-top:12px;border-radius:14px;background:rgba(15,23,42,0.92);padding:10px 12px;border:1px solid rgba(148,163,184,0.35);">
+      <div style="font-size:12px;font-weight:600;color:#e5e7eb;margin-bottom:6px;">
+        Afinidad por tipo de crédito
+      </div>
+      ${filas
+        .map((f) => {
+          let color = "#e5e7eb";
+          if (f.status === "Recomendado") color = "#4ade80"; // verde
+          else if (f.status === "Viable") color = "#a5b4fc"; // lila
+          else if (f.status.startsWith("No viable")) color = "#fecaca"; // rojo suave
+
+          return `
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin:2px 0;">
+              <div style="color:#e5e7eb;">${f.label}</div>
+              <div style="color:${color};font-weight:500;">
+                ${f.status}
+              </div>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+
+
+/* ===========================================================
    HTML world-class para el CLIENTE
    =========================================================== */
 function htmlResumenCliente(lead = {}, resultado = {}) {
@@ -315,8 +436,28 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
     resultado?.tipoCreditoElegido ||
     "Crédito hipotecario";
 
-  const sinOferta = resultado?.flags?.sinOferta === true;
-  const producto = productoBase;
+  // ✅ MISMA LÓGICA DE sinOferta QUE EN EL PDF
+  const flagSinOferta = resultado?.flags?.sinOferta;
+
+  const sinOferta =
+    typeof flagSinOferta === "boolean"
+      ? flagSinOferta
+      : !isNum(resultado?.montoMaximo) ||
+        resultado.montoMaximo <= 0 ||
+        !isNum(resultado?.precioMaxVivienda) ||
+        resultado.precioMaxVivienda <= 0 ||
+        // DTI muy alto
+        (isNum(resultado?.dtiConHipoteca) &&
+          resultado.dtiConHipoteca > 0.5) ||
+        // Cuota > capacidad de pago
+        (isNum(resultado?.cuotaEstimada) &&
+          isNum(resultado?.capacidadPago) &&
+          resultado.cuotaEstimada > resultado.capacidadPago) ||
+        // LTV demasiado alto
+        (isNum(resultado?.ltv) && resultado.ltv > 0.9);
+
+  // 👇 Si no hay oferta, no mostramos "VIP / VIS / BIESS"
+  const producto = sinOferta ? "Perfil en construcción" : productoBase;
 
   const capacidad = money(resultado?.capacidadPago);
   const cuota = money(resultado?.cuotaEstimada);
@@ -327,7 +468,7 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   const precio = money(resultado?.precioMaxVivienda);
   const precioRaw = resultado?.precioMaxVivienda;
 
-  // 👇 Nuevo: Código HabitaLibre
+  // Código HL
   const codigoHL = lead?.codigoHL || resultado?.codigoHL || null;
 
   // Textos condicionales
@@ -346,7 +487,7 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   const precioMostrar = sinOferta ? "—" : precio;
   const montoMostrar = sinOferta ? "—" : monto;
 
-  // 🔹 Bloque de bancos recomendados (HTML)
+  // 🔹 Bloque de bancos recomendados
   const bloqueBancos = renderTopBancosCliente(resultado);
 
   return `
@@ -405,9 +546,7 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                             ? "rgba(248,113,113,0.16)"
                             : "rgba(34,197,94,0.16)"
                         };border:1px solid ${
-    sinOferta
-      ? "rgba(248,113,113,0.5)"
-      : "rgba(74,222,128,0.4)"
+    sinOferta ? "rgba(248,113,113,0.5)" : "rgba(74,222,128,0.4)"
   };font-size:11px;color:${
     sinOferta ? "#fecaca" : "#bbf7d0"
   };font-weight:500;">
@@ -510,7 +649,9 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
    =========================================================== */
 function htmlInterno(lead = {}, resultado = {}) {
   const producto =
-    resultado?.productoElegido || resultado?.tipoCreditoElegido || "Crédito hipotecario";
+    resultado?.productoElegido ||
+    resultado?.tipoCreditoElegido ||
+    "Crédito hipotecario";
 
   const codigoHL = lead?.codigoHL || resultado?.codigoHL || "—";
 
@@ -533,7 +674,9 @@ function htmlInterno(lead = {}, resultado = {}) {
                   Código HabitaLibre: <strong>${codigoHL}</strong>
                 </div>
                 <div style="font-size:12px;color:#64748b;margin-top:4px;">
-                  Origen: ${lead?.origen || "Simulador web"} · Canal: ${lead?.canal || "Web"}
+                  Origen: ${lead?.origen || "Simulador web"} · Canal: ${
+    lead?.canal || "Web"
+  }
                 </div>
               </td>
             </tr>
@@ -554,12 +697,22 @@ function htmlInterno(lead = {}, resultado = {}) {
                     <td width="32"></td>
                     <td style="font-size:13px;color:#e5e7eb;vertical-align:top;">
                       <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:8px;">Resumen numérico</div>
-                      <div><strong>Capacidad pago:</strong> ${money(resultado?.capacidadPago)}</div>
-                      <div><strong>Cuota ref.:</strong> ${money(resultado?.cuotaEstimada)}</div>
-                      <div><strong>Stress (+2%):</strong> ${money(resultado?.cuotaStress)}</div>
+                      <div><strong>Capacidad pago:</strong> ${money(
+                        resultado?.capacidadPago
+                      )}</div>
+                      <div><strong>Cuota ref.:</strong> ${money(
+                        resultado?.cuotaEstimada
+                      )}</div>
+                      <div><strong>Stress (+2%):</strong> ${money(
+                        resultado?.cuotaStress
+                      )}</div>
                       <div><strong>LTV:</strong> ${pct(resultado?.ltv)}</div>
-                      <div><strong>DTI:</strong> ${pct(resultado?.dtiConHipoteca)}</div>
-                      <div><strong>Monto máx.:</strong> ${money(resultado?.montoMaximo)}</div>
+                      <div><strong>DTI:</strong> ${pct(
+                        resultado?.dtiConHipoteca
+                      )}</div>
+                      <div><strong>Monto máx.:</strong> ${money(
+                        resultado?.montoMaximo
+                      )}</div>
                     </td>
                   </tr>
                 </table>
@@ -605,7 +758,10 @@ async function generarPDFBuffer(lead, resultado) {
       ? { ...resultado, codigoHL }
       : resultado;
 
-    const buffer = await generarPDFLeadAvanzado(leadConCodigo, resultadoConCodigo);
+    const buffer = await generarPDFLeadAvanzado(
+      leadConCodigo,
+      resultadoConCodigo
+    );
     return buffer;
   } catch (err) {
     console.error("❌ Error generando PDF avanzado:", err);
@@ -659,7 +815,9 @@ export async function enviarCorreoLead(lead, resultado) {
   const info = await tx.sendMail({
     from: FINAL_FROM,
     to: INTERNAL_RECIPIENTS.join(","),
-    subject: `Nuevo lead: ${lead?.nombre || "Cliente"} (${lead?.canal || "—"})`,
+    subject: `Nuevo lead: ${lead?.nombre || "Cliente"} (${
+      lead?.canal || "—"
+    })`,
     html: htmlInterno(lead, resultado),
     replyTo: lead?.email
       ? `"${lead?.nombre || "Cliente"}" <${lead.email}>`

@@ -549,6 +549,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     "📄 [PDF v2] Generando PDF AVANZADO para:",
     lead?.email || lead?.nombre || "sin-identificar"
   );
+ const echo = resultado?._echo || {};
 
   // Código único HabitaLibre para tracking (si no viene, puedes generarlo antes)
   const codigoHL =
@@ -560,7 +561,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     null;
 
   // Normalizar entrada
-  const R = {
+     const R = {
     capacidadPago: toNum(resultado?.capacidadPago, null),
     montoMaximo: toNum(resultado?.montoMaximo, null),
     precioMaxVivienda: toNum(resultado?.precioMaxVivienda, null),
@@ -577,11 +578,11 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     requeridos: resultado?.requeridos || {},
     bounds: resultado?.bounds || {},
     flags: resultado?.flags || {},
+    escenarios: resultado?.escenarios || {},     // 👈 NUEVO
     // nuevo: ingreso total para plan de acción
     ingresoTotal: toNum(resultado?.perfil?.ingresoTotal, null),
   };
 
-  const flagSinOferta = resultado?.flags?.sinOferta;
 
   // ==== Bancos recomendados (nuevo bloque de datos) ====
   const { top: bancosTop, mejor: mejorBanco } = getTopBancos(resultado || {});
@@ -619,13 +620,24 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       : null;
 
   // Flag principal: sin oferta viable hoy
+    const flagSinOferta = resultado?.flags?.sinOferta;
+
+  // Flag principal: sin oferta viable hoy (reglas más realistas)
   const sinOferta =
     typeof flagSinOferta === "boolean"
       ? flagSinOferta
       : !isNum(R.montoMaximo) ||
         R.montoMaximo <= 0 ||
         !isNum(R.precioMaxVivienda) ||
-        R.precioMaxVivienda <= 0;
+        R.precioMaxVivienda <= 0 ||
+        // DTI muy alto
+        (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0.5) ||
+        // Cuota > capacidad de pago
+        (isNum(R.cuotaEstimada) &&
+          isNum(R.capacidadPago) &&
+          R.cuotaEstimada > R.capacidadPago) ||
+        // LTV demasiado alto
+        (isNum(R.ltv) && R.ltv > 0.9);
 
   // Crear PDF
   const doc = new PDFDocument({
@@ -1320,27 +1332,102 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     doc.moveDown(0.6);
   }
 
-  // ========= Afinidad por tipo de crédito =========
+    // ========= Afinidad por tipo de crédito =========
   sectionTitle(doc, "Afinidad por tipo de crédito");
 
-  const tag = String(R.productoElegido || "").toLowerCase();
-  const rows = [
-    { name: "VIP", ok: tag.includes("vip") },
-    { name: "VIS", ok: tag.includes("vis") },
-    { name: "BIESS", ok: tag.includes("biess") },
-    { name: "Banca Privada", ok: !/(vip|vis|biess)/i.test(tag) },
+  // Usamos los escenarios que vienen del backend (legacy o nuevos)
+  const esc =
+    resultado?.escenarios || resultado?.escenariosHL || {};
+
+  // Normalizamos por si vienen en mayúsculas / nombres distintos
+  const escNorm = {
+    vip: esc.vip || esc.VIP || null,
+    vis: esc.vis || esc.VIS || null,
+    biess: esc.biess || esc.BIESS || null,
+    privada: esc.comercial || esc.PRIVADA || null,
+  };
+
+  function esViable(nodo) {
+    if (!nodo) return false;
+    if (typeof nodo.viable === "boolean") return nodo.viable;
+    if (typeof nodo.score === "number") return nodo.score >= 0.5; // fallback genérico
+    return false;
+  }
+
+  // 👉 Heurística específica para BIESS usando lo que devuelve /precalificar
+  const afiliadoBIESS =
+    !!echo.afiliadoIESS || !!resultado?.perfil?.afiliadoIess;
+
+  const aportesTotales = toNum(
+    echo.iessAportesTotales ?? echo.aportesTotalesIess,
+    0
+  );
+  const aportesConsecutivos = toNum(
+    echo.iessAportesConsecutivos ?? echo.aportesConsecutivosIess,
+    0
+  );
+
+  // Reglas base BIESS
+  const biessHeuristico =
+    !sinOferta &&
+    afiliadoBIESS &&
+    aportesTotales >= 36 &&
+    aportesConsecutivos >= 24 &&
+    isNum(R.ltv) &&
+    R.ltv <= 0.9 &&
+    isNum(R.dtiConHipoteca) &&
+    R.dtiConHipoteca <= 0.4;
+
+  // Qué producto es el principal (para marcarlo como "Recomendado")
+  const tagProd = String(R.productoElegido || "").toLowerCase();
+  let creditoPrincipal = null;
+  if (tagProd.includes("vip")) creditoPrincipal = "VIP";
+  else if (tagProd.includes("vis")) creditoPrincipal = "VIS";
+  else if (tagProd.includes("biess")) creditoPrincipal = "BIESS";
+  else if (
+    tagProd.includes("priv") ||
+    tagProd.includes("banca") ||
+    tagProd.includes("comercial")
+  )
+    creditoPrincipal = "Banca Privada";
+
+  // Determinamos afinidad por escenarios + heurísticas
+  const filasAfinidad = [
+    { name: "VIP", key: "vip", ok: esViable(escNorm.vip) },
+    { name: "VIS", key: "vis", ok: esViable(escNorm.vis) },
+    {
+      name: "BIESS",
+      key: "biess",
+      ok: esViable(escNorm.biess) || biessHeuristico,
+    },
+    {
+      name: "Banca Privada",
+      key: "privada",
+      ok: esViable(escNorm.privada),
+    },
   ];
+
+  // 🔁 Fallback: si ningún escenario marca viable pero sí tenemos productoElegido,
+  // marcamos solo ese producto como viable.
+  if (!filasAfinidad.some((f) => f.ok) && creditoPrincipal) {
+    const filaPrincipal = filasAfinidad.find(
+      (f) => f.name === creditoPrincipal
+    );
+    if (filaPrincipal) filaPrincipal.ok = true;
+  }
 
   const rowH = 18;
   let yA = doc.y + 2;
 
-  rows.forEach((row) => {
+  filasAfinidad.forEach((row) => {
     if (yA > doc.page.height - M - rowH - 6) {
       doc.addPage();
       yA = M;
     }
 
     const colHalf = Math.floor((doc.page.width - M * 2) / 2);
+    const esPrincipal = creditoPrincipal === row.name;
+
     doc
       .fillColor(brand.text)
       .fontSize(12)
@@ -1349,54 +1436,37 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
         continued: false,
       });
 
-    const labelAfinidad = sinOferta
-      ? "No viable hoy (ver plan de acción)"
-      : row.ok
-      ? "Viable / recomendado"
-      : "Pendiente de análisis";
+    let labelAfinidad;
+    let colorAfinidad;
+
+    if (sinOferta) {
+      labelAfinidad = "No viable hoy (ver plan de acción)";
+      colorAfinidad = brand.mut;
+    } else if (row.ok && esPrincipal) {
+      // 👉 Solo UN producto recomendado
+      labelAfinidad = "Recomendado";
+      colorAfinidad = brand.ok;
+    } else if (row.ok) {
+      // Otros productos que sí podrían aplicar
+      labelAfinidad = "Viable";
+      colorAfinidad = brand.ok;
+    } else {
+      labelAfinidad = "Pendiente de análisis";
+      colorAfinidad = brand.mut;
+    }
 
     doc
-      .fillColor(sinOferta ? brand.mut : row.ok ? brand.ok : brand.mut)
+      .fillColor(colorAfinidad)
       .fontSize(11)
       .text(labelAfinidad, M + colHalf, yA, { width: colHalf });
+
     yA += rowH;
   });
 
   doc.y = yA + 4;
   rule(doc);
 
-  // ========= CTA =========
-  sectionTitle(doc, "¿Listo para avanzar?");
-  doc
-    .fontSize(12)
-    .fillColor(brand.text)
-    .text(
-      "Agenda una asesoría para trazar tu hoja de ruta: ya sea para fortalecer tu perfil y hacerlo viable, o para negociar mejores condiciones con la entidad ideal.",
-      M,
-      doc.y,
-      { width: W }
-    )
-    .moveDown(0.4);
-  doc
-    .fontSize(11.5)
-    .fillColor(brand.primaryDark)
-    .text("Agendar asesoría: https://habitalibre.com/agendar", M, doc.y, {
-      link: "https://habitalibre.com/agendar",
-      underline: true,
-    });
 
-  if (codigoHL) {
-    doc
-      .moveDown(0.3)
-      .fontSize(11)
-      .fillColor(brand.mut)
-      .text(
-        `Cuando hables con un banco, puedes compartir este informe y mencionar tu Código HabitaLibre: ${codigoHL}. Así sabrán que ya estás precalificado digitalmente.`,
-        M,
-        doc.y,
-        { width: W }
-      );
-  }
 
   // === Cierre del generador ===
   pie(doc, codigoHL);
