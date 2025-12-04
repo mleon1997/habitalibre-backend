@@ -26,6 +26,27 @@ function pvFromPayment(rate, nper, payment) {
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 /* ===========================================================
+   Tabla escalonada BIESS estándar (no VIS/VIP)
+   Tasas más realistas vs banca privada hoy
+=========================================================== */
+function tasaBiessEstandar(monto, plazoAnios) {
+  const loan = n(monto);
+  const years = n(plazoAnios, 20);
+
+  // Tramo bajo: montos pequeños y plazos ≤ 20 años
+  if (loan <= 90000 && years <= 20) return 0.073; // 7.3%
+
+  // Tramo medio
+  if (loan <= 150000) return 0.078; // 7.8%
+
+  // Tramo alto
+  if (loan <= 200000) return 0.082; // 8.2%
+
+  // Montos más grandes: tasa máxima
+  return 0.088; // 8.8%
+}
+
+/* ===========================================================
    Reglas mock de bancos (para afinidad rápida legacy)
 =========================================================== */
 const BANK_RULES = [
@@ -69,7 +90,9 @@ const BANK_RULES = [
    (basado en info de tu analista)
 =========================================================== */
 const BANK_PROFILES = [
-  // VIP / VIS bancos privados
+  // ----------------------------------------------
+  // VIP bancos privados
+  // ----------------------------------------------
   {
     id: "pichincha_vip",
     nombre: "Banco Pichincha (VIP)",
@@ -123,7 +146,65 @@ const BANK_PROFILES = [
     minAniosRucInd: 2,
   },
 
+  // ----------------------------------------------
+  // VIS bancos privados (mismos bancos que VIP pero etiquetados VIS)
+  // ----------------------------------------------
+  {
+    id: "pichincha_vis",
+    nombre: "Banco Pichincha (VIS)",
+    tipo: "VIS",
+    dtiMaxDependiente: 0.45,
+    dtiMaxIndependiente: 0.45,
+    ltvMax: 0.95,
+    requiereIESS: false,
+    requierePrimeraVivienda: true,
+    tasaRef: 0.0499,
+    minAniosEstDep: 1,
+    minAniosRucInd: 2,
+  },
+  {
+    id: "mutualista_vis",
+    nombre: "Mutualista Pichincha (VIS)",
+    tipo: "VIS",
+    dtiMaxDependiente: 0.45,
+    dtiMaxIndependiente: 0.45,
+    ltvMax: 0.95,
+    requiereIESS: false,
+    requierePrimeraVivienda: true,
+    tasaRef: 0.0499,
+    minAniosEstDep: 1,
+    minAniosRucInd: 2,
+  },
+  {
+    id: "bgr_vis",
+    nombre: "BGR (VIS)",
+    tipo: "VIS",
+    dtiMaxDependiente: 0.45,
+    dtiMaxIndependiente: 0.45,
+    ltvMax: 0.95,
+    requiereIESS: false,
+    requierePrimeraVivienda: true,
+    tasaRef: 0.0499,
+    minAniosEstDep: 1,
+    minAniosRucInd: 2,
+  },
+  {
+    id: "pacifico_vis",
+    nombre: "Banco Pacífico (VIS)",
+    tipo: "VIS",
+    dtiMaxDependiente: 0.45,
+    dtiMaxIndependiente: 0.45,
+    ltvMax: 0.95,
+    requiereIESS: false,
+    requierePrimeraVivienda: true,
+    tasaRef: 0.0499,
+    minAniosEstDep: 1,
+    minAniosRucInd: 2,
+  },
+
+  // ----------------------------------------------
   // BIESS
+  // ----------------------------------------------
   {
     id: "biess",
     nombre: "BIESS",
@@ -138,7 +219,9 @@ const BANK_PROFILES = [
     minAniosRucInd: 2,
   },
 
+  // ----------------------------------------------
   // Bancos / IFIs con tasa normal
+  // ----------------------------------------------
   {
     id: "produbanco_normal",
     nombre: "Produbanco (normal)",
@@ -228,8 +311,8 @@ const LIMITES = {
     firstHomeOnly: false,
     requireIESS: true,
     requireContribs: true,
-    // tasaAnual base (para el primer tramo, <= 90k)
-    tasaAnual: 0.0699,
+    // La tasa se calculará dinámicamente con tasaBiessEstandar(monto, plazo)
+    tasaAnual: null,
     plazoMeses: 300, // default: 25 años
     plazoMinAnios: 5,
     plazoMaxAnios: 25,
@@ -370,12 +453,11 @@ export function calcularPrecalificacion(input) {
       : !!viviendaUsada;
 
   // Si nos dicen explícitamente "usada", forzamos estrenar = false
-  const viviendaNuevaBool =
-    viviendaUsadaBool
-      ? false
-      : typeof viviendaEstrenar === "boolean"
-      ? viviendaEstrenar
-      : true;
+  const viviendaNuevaBool = viviendaUsadaBool
+    ? false
+    : typeof viviendaEstrenar === "boolean"
+    ? viviendaEstrenar
+    : true;
   // ==========================================================
 
   // dti base general (NO penalizamos IESS)
@@ -503,23 +585,13 @@ export function calcularPrecalificacion(input) {
     // ===== TASA EFECTIVA ANUAL DEL PRODUCTO =====
     let tasaEfectivaAnual = n(tasaAnual);
 
-    // Si es BIESS estándar, aplicamos tabla escalonada por montoNecesario
+    // Si es BIESS estándar, usamos la tabla escalonada realista por monto y plazo
     if (tieredStdBiess) {
       const loan = n(montoNecesario);
+      const plazoAniosEfectivo =
+        plazoEfectivo > 0 ? plazoEfectivo / 12 : n(plazoMeses, 240) / 12;
 
-      if (loan <= 90000) {
-        // Hasta 90k → 6,99%
-        tasaEfectivaAnual = 0.0699;
-      } else if (loan <= 130000) {
-        // 90k–130k → 8,90%
-        tasaEfectivaAnual = 0.089;
-      } else if (loan <= 200000) {
-        // 130k–200k → 9,00%
-        tasaEfectivaAnual = 0.09;
-      } else {
-        // 200k–460k → 9,10%
-        tasaEfectivaAnual = 0.091;
-      }
+      tasaEfectivaAnual = tasaBiessEstandar(loan, plazoAniosEfectivo);
     }
 
     const rate = tasaEfectivaAnual / 12;
@@ -535,11 +607,7 @@ export function calcularPrecalificacion(input) {
     );
 
     // 👇 usamos plazoEfectivo en lugar de plazoOriginalMeses
-    const montoMaxPorCuota = pvFromPayment(
-      rate,
-      plazoEfectivo,
-      cuotaMaxProducto
-    );
+    const montoMaxPorCuota = pvFromPayment(rate, plazoEfectivo, cuotaMaxProducto);
 
     // Topes para “precio máximo de vivienda”
     const precioPorCapacidad = n(entradaDisponible) + n(montoMaxPorCuota);
@@ -557,14 +625,10 @@ export function calcularPrecalificacion(input) {
     if (precioMaxVivienda === precioPorTope) binding = "tope";
 
     // LTV real con el monto que se quiere pedir
-    const ltv =
-      n(valorVivienda) > 0 ? montoNecesario / n(valorVivienda) : 0;
+    const ltv = n(valorVivienda) > 0 ? montoNecesario / n(valorVivienda) : 0;
 
     // El banco no prestará por encima de tu capacidad (para este producto)
-    const montoPrestamo = Math.max(
-      0,
-      Math.min(montoNecesario, n(montoMaxPorCuota))
-    );
+    const montoPrestamo = Math.max(0, Math.min(montoNecesario, n(montoMaxPorCuota)));
 
     const cuota = pmt(rate, plazoEfectivo, montoPrestamo);
     const cuotaStress = pmt(
@@ -790,8 +854,7 @@ export function calcularPrecalificacion(input) {
     const tcea =
       n(escenarioElegido.tasaAnual) +
       (monto > 0
-        ? (costosTotales / monto) /
-          (n(escenarioElegido.plazoMeses) / 12)
+        ? (costosTotales / monto) / (n(escenarioElegido.plazoMeses) / 12)
         : 0);
     return {
       originacion,
@@ -820,9 +883,7 @@ export function calcularPrecalificacion(input) {
     BIESS: {
       viable: evalBSTD.viable || evalBPREF.viable,
       tasa: evalBPREF.viable ? evalBPREF.tasaAnual : evalBSTD.tasaAnual,
-      plazo: evalBPREF.viable
-        ? evalBPREF.plazoMeses
-        : evalBSTD.plazoMeses,
+      plazo: evalBPREF.viable ? evalBPREF.plazoMeses : evalBSTD.plazoMeses,
       cuota: evalBPREF.viable ? evalBPREF.cuota : evalBSTD.cuota,
       ltvMax: evalBPREF.viable ? evalBPREF.ltvMax : evalBSTD.ltvMax,
     },
@@ -921,7 +982,8 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Aumenta tu entrada en alrededor de $ ${extraDown.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} para que el banco no financie más del 90% del valor de la vivienda.`
       );
     } else if (
@@ -935,7 +997,8 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Si puedes, eleva tu entrada en unos $ ${extraDown.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} para acercarte a un LTV de 80% y mejorar tasas y condiciones.`
       );
     }
@@ -947,10 +1010,12 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Hoy tu ingreso familiar aproximado está alrededor de $ ${ingresoFmt}. Procura llevarlo en el mediano plazo a un rango cercano a $ ${targetLow.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} – $ ${targetHigh.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} mensuales, manteniendo bajo tu nivel de deudas. Eso hará que la cuota hipotecaria empiece a ser sostenible.`
       );
     } else if (ingresoNum >= 900 && ingresoNum < 1600) {
@@ -959,10 +1024,12 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Hoy tu ingreso familiar aproximado está alrededor de $ ${ingresoFmt}. A medida que lo acerques a un rango de $ ${targetLow.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} – $ ${targetHigh.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} mensuales sin subir tus deudas, tus probabilidades de aprobación aumentarán de forma importante.`
       );
     }
@@ -980,7 +1047,8 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Aunque tu perfil ya es viable, bajar tu DTI por debajo de 42% reduciendo deudas en unos $ ${gapUSD.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} te ayudará a negociar mejores condiciones.`
       );
     }
@@ -992,7 +1060,8 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Si aumentas tu entrada en aproximadamente $ ${extraDown.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0,
+            maximumFractionDigits: 0 }
         )} y bajas el LTV hacia 80–85%, podrás acceder a mejores tasas o a más entidades.`
       );
     }
@@ -1013,8 +1082,7 @@ export function calcularPrecalificacion(input) {
   const mkTCEA = (t) =>
     t +
     (loan > 0
-      ? ((costos.originacion + costos.avaluo + costos.segurosAnuales) /
-          loan) /
+      ? ((costos.originacion + costos.avaluo + costos.segurosAnuales) / loan) /
         (n(escenarioElegido.plazoMeses) / 12)
       : 0);
 
@@ -1082,7 +1150,10 @@ export function calcularPrecalificacion(input) {
     cuotaEstimada: n(escenarioElegido.cuota),
     cuotaStress: n(escenarioElegido.cuotaStress),
     bounds: escenarioElegido.bounds,
-    productoElegido: escenarioElegido.producto,
+    productoElegido:
+      rutaRecomendada?.tipo === "Privada"
+        ? "Banca privada"
+        : rutaRecomendada?.tipo || escenarioElegido.producto,
     requeridos: { downTo80: n(reqDown80), downTo90: n(reqDown90) },
 
     // 👇 Flags globales para el front + PDF
@@ -1316,8 +1387,8 @@ export function evaluarProbabilidadPorBanco(input) {
     }
 
     // Penalización por tipo de producto NO viable según escenarios
-    if (bank.tipo === "VIP") {
-      // Si ni VIP ni VIS son viables, este banco VIP pierde relevancia
+    if (bank.tipo === "VIP" || bank.tipo === "VIS") {
+      // Si ni VIP ni VIS son viables, este banco pierde relevancia
       if (vipViable === false && visViable === false) score -= 60;
     }
     if (bank.tipo === "BIESS") {
@@ -1363,14 +1434,18 @@ export function evaluarProbabilidadPorBanco(input) {
       if (aIsBiess !== bIsBiess) return aIsBiess ? -1 : 1;
     }
 
-    // Ruta recomendada VIS/VIP → VIP/VIS primero
-    if (
-      tipoRutaLower.includes("vip") ||
-      tipoRutaLower.includes("vis")
-    ) {
-      const aIsVipVis = a.tipo === "VIP" || a.tipo === "VIS";
-      const bIsVipVis = b.tipo === "VIP" || b.tipo === "VIS";
-      if (aIsVipVis !== bIsVipVis) return aIsVipVis ? -1 : 1;
+    // Ruta recomendada VIS → VIS primero
+    if (tipoRutaLower.includes("vis")) {
+      const aIsVis = a.tipo === "VIS";
+      const bIsVis = b.tipo === "VIS";
+      if (aIsVis !== bIsVis) return aIsVis ? -1 : 1;
+    }
+
+    // Ruta recomendada VIP → VIP primero
+    if (tipoRutaLower.includes("vip")) {
+      const aIsVip = a.tipo === "VIP";
+      const bIsVip = b.tipo === "VIP";
+      if (aIsVip !== bIsVip) return aIsVip ? -1 : 1;
     }
 
     // Ruta recomendada Privada / Comercial / Normal → NORMAL primero

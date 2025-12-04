@@ -131,8 +131,8 @@ function renderTopBancosCliente(resultado = {}) {
 
       // 🔹 Tomamos la probabilidad de varias posibles claves
       let rawScore = null;
-      if (isNum(b.probScore)) rawScore = b.probScore; // ya viene 0–100
-      else if (isNum(b.probPct)) rawScore = b.probPct; // ya viene 0–100
+      if (isNum(b.probScore)) rawScore = b.probScore; // 0–100
+      else if (isNum(b.probPct)) rawScore = b.probPct; // 0–100
       else if (isNum(b.probabilidad)) rawScore = b.probabilidad * 100; // 0–1 => %
       else if (isNum(b.prob)) rawScore = b.prob * 100; // 0–1 => %
       else if (isNum(b.score)) rawScore = b.score; // 0–100
@@ -306,6 +306,8 @@ function renderTopBancosInterno(resultado = {}) {
 
 /* ===========================================================
    Render: Afinidad por tipo de crédito (cliente)
+   (NO necesariamente mostrado en el mail todavía,
+    pero lo dejamos disponible)
    =========================================================== */
 function renderAfinidadCredito(resultado = {}) {
   const esc = resultado.escenarios || {};
@@ -395,7 +397,6 @@ function renderAfinidadCredito(resultado = {}) {
     row.status = status;
   });
 
-  // Si no hay nada especial que mostrar, devolvemos vacío
   if (!filas.some((f) => f.ok) && sinOferta) return "";
 
   return `
@@ -424,7 +425,82 @@ function renderAfinidadCredito(resultado = {}) {
   `;
 }
 
+/* ===========================================================
+   Bloque: ¿Por qué te recomendamos esta ruta? (cliente)
+   =========================================================== */
+function renderPorQueRecomendado(resultado = {}) {
+  const flags = resultado.flags || {};
+  const sinOferta = flags.sinOferta === true;
 
+  // Si está "sin oferta", no mostramos nada
+  if (sinOferta) return "";
+
+  // Tomamos el tipo recomendado solo desde productoElegido / tipoCreditoElegido
+  const tipoRaw =
+    resultado.productoElegido ||
+    resultado.tipoCreditoElegido ||
+    "CRÉDITO";
+
+  const cuotaNum = isNum(resultado.cuotaEstimada)
+    ? resultado.cuotaEstimada
+    : null;
+
+  const capacidadNum = isNum(resultado.capacidadPago)
+    ? resultado.capacidadPago
+    : null;
+
+  const dtiNum = isNum(resultado.dtiConHipoteca)
+    ? resultado.dtiConHipoteca
+    : null;
+
+  const ltvNum = isNum(resultado.ltv) ? resultado.ltv : null;
+
+  const cuotaTxt =
+    cuotaNum != null ? money(cuotaNum) : "una cuota manejable";
+  const capacidadTxt =
+    capacidadNum != null ? money(capacidadNum) : "tu capacidad de pago mensual";
+
+  const dtiTxt = dtiNum != null ? `${(dtiNum * 100).toFixed(0)}%` : null;
+  const ltvTxt = ltvNum != null ? `${(ltvNum * 100).toFixed(0)}%` : null;
+
+  // Traducción amigable del tipo
+  const tipoLabelMap = {
+    VIS: "crédito VIS (tasa preferencial)",
+    VIP: "crédito VIP (tasa preferencial)",
+    BIESS: "crédito BIESS",
+    PRIVADA: "banca privada",
+    "BANCA PRIVADA": "banca privada",
+  };
+  const tipoKey = String(tipoRaw || "").toUpperCase();
+  const tipoLabel = tipoLabelMap[tipoKey] || `esta ruta de crédito`;
+
+  const showDtiLtv = dtiTxt || ltvTxt;
+
+  return `
+    <div style="margin-top:10px;border-radius:14px;background:rgba(15,23,42,0.92);padding:10px 12px;border:1px solid rgba(59,130,246,0.45);">
+      <div style="font-size:11px;font-weight:600;color:#bfdbfe;margin-bottom:4px;">
+        ¿Por qué te recomendamos esta ruta?
+      </div>
+      <div style="font-size:11px;color:#e5e7eb;line-height:1.5;margin-bottom:4px;">
+        Según tus ingresos, deudas y entrada, hoy la mejor combinación para ti es 
+        <span style="font-weight:600;color:#a5b4fc;">${tipoLabel}</span>.
+      </div>
+      <ul style="margin:0;padding-left:16px;font-size:11px;color:#cbd5f5;line-height:1.45;">
+        <li>La cuota estimada (${cuotaTxt}) se mantiene dentro de ${capacidadTxt}, sin sobreendeudarte.</li>
+        ${
+          showDtiLtv
+            ? `<li>Tu nivel de endeudamiento total quedaría en torno a ${
+                dtiTxt || "un porcentaje sano"
+              } y el banco financiaría aprox. ${
+                ltvTxt || "una parte razonable del valor de la vivienda"
+              }.</li>`
+            : ""
+        }
+        <li>Es el tipo de crédito donde hoy vemos mejor ajuste entre lo que tú puedes pagar y lo que los bancos normalmente aprueban para perfiles como el tuyo.</li>
+      </ul>
+    </div>
+  `;
+}
 
 /* ===========================================================
    HTML world-class para el CLIENTE
@@ -487,8 +563,9 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
   const precioMostrar = sinOferta ? "—" : precio;
   const montoMostrar = sinOferta ? "—" : monto;
 
-  // 🔹 Bloque de bancos recomendados
+  // 🔹 Bloques auxiliares
   const bloqueBancos = renderTopBancosCliente(resultado);
+  const bloquePorQue = renderPorQueRecomendado(resultado);
 
   return `
   <div style="margin:0;padding:0;background:#020617;">
@@ -597,6 +674,9 @@ function htmlResumenCliente(lead = {}, resultado = {}) {
                           <div style="font-size:14px;font-weight:500;margin-top:2px;">${dti}</div>
                         </div>
                       </div>
+
+                      <!-- ¿Por qué te recomendamos esta ruta? -->
+                      ${bloquePorQue}
 
                       <!-- Ranking de bancos -->
                       ${bloqueBancos}
