@@ -132,6 +132,8 @@ function chipAt(doc, x, y, label, value, w = 260, h = 54) {
       width: w - 24,
       height: 20,
     });
+      // 👇 Asegura que el cursor siempre quede después del chip
+  doc.y = Math.max(doc.y, y + h + 2);
 }
 
 function barScore(doc, x, y, label, v01, hint, color) {
@@ -296,7 +298,16 @@ function portada(doc, lead, codigoHL) {
 }
 
 function pie(doc, codigoHL) {
-  const y = doc.page.height - M + 8;
+  const footerHeight = 45; // espacio aproximado que usa el texto (ajustable)
+  const usableBottom = doc.page.height - M; // límite inferior "seguro"
+
+  // Si ya estoy muy abajo, mejor abrir una página nueva ANTES del footer
+  if (doc.y > usableBottom - footerHeight) {
+    doc.addPage();
+  }
+
+  // Posicionamos el pie cerca del fondo, pero con margen suficiente
+  const y = usableBottom - footerHeight + 8;
 
   doc
     .fontSize(9.5)
@@ -320,19 +331,6 @@ function pie(doc, codigoHL) {
         { width: doc.page.width - M * 2, align: "center" }
       );
   }
-}
-
-// ============== Lógica de nombre de producto ==============
-function nombreProducto(resultado = {}) {
-  const k = String(
-    resultado?.productoElegido || resultado?.tipoCreditoElegido || ""
-  ).toLowerCase();
-  if (k.includes("vis")) return "Crédito VIS";
-  if (k.includes("vip")) return "Crédito VIP";
-  if (k.includes("biess") && (k.includes("pref") || k.includes("prefer")))
-    return "BIESS preferencial";
-  if (k.includes("biess")) return "Crédito BIESS";
-  return k ? titleCase(k) : "Banca privada";
 }
 
 // ============== Puntaje global ==============
@@ -865,6 +863,17 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   const chipH = 54;
   let x = M;
   let y = doc.y + 6;
+
+  // 👇 Asegurarnos de que el bloque completo de 3 filas de chips quepa en la página
+const alturaBloqueChips = chipH * 3 + 40; // 3 filas + algo de respiro
+const limiteInferior = doc.page.height - M - 40; // margen de seguridad sobre el pie
+
+if (y + alturaBloqueChips > limiteInferior) {
+  doc.addPage();
+  x = M;
+  y = doc.y + 6;
+}
+
 
   chipAt(
     doc,
