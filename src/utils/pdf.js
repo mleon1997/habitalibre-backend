@@ -333,6 +333,27 @@ function pie(doc, codigoHL) {
   }
 }
 
+// ============== Lógica de nombre de producto ==============
+function nombreProducto(origen = {}) {
+  // Puede venir como resultado completo o como el objeto R
+  const raw =
+    origen.productoElegido ||
+    origen.tipoCreditoElegido ||
+    ""; // fallback vacío
+
+  const k = String(raw).toLowerCase();
+
+  if (k.includes("vis")) return "Crédito VIS";
+  if (k.includes("vip")) return "Crédito VIP";
+  if (k.includes("biess") && (k.includes("pref") || k.includes("prefer")))
+    return "BIESS preferencial";
+  if (k.includes("biess")) return "Crédito BIESS";
+
+  // Si no matchea nada, devolvemos algo genérico pero elegante
+  return k ? titleCase(k) : "Banca privada";
+}
+
+
 // ============== Puntaje global ==============
 function puntajeGlobal({ ltv, dtiConHipoteca, tasaAnual }) {
   let score = 100;
@@ -547,7 +568,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     "📄 [PDF v2] Generando PDF AVANZADO para:",
     lead?.email || lead?.nombre || "sin-identificar"
   );
- const echo = resultado?._echo || {};
+  const echo = resultado?._echo || {};
 
   // Código único HabitaLibre para tracking (si no viene, puedes generarlo antes)
   const codigoHL =
@@ -559,7 +580,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     null;
 
   // Normalizar entrada
-     const R = {
+  const R = {
     capacidadPago: toNum(resultado?.capacidadPago, null),
     montoMaximo: toNum(resultado?.montoMaximo, null),
     precioMaxVivienda: toNum(resultado?.precioMaxVivienda, null),
@@ -576,11 +597,10 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     requeridos: resultado?.requeridos || {},
     bounds: resultado?.bounds || {},
     flags: resultado?.flags || {},
-    escenarios: resultado?.escenarios || {},     // 👈 NUEVO
+    escenarios: resultado?.escenarios || {}, // 👈 NUEVO
     // nuevo: ingreso total para plan de acción
     ingresoTotal: toNum(resultado?.perfil?.ingresoTotal, null),
   };
-
 
   // ==== Bancos recomendados (nuevo bloque de datos) ====
   const { top: bancosTop, mejor: mejorBanco } = getTopBancos(resultado || {});
@@ -618,7 +638,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       : null;
 
   // Flag principal: sin oferta viable hoy
-    const flagSinOferta = resultado?.flags?.sinOferta;
+  const flagSinOferta = resultado?.flags?.sinOferta;
 
   // Flag principal: sin oferta viable hoy (reglas más realistas)
   const sinOferta =
@@ -636,6 +656,23 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
           R.cuotaEstimada > R.capacidadPago) ||
         // LTV demasiado alto
         (isNum(R.ltv) && R.ltv > 0.9);
+
+  // 👉 Helper interno para describir el producto (reemplaza a nombreProducto(R))
+  const describeProducto = () => {
+    const raw = String(R.productoElegido || "").toLowerCase();
+
+    if (!raw) return "un crédito hipotecario sostenible";
+
+    if (raw.includes("vip")) return "crédito VIP (Vivienda de Interés Público)";
+    if (raw.includes("vis")) return "crédito VIS (Vivienda de Interés Social)";
+    if (raw.includes("biess")) return "crédito hipotecario BIESS";
+    if (raw.includes("priv") || raw.includes("banca") || raw.includes("comercial")) {
+      return "crédito de banca privada";
+    }
+
+    // fallback genérico
+    return `crédito hipotecario ${R.productoElegido}`;
+  };
 
   // Crear PDF
   const doc = new PDFDocument({
@@ -865,15 +902,14 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   let y = doc.y + 6;
 
   // 👇 Asegurarnos de que el bloque completo de 3 filas de chips quepa en la página
-const alturaBloqueChips = chipH * 3 + 40; // 3 filas + algo de respiro
-const limiteInferior = doc.page.height - M - 40; // margen de seguridad sobre el pie
+  const alturaBloqueChips = chipH * 3 + 40; // 3 filas + algo de respiro
+  const limiteInferior = doc.page.height - M - 40; // margen de seguridad sobre el pie
 
-if (y + alturaBloqueChips > limiteInferior) {
-  doc.addPage();
-  x = M;
-  y = doc.y + 6;
-}
-
+  if (y + alturaBloqueChips > limiteInferior) {
+    doc.addPage();
+    x = M;
+    y = doc.y + 6;
+  }
 
   chipAt(
     doc,
@@ -947,7 +983,7 @@ if (y + alturaBloqueChips > limiteInferior) {
         { width: W }
       );
   } else {
-    const tipo = nombreProducto(R);
+    const tipo = describeProducto();
     doc
       .fontSize(11.5)
       .fillColor(brand.text)
@@ -1011,7 +1047,9 @@ if (y + alturaBloqueChips > limiteInferior) {
     doc,
     scoreX,
     scoreY,
-    `Tasa ${isNum(R.tasaAnual) ? `(${(R.tasaAnual * 100).toFixed(2)}%)` : ""}`,
+    `Tasa ${
+      isNum(R.tasaAnual) ? `(${(R.tasaAnual * 100).toFixed(2)}%)` : ""
+    }`,
     sTasa,
     explTasa(R.tasaAnual),
     colorT
@@ -1263,10 +1301,7 @@ if (y + alturaBloqueChips > limiteInferior) {
       doc.save().roundedRect(x0, y0, barW, barH, 5).fill(brand.barBg).restore();
       const fill = Math.max(
         0,
-        Math.min(
-          barW,
-          Math.round((totInt / (totIntBase * 1.25)) * barW)
-        )
+        Math.min(barW, Math.round((totInt / (totIntBase * 1.25)) * barW))
       );
       if (fill > 0)
         doc
@@ -1341,7 +1376,7 @@ if (y + alturaBloqueChips > limiteInferior) {
     doc.moveDown(0.6);
   }
 
-    // ========= Afinidad por tipo de crédito =========
+  // ========= Afinidad por tipo de crédito =========
   sectionTitle(doc, "Afinidad por tipo de crédito");
 
   // Usamos los escenarios que vienen del backend (legacy o nuevos)
@@ -1475,8 +1510,6 @@ if (y + alturaBloqueChips > limiteInferior) {
   doc.y = yA + 4;
   rule(doc);
 
-
-
   // === Cierre del generador ===
   pie(doc, codigoHL);
   doc.end();
@@ -1485,4 +1518,3 @@ if (y + alturaBloqueChips > limiteInferior) {
 
 // Alias para mailer.js
 export const generarPDFLeadAvanzado = generarPDFLead;
-
