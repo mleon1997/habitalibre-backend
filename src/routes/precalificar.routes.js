@@ -3,46 +3,110 @@ import { Router } from "express";
 import calcularPrecalificacion, {
   evaluarProbabilidadPorBanco,
 } from "../lib/scoring.js";
+import { normalizeResultadoParaSalida } from "../utils/hlResultado.js";
 
 const router = Router();
 
-/* --------- helper básico --------- */
-const toBool = (v) =>
-  v === true ||
-  v === "true" ||
-  v === "1" ||
-  v === 1 ||
-  v === "Sí" ||
-  v === "si";
+/* --------- helpers --------- */
+const toBool = (v) => {
+  if (v === true || v === 1) return true;
+  if (v === false || v === 0) return false;
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "sí" || s === "si" || s === "s";
+};
+
+const toNum = (v, def = 0) => {
+  const n = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : def;
+};
 
 /**
- * Puntaje simple legacy para compatibilidad con el front actual.
- * (El motor nuevo también genera un score más avanzado; lo devolvemos aparte.)
+ * ✅ Normalizador PRO de input
+ * Acepta input nuevo y legacy
  */
-function scoreHLlegacy({ ltv, dtiConHipoteca, afiliadoIESS, edad }) {
-  let s = 100;
+function normalizarInputHL(body = {}) {
+  const afiliadoRaw =
+    body.afiliadoIess ??
+    body.afiliadoIESS ??
+    body.afiliado_iess ??
+    body.afiliado;
 
-  if (ltv != null) {
-    if (ltv > 0.9) s -= 15;
-    else if (ltv > 0.8) s -= 8;
-  }
+  const iessAportesTotales = toNum(
+    body.iessAportesTotales ??
+      body.aportesTotales ??
+      body.iess_totales ??
+      0,
+    0
+  );
 
-  if (dtiConHipoteca != null) {
-    if (dtiConHipoteca > 0.45) s -= 20;
-    else if (dtiConHipoteca > 0.4) s -= 12;
-    else if (dtiConHipoteca > 0.35) s -= 6;
-  }
+  const iessAportesConsecutivos = toNum(
+    body.iessAportesConsecutivos ??
+      body.iessAportesConsecutivas ??
+      body.aportesConsecutivos ??
+      0,
+    0
+  );
 
-  if (!afiliadoIESS) s -= 4;
-  if (edad < 23 || edad > 70) s -= 6;
+  const ingresoNetoMensual = toNum(
+    body.ingresoNetoMensual ?? body.ingreso ?? 0,
+    0
+  );
+  const ingresoPareja = toNum(body.ingresoPareja ?? 0, 0);
+  const otrasDeudasMensuales = toNum(
+    body.otrasDeudasMensuales ?? body.deudas ?? 0,
+    0
+  );
 
-  s = Math.max(0, Math.min(100, s));
-  const label = s >= 80 ? "Sólido" : s >= 60 ? "Medio" : "Ajustar";
+  const valorVivienda = toNum(body.valorVivienda ?? body.valor ?? 0, 0);
+  const entradaDisponible = toNum(
+    body.entradaDisponible ?? body.entrada ?? 0,
+    0
+  );
 
-  return { score: Math.round(s), label };
+  const edad = toNum(body.edad ?? 30, 30);
+  const tipoIngreso = body.tipoIngreso ?? "Dependiente";
+  const aniosEstabilidad = toNum(body.aniosEstabilidad ?? 0, 0);
+
+  const primeraVivienda = body.primeraVivienda ?? null;
+  const viviendaUsada = body.viviendaUsada ?? null;
+  const viviendaEstrenar =
+    body.viviendaEstrenar ?? body.viviendaNueva ?? true;
+
+  const nacionalidad = body.nacionalidad ?? "ecuatoriana";
+  const estadoCivil = body.estadoCivil ?? "soltero";
+  const declaracionBuro = body.declaracionBuro ?? "ninguno";
+  const sustentoIndependiente = body.sustentoIndependiente ?? null;
+  const horizonteCompra =
+    body.horizonteCompra ?? body.tiempoCompra ?? null;
+
+  const plazoAnios = body.plazoAnios ?? null;
+
+  return {
+    ...body,
+    ingresoNetoMensual,
+    ingresoPareja,
+    otrasDeudasMensuales,
+    valorVivienda,
+    entradaDisponible,
+    edad,
+    tipoIngreso,
+    aniosEstabilidad,
+    afiliadoIess: afiliadoRaw,
+    iessAportesTotales,
+    iessAportesConsecutivos,
+    primeraVivienda,
+    viviendaUsada,
+    viviendaEstrenar,
+    nacionalidad,
+    estadoCivil,
+    declaracionBuro,
+    sustentoIndependiente,
+    horizonteCompra,
+    plazoAnios,
+  };
 }
 
-/* --------- DEBUG: GET /api/precalificar/ping --------- */
+/* --------- DEBUG --------- */
 router.get("/ping", (req, res) => {
   res.json({
     ok: true,
@@ -56,73 +120,46 @@ router.post("/", async (req, res) => {
   try {
     const body = req.body || {};
 
-    console.log("➡️  POST /api/precalificar payload básico:", {
-      ingresoNetoMensual: body?.ingresoNetoMensual,
-      ingresoPareja: body?.ingresoPareja,
-      otrasDeudasMensuales: body?.otrasDeudasMensuales,
-      valorVivienda: body?.valorVivienda,
-      entradaDisponible: body?.entradaDisponible,
-      edad: body?.edad,
-      afiliadoIESS: body?.afiliadoIESS ?? body?.afiliadoIess,
+    // 1️⃣ Normalizar input
+    const input = normalizarInputHL(body);
+
+    console.log("➡️ POST /api/precalificar (normalizado):", {
+      ingresoNetoMensual: input.ingresoNetoMensual,
+      ingresoPareja: input.ingresoPareja,
+      otrasDeudasMensuales: input.otrasDeudasMensuales,
+      valorVivienda: input.valorVivienda,
+      entradaDisponible: input.entradaDisponible,
+      edad: input.edad,
+      afiliadoIess: input.afiliadoIess,
+      iessAportesTotales: input.iessAportesTotales,
+      iessAportesConsecutivos: input.iessAportesConsecutivos,
+      tipoIngreso: input.tipoIngreso,
+      aniosEstabilidad: input.aniosEstabilidad,
+      plazoAnios: input.plazoAnios,
     });
 
-    // Normalizamos afiliadoIess (el motor nuevo usa afiliadoIess)
-    const afiliadoIessRaw = body.afiliadoIess ?? body.afiliadoIESS;
+    // 2️⃣ Scoring + bancos
+    const resultadoRaw = evaluarProbabilidadPorBanco(input);
 
-    // 🚨 Aportes IESS (aceptamos ambos nombres por si acaso)
-    const iessAportesTotales = Number(body.iessAportesTotales || 0);
-    const iessAportesConsecutivos = Number(
-      body.iessAportesConsecutivos ?? body.iessAportesConsecutivas ?? 0
-    );
+    // 3️⃣ NORMALIZACIÓN ÚNICA (clave)
+    const resultado = normalizeResultadoParaSalida(resultadoRaw);
 
-    console.log("➡️  APORTES IESS RECIBIDOS:", {
-      totales: iessAportesTotales,
-      consecutivos: iessAportesConsecutivos,
-    });
-
-    // Input final enviado al motor
-    const input = {
-      ...body,
-      afiliadoIess: afiliadoIessRaw,
-      iessAportesTotales,
-      iessAportesConsecutivos,
-    };
-
-    // 🚀 Motor principal HabitaLibre (scoring avanzado) usando la versión con bancos
-    const resultado = evaluarProbabilidadPorBanco(input);
-
-    // Mapeo de escenarios a forma legacy (VIS, VIP, BIESS, PRIVADA)
-    const escHL = resultado.escenarios || {};
-    const escenariosLegacy = {
-      VIS: escHL.vis || null,
-      VIP: escHL.vip || null,
-      BIESS: escHL.biess || null,
-      PRIVADA: escHL.comercial || null,
-    };
-
-    // Puntaje simple legacy para no romper el front actual
-    const afiliadoFlag = toBool(afiliadoIessRaw);
-    const edadNum =
-      (resultado.perfil && resultado.perfil.edad) ||
-      Number(body.edad || 0) ||
-      30;
-
-    const puntajeHabitaLibreLegacy = scoreHLlegacy({
-      ltv: resultado.ltv,
-      dtiConHipoteca: resultado.dtiConHipoteca,
-      afiliadoIESS: afiliadoFlag,
-      edad: edadNum,
-    });
-
-    // ⚠️ Bancos: nos traemos lo que devuelva scoring.js
+    // Bancos
     const bancosProbabilidad = resultado.bancosProbabilidad || [];
     const bancosTop3 = resultado.bancosTop3 || [];
     const mejorBanco = resultado.mejorBanco || null;
 
-    // Construimos la respuesta manteniendo compatibilidad
+    // 4️⃣ Sugeridos flat (SIN lógica peligrosa)
+    const productoSugerido = resultado.productoSugerido || null;
+    const bancoSugerido =
+      resultado.bancoSugerido ||
+      (productoSugerido ? mejorBanco?.banco || null : null);
+
+    // 5️⃣ Respuesta final
     const respuesta = {
       ok: resultado.ok,
 
+      // métricas base
       productoElegido: resultado.productoElegido,
       tasaAnual: resultado.tasaAnual,
       plazoMeses: resultado.plazoMeses,
@@ -134,50 +171,45 @@ router.post("/", async (req, res) => {
       montoMaximo: resultado.montoMaximo,
       precioMaxVivienda: resultado.precioMaxVivienda,
 
-      escenarios: escenariosLegacy,
-      puntajeHabitaLibre: puntajeHabitaLibreLegacy,
+      // flags CONSISTENTES
+      flags: resultado.flags,
 
+      // scoring avanzado
       riesgoHabitaLibre: resultado.riesgoHabitaLibre,
       scoreHL: resultado.scoreHL,
       stressTest: resultado.stressTest,
       costos: resultado.costos,
-      opciones: resultado.opciones,
       checklist: resultado.checklist,
       accionesClave: resultado.accionesClave,
       benchmark: resultado.benchmark,
       perfil: resultado.perfil,
       requeridos: resultado.requeridos,
-      escenariosHL: resultado.escenarios,
-      bounds: resultado.bounds || null,
 
-      flags: resultado.flags,
+      // escenarios
+      escenariosHL: resultado.escenariosHL,
+      rutasViables: resultado.rutasViables || [],
+      rutaRecomendada: resultado.rutaRecomendada || null,
 
-      // 🔹 NUEVO: probabilidad por banco para email / front
+      // bancos
       bancosProbabilidad,
       bancosTop3,
       mejorBanco,
 
-      _echo: {
-        ingresoNetoMensual: Number(body.ingresoNetoMensual || 0),
-        ingresoPareja: Number(body.ingresoPareja || 0),
-        otrasDeudasMensuales: Number(body.otrasDeudasMensuales || 0),
-        valorVivienda: Number(body.valorVivienda || 0),
-        entradaDisponible: Number(body.entradaDisponible || 0),
-        edad: Number(body.edad || 0),
-        afiliadoIESS: afiliadoFlag,
-        nacionalidad: body.nacionalidad || "ecuatoriana",
-        estadoCivil: body.estadoCivil || "soltero",
-        iessAportesTotales,
-        iessAportesConsecutivos,
-      },
+      // 👇 lo que usa Progreso.jsx / PDF / Mailer
+      productoSugerido,
+      bancoSugerido,
+
+      // echo limpio
+      _echo: resultado._echo || {},
     };
 
     console.log("✅ /api/precalificar OK ->", {
-      productoElegido: respuesta.productoElegido,
+      productoSugerido,
+      bancoSugerido,
+      sinOferta: respuesta.flags?.sinOferta,
       cuotaEstimada: Math.round(respuesta.cuotaEstimada || 0),
       capacidadPago: Math.round(respuesta.capacidadPago || 0),
       dtiConHipoteca: respuesta.dtiConHipoteca,
-      bancosProbabilidad: respuesta.bancosProbabilidad?.length || 0,
     });
 
     return res.json(respuesta);

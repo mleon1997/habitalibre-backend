@@ -1,7 +1,9 @@
 // src/controllers/leads.controller.js
 import Lead from "../models/Lead.js";
+import User from "../models/User.js";
 import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
 import { generarCodigoHLDesdeObjectId } from "../utils/codigoHL.js";
+import { normalizeResultadoParaSalida } from "../utils/hlResultado.js";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
@@ -27,19 +29,37 @@ function extraerProducto(resultado) {
   return (
     resultado.productoElegido ||
     resultado.tipoCreditoElegido ||
+    resultado.productoSugerido ||
     resultado.producto ||
     null
   );
 }
 
 /* ===========================================================
+   ✅ SANITIZAR resultado recibido del FRONT
+
+   REGLA:
+   - BORRAR solo `resultado.sinOferta` (top-level legacy)
+   - ❌ NO BORRAR `resultado.flags.sinOferta` porque ESA es la fuente del motor
+=========================================================== */
+function sanitizarResultadoCliente(resultado = {}) {
+  const limpio = { ...(resultado || {}) };
+
+  // legacy: top-level sinOferta (lo eliminamos para evitar pisar)
+  if ("sinOferta" in limpio) delete limpio.sinOferta;
+
+  // ✅ IMPORTANTÍSIMO:
+  // NO tocar flags.sinOferta (si el frontend lo manda, es la verdad del motor)
+  // Solo aseguramos que flags sea objeto plano si existe.
+  if (limpio.flags && typeof limpio.flags === "object") {
+    limpio.flags = { ...limpio.flags };
+  }
+
+  return limpio;
+}
+
+/* ===========================================================
    POST /api/leads   (crear lead desde el simulador)
-   Body:
-    - nombre, email, telefono, ciudad
-    - aceptaTerminos, aceptaCompartir
-    - tiempoCompra
-    - sustentoIndependiente
-    - resultado: objeto devuelto por /api/precalificar
 =========================================================== */
 export async function crearLead(req, res) {
   try {
@@ -51,8 +71,8 @@ export async function crearLead(req, res) {
       aceptaTerminos,
       aceptaCompartir,
       resultado,
-      tiempoCompra, // horizonte de compra
-      sustentoIndependiente, // "declaracion" | "movimientos" | "ninguno" | null
+      tiempoCompra,
+      sustentoIndependiente,
     } = req.body || {};
 
     if (!nombre || !email || !resultado) {
@@ -62,56 +82,157 @@ export async function crearLead(req, res) {
       });
     }
 
+    const emailNorm = String(email).toLowerCase().trim();
+    const tokenEmail = String(req.customer?.email || "").toLowerCase().trim();
+    const emailEfectivo = tokenEmail || emailNorm;
+
+    // ✅ 1) Sanitiza lo que llega del FRONT (sin borrar flags.sinOferta)
+    const resultadoSanitizado = sanitizarResultadoCliente(resultado);
+
+    // ✅ DEBUG CRÍTICO (para que esto NO vuelva a ser a ciegas)
+    console.log("🧪 [LEADS] resultado recibido (keys):", Object.keys(resultado || {}));
+    console.log("🧪 [LEADS] flags recibidos:", resultado?.flags || null);
+    console.log(
+      "🧪 [LEADS] flags.sinOferta recibido:",
+      typeof resultado?.flags?.sinOferta === "boolean" ? resultado.flags.sinOferta : "(no viene boolean)"
+    );
+
+    // ✅ 2) Normaliza (si flags.sinOferta viene, NO se recalcula)
+    const resultadoNormalizado = normalizeResultadoParaSalida(resultadoSanitizado);
+
+    // ✅ Extrae campos consistentes
+    const scoreHL = extraerScoreHL(resultadoNormalizado);
+    const producto = extraerProducto(resultadoNormalizado);
+
+    // ✅ sinOferta: SOLO desde normalizador (que respeta flags.sinOferta si vino)
+    const sinOferta = resultadoNormalizado?.flags?.sinOferta === true;
+
     console.info("✅ Nuevo lead recibido:", {
       nombre,
-      email,
+      email: emailEfectivo,
       telefono,
       ciudad,
       aceptaTerminos,
       aceptaCompartir,
       tiempoCompra,
       sustentoIndependiente,
-      productoElegido: resultado?.productoElegido,
+      productoElegido: producto,
+      sinOferta,
+      customerLeadIdFromToken: req.customer?.leadId || null,
     });
 
-    const scoreHL = extraerScoreHL(resultado);
-    const producto = extraerProducto(resultado);
+    /* ======================================================
+       Link userId si existe
+    ====================================================== */
+    let userIdFinal = null;
+    let linkedToUser = false;
+    let linkedMethod = "none";
 
-    // 1) Guardar lead en Mongo (sin código todavía)
+    if (tokenEmail) {
+      const user = await User.findOne({ email: tokenEmail }).select("_id");
+      if (user?._id) {
+        userIdFinal = user._id;
+        linkedToUser = true;
+        linkedMethod = "token_email";
+      }
+    }
+
+    if (!userIdFinal) {
+      const user = await User.findOne({ email: emailNorm }).select("_id");
+      if (user?._id) {
+        userIdFinal = user._id;
+        linkedToUser = true;
+        linkedMethod = "email";
+      }
+    }
+
+    // 1) Crear lead
     let lead = await Lead.create({
       nombre,
-      email,
+      email: emailEfectivo,
       telefono,
       ciudad,
+
       aceptaTerminos: !!aceptaTerminos,
       aceptaCompartir: !!aceptaCompartir,
 
-      producto,
-      scoreHL,
-      tiempoCompra: tiempoCompra || null,
+      producto: producto || null,
+      scoreHL: typeof scoreHL === "number" ? scoreHL : null,
 
-      // sustento de ingresos independientes/mixtos
+      tiempoCompra: tiempoCompra || null,
       sustentoIndependiente: sustentoIndependiente || null,
 
-      // resultado completo del simulador
-      resultado,
+      // ✅ guardar NORMALIZADO
+      resultado: resultadoNormalizado,
 
       origen: "Simulador Hipoteca Exprés",
       metadata: {
         canal: "Web",
+        customerLeadIdFromToken: req.customer?.leadId || null,
       },
+
+      userId: userIdFinal || null,
     });
 
-    // 2) Generar Código HabitaLibre a partir del _id y guardarlo
+    // 2) Código HL
     const codigoHL = generarCodigoHLDesdeObjectId(lead._id);
     lead.codigoHL = codigoHL;
     await lead.save();
 
-    // 3) Objetos "planos" para el mailer/PDF, incluyendo codigoHL
-    const leadPlano = lead.toObject();
-    const resultadoConCodigo = { ...resultado, codigoHL };
+    if (userIdFinal) {
+      await User.updateOne(
+        { _id: userIdFinal },
+        { $set: { currentLeadId: lead._id } }
+      );
+    }
 
-    // 4) Enviar correos (cliente + interno) con el código incluido
+    // 3) Preparar para mailer/PDF
+    const leadPlano = lead.toObject();
+
+    const resultadoConCodigo = {
+      ...resultadoNormalizado,
+      codigoHL,
+
+      // ✅ flags CONSISTENTES
+      flags: {
+        ...(resultadoNormalizado.flags || {}),
+        sinOferta: resultadoNormalizado?.flags?.sinOferta === true,
+      },
+
+      // compat
+      productoElegido:
+        producto ||
+        resultadoNormalizado.productoElegido ||
+        resultadoNormalizado.productoSugerido ||
+        null,
+      tipoCreditoElegido:
+        resultadoNormalizado.tipoCreditoElegido ||
+        producto ||
+        resultadoNormalizado.productoElegido ||
+        resultadoNormalizado.productoSugerido ||
+        null,
+      bancoSugerido: resultadoNormalizado.bancoSugerido || null,
+      productoSugerido: resultadoNormalizado.productoSugerido || null,
+    };
+
+    console.log("📩 resultado para mailer/PDF (FULL CHECK):", {
+      sinOferta: resultadoConCodigo?.flags?.sinOferta,
+      productoElegido: resultadoConCodigo.productoElegido,
+      productoSugerido: resultadoConCodigo.productoSugerido,
+      bancoSugerido: resultadoConCodigo.bancoSugerido,
+      cuotaEstimada: resultadoConCodigo.cuotaEstimada,
+      capacidadPago:
+        resultadoConCodigo.capacidadPagoPrograma ??
+        resultadoConCodigo.capacidadPago ??
+        resultadoConCodigo.capacidadPagoGlobal ??
+        null,
+      dtiConHipoteca: resultadoConCodigo.dtiConHipoteca,
+      ltv: resultadoConCodigo.ltv,
+      tasaAnual: resultadoConCodigo.tasaAnual,
+      plazoMeses: resultadoConCodigo.plazoMeses,
+    });
+
+    // 4) Enviar correos
     try {
       await Promise.all([
         enviarCorreoCliente(leadPlano, resultadoConCodigo),
@@ -126,6 +247,8 @@ export async function crearLead(req, res) {
       msg: "Lead creado correctamente",
       leadId: lead._id,
       codigoHL,
+      linkedToUser,
+      linkedMethod,
     });
   } catch (err) {
     console.error("❌ Error en crearLead:", err);
@@ -137,11 +260,7 @@ export async function crearLead(req, res) {
 }
 
 /* ===========================================================
-   GET /api/leads   (listado paginado + filtros suaves)
-   Query:
-    - pagina (1..n)
-    - limit
-    - email, telefono, ciudad, tiempoCompra
+   GET /api/leads   (listado paginado + filtros)
 =========================================================== */
 export async function listarLeads(req, res) {
   try {
@@ -154,20 +273,10 @@ export async function listarLeads(req, res) {
     const { email, telefono, ciudad, tiempoCompra } = req.query || {};
     const filter = {};
 
-    if (email) {
-      filter.email = { $regex: email.trim(), $options: "i" };
-    }
-    if (telefono) {
-      filter.telefono = { $regex: telefono.trim(), $options: "i" };
-    }
-    if (ciudad) {
-      filter.ciudad = { $regex: ciudad.trim(), $options: "i" };
-    }
-
-    // Horizonte de compra
-    if (tiempoCompra) {
-      filter.tiempoCompra = tiempoCompra;
-    }
+    if (email) filter.email = { $regex: email.trim(), $options: "i" };
+    if (telefono) filter.telefono = { $regex: telefono.trim(), $options: "i" };
+    if (ciudad) filter.ciudad = { $regex: ciudad.trim(), $options: "i" };
+    if (tiempoCompra) filter.tiempoCompra = tiempoCompra;
 
     const total = await Lead.countDocuments(filter);
     const totalPaginas = Math.max(1, Math.ceil(total / limit));
@@ -200,7 +309,7 @@ export async function listarLeads(req, res) {
 }
 
 /* ===========================================================
-   GET /api/leads/stats  (total, hoy)
+   GET /api/leads/stats
 =========================================================== */
 export async function statsLeads(req, res) {
   try {
@@ -212,17 +321,9 @@ export async function statsLeads(req, res) {
       createdAt: { $gte: inicioHoy },
     });
 
-    return res.json({
-      ok: true,
-      total,
-      hoy,
-    });
+    return res.json({ ok: true, total, hoy });
   } catch (err) {
     console.error("❌ Error en statsLeads:", err);
-    return res.status(500).json({
-      ok: false,
-      total: 0,
-      hoy: 0,
-    });
+    return res.status(500).json({ ok: false, total: 0, hoy: 0 });
   }
 }

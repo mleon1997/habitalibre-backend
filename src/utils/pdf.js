@@ -1,6 +1,8 @@
+// src/utils/pdf.js
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
+import { normalizeResultadoParaSalida } from "./hlResultado.js";
 
 /**
  * HabitaLibre PDF — Reporte educativo y accionable (world-class)
@@ -8,6 +10,16 @@ import path from "path";
  * - Layout determinístico
  * - Chips, barras, tabla de amortización y sensibilidad de tasa
  * - Proyección a 5 años y plan de mejora
+ *
+ * ✅ Fuente de verdad:
+ *   - normalizeResultadoParaSalida() centraliza:
+ *       flags.sinOferta, productoSugerido, bancoSugerido, escenariosHL, _echo
+ *
+ * ✅ FIXES importantes:
+ *   - toNum NO convierte null/"" en 0 (evita falsos "sinOferta")
+ *   - sinOferta: prioridad motor => flags.sinOferta / sinOferta; si no existe => fallback numérico
+ *   - capacidadEfectiva: pick robusto (capacidadPagoPrograma / capacidadPago / Global / bounds / perfil)
+ *   - afiliado BIESS: _echo.afiliadoIESS (boolean) + fallbacks
  */
 
 // Ruta del logo (debe existir en el BACKEND: /public/LOGOHL.png)
@@ -15,14 +27,20 @@ const LOGO_PATH = path.join(process.cwd(), "public", "LOGOHL.png");
 
 // ============== Helpers de formato ==============
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+
 const toNum = (v, def = 0) => {
+  // ✅ evita Number(null)=0 / Number("")=0
+  if (v === null || v === undefined || v === "") return def;
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
 };
+
 const toInt = (v, def = 0) => {
+  if (v === null || v === undefined || v === "") return def;
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : def;
 };
+
 const clamp01 = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x);
 
 const money = (n, d = 2) =>
@@ -41,6 +59,57 @@ const titleCase = (s = "") =>
     .replace(/(?:^|\s)\S/g, (c) => c.toUpperCase());
 
 const safe = (s) => (s == null || String(s).trim() === "" ? "—" : String(s));
+
+/** pickNumber: devuelve el primer número finito de una lista (o null) */
+function pickNumber(...vals) {
+  for (const v of vals) {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/** pickBool: devuelve el primer boolean explícito (true/false) de una lista (o undefined) */
+function pickBool(...vals) {
+  for (const v of vals) {
+    if (typeof v === "boolean") return v;
+  }
+  return undefined;
+}
+
+/**
+ * ✅ Fallback heurístico numérico para sinOferta (solo si el motor no lo definió)
+ * - Evita decir "viable" cuando monto/precio/capacidad no sostienen
+ * - No se basa en "producto"
+ */
+function calcularSinOfertaFallback(R = {}) {
+  const montoMax = R.montoMaximo;
+  const precioMax = R.precioMaxVivienda;
+
+  // Si no hay señales numéricas, asumimos perfil en construcción
+  const noSignals =
+    !isNum(montoMax) ||
+    montoMax <= 0 ||
+    !isNum(precioMax) ||
+    precioMax <= 0 ||
+    !isNum(R.capacidadPago) ||
+    R.capacidadPago <= 0;
+
+  if (noSignals) return true;
+
+  // Reglas suaves (alineadas a lo que típicamente te tumba)
+  if (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0.5) return true;
+  if (isNum(R.ltv) && R.ltv > 0.9) return true;
+
+  if (
+    isNum(R.cuotaEstimada) &&
+    isNum(R.capacidadPago) &&
+    R.cuotaEstimada > R.capacidadPago
+  )
+    return true;
+
+  return false;
+}
 
 // ============== Finanzas ==============
 function pmt(rate, nper, pv) {
@@ -70,11 +139,8 @@ function proyeccionCincoAnios(pv, rateMensual, cuota) {
 
 // ============== Paleta / medidas ==============
 const brand = {
-  // Fondo del topbar = mismo tono oscuro del logo
-  primary: "#020617", // casi negro / slate muy oscuro
-  // Acento turquesa del logo para links y detalles
+  primary: "#020617",
   primaryDark: "#22d3ee",
-
   text: "#0f172a",
   mut: "#64748b",
   soft: "#94a3b8",
@@ -128,11 +194,7 @@ function chipAt(doc, x, y, label, value, w = 260, h = 54) {
   doc
     .fillColor(brand.text)
     .fontSize(15)
-    .text(String(value), x + 12, y + 26, {
-      width: w - 24,
-      height: 20,
-    });
-      // 👇 Asegura que el cursor siempre quede después del chip
+    .text(String(value), x + 12, y + 26, { width: w - 24, height: 20 });
   doc.y = Math.max(doc.y, y + h + 2);
 }
 
@@ -143,11 +205,8 @@ function barScore(doc, x, y, label, v01, hint, color) {
   doc.fillColor(brand.text).fontSize(11.5).text(label, x, y);
   const yb = y + 16;
   doc.save().roundedRect(x, yb, W, H, 5).fill(brand.barBg).restore();
-  if (v > 0)
-    doc.save().roundedRect(x, yb, v, H, 5).fill(color || brand.ok).restore();
-  doc.fillColor(brand.mut).fontSize(10).text(hint, x, yb + 14, {
-    width: W,
-  });
+  if (v > 0) doc.save().roundedRect(x, yb, v, H, 5).fill(color || brand.ok).restore();
+  doc.fillColor(brand.mut).fontSize(10).text(hint, x, yb + 14, { width: W });
 }
 
 function miniBar(doc, x, y, label, current, total, color = brand.primary) {
@@ -162,7 +221,7 @@ function miniBar(doc, x, y, label, current, total, color = brand.primary) {
   if (v > 0) doc.save().roundedRect(x, yb, v, H, 5).fill(color).restore();
 }
 
-// ============== Bancos recomendados (helpers nuevos) ==============
+// ============== Bancos recomendados ==============
 function getTopBancos(resultado = {}) {
   const rawTop =
     Array.isArray(resultado.bancosTop3) && resultado.bancosTop3.length
@@ -212,13 +271,8 @@ const explTasa = (t) =>
 
 // ============== Portada / pie ==============
 function portada(doc, lead, codigoHL) {
-  // Franja superior full-width con color del logo
   const headerHeight = 90;
-  doc
-    .save()
-    .rect(0, 0, doc.page.width, headerHeight)
-    .fill(brand.primary)
-    .restore();
+  doc.save().rect(0, 0, doc.page.width, headerHeight).fill(brand.primary).restore();
 
   const hasLogo = fs.existsSync(LOGO_PATH);
   const W = doc.page.width - M * 2;
@@ -228,32 +282,21 @@ function portada(doc, lead, codigoHL) {
     const logoX = M;
     const logoY = 14;
 
-    doc.image(LOGO_PATH, logoX, logoY, {
-      width: logoWidth,
-    });
+    doc.image(LOGO_PATH, logoX, logoY, { width: logoWidth });
 
     doc
       .fillColor("#e5e7eb")
       .fontSize(11.5)
-      .text(
-        "Informe de Precalificación Hipotecaria",
-        logoX + logoWidth + 18,
-        logoY + 30,
-        {
-          width: doc.page.width - (logoX + logoWidth + 18) - M,
-          align: "left",
-        }
-      );
+      .text("Informe de Precalificación Hipotecaria", logoX + logoWidth + 18, logoY + 30, {
+        width: doc.page.width - (logoX + logoWidth + 18) - M,
+        align: "left",
+      });
   } else {
     console.warn("[HabitaLibre PDF] Logo no encontrado en:", LOGO_PATH);
-    doc
-      .fillColor("#fff")
-      .fontSize(22)
-      .text("HabitaLibre", M, 32, { continued: true });
+    doc.fillColor("#fff").fontSize(22).text("HabitaLibre", M, 32, { continued: true });
     doc.fontSize(12).text("  •  Informe de Precalificación Hipotecaria");
   }
 
-  // Línea sutil debajo del header para separar
   doc
     .moveTo(M, headerHeight)
     .lineTo(doc.page.width - M, headerHeight)
@@ -261,52 +304,35 @@ function portada(doc, lead, codigoHL) {
     .lineWidth(0.7)
     .stroke();
 
-  // Título principal
   doc
     .fillColor(brand.text)
     .fontSize(24)
-    .text(
-      "Tu guía para conseguir la mejor hipoteca según tu perfil",
-      M,
-      headerHeight + 22,
-      {
-        width: W,
-      }
-    )
+    .text("Tu guía para conseguir la mejor hipoteca según tu perfil", M, headerHeight + 22, {
+      width: W,
+    })
     .moveDown(0.2);
 
-  // Datos del cliente
   doc
     .fontSize(12)
     .fillColor(brand.mut)
     .text(`Cliente: ${titleCase(lead?.nombre || "—")}`, M)
     .text(`Email: ${safe(lead?.email)}`, M);
 
-  if (codigoHL) {
-    doc.text(`Código HabitaLibre: ${codigoHL}`, M);
-  }
+  if (codigoHL) doc.text(`Código HabitaLibre: ${codigoHL}`, M);
 
   doc.text(`Fecha: ${new Date().toLocaleString("es-EC")}`, M).moveDown(0.3);
 
-  // Marca de versión visible
-  doc
-    .fontSize(10)
-    .fillColor(brand.soft)
-    .text("HabitaLibre – Reporte avanzado", M, doc.y, { width: W });
+  doc.fontSize(10).fillColor(brand.soft).text("HabitaLibre – Reporte avanzado", M, doc.y, { width: W });
 
   rule(doc);
 }
 
 function pie(doc, codigoHL) {
-  const footerHeight = 45; // espacio aproximado que usa el texto (ajustable)
-  const usableBottom = doc.page.height - M; // límite inferior "seguro"
+  const footerHeight = 45;
+  const usableBottom = doc.page.height - M;
 
-  // Si ya estoy muy abajo, mejor abrir una página nueva ANTES del footer
-  if (doc.y > usableBottom - footerHeight) {
-    doc.addPage();
-  }
+  if (doc.y > usableBottom - footerHeight) doc.addPage();
 
-  // Posicionamos el pie cerca del fondo, pero con margen suficiente
   const y = usableBottom - footerHeight + 8;
 
   doc
@@ -333,27 +359,6 @@ function pie(doc, codigoHL) {
   }
 }
 
-// ============== Lógica de nombre de producto ==============
-function nombreProducto(origen = {}) {
-  // Puede venir como resultado completo o como el objeto R
-  const raw =
-    origen.productoElegido ||
-    origen.tipoCreditoElegido ||
-    ""; // fallback vacío
-
-  const k = String(raw).toLowerCase();
-
-  if (k.includes("vis")) return "Crédito VIS";
-  if (k.includes("vip")) return "Crédito VIP";
-  if (k.includes("biess") && (k.includes("pref") || k.includes("prefer")))
-    return "BIESS preferencial";
-  if (k.includes("biess")) return "Crédito BIESS";
-
-  // Si no matchea nada, devolvemos algo genérico pero elegante
-  return k ? titleCase(k) : "Banca privada";
-}
-
-
 // ============== Puntaje global ==============
 function puntajeGlobal({ ltv, dtiConHipoteca, tasaAnual }) {
   let score = 100;
@@ -376,26 +381,14 @@ function puntajeGlobal({ ltv, dtiConHipoteca, tasaAnual }) {
 // ============== Recomendaciones ==============
 function planMejora(R) {
   const tips = [];
-  if (isNum(R.ltv) && R.ltv > 0.9)
-    tips.push("Aumenta tu entrada para bajar el LTV a ≤ 80%.");
-  if (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0.42)
-    tips.push("Reduce otras deudas para llevar el DTI por debajo de 42%.");
-  if (
-    isNum(R.cuotaStress) &&
-    isNum(R.capacidadPago) &&
-    R.cuotaStress > R.capacidadPago
-  )
-    tips.push(
-      "Si la tasa sube +2%, tu cuota supera tu capacidad; amplía plazo o suma ingreso familiar."
-    );
-  if (!tips.length)
-    tips.push(
-      "Perfil sólido: negocia tasa preferencial y solicita pre-aprobación."
-    );
+  if (isNum(R.ltv) && R.ltv > 0.9) tips.push("Aumenta tu entrada para bajar el LTV a ≤ 80%.");
+  if (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0.42) tips.push("Reduce otras deudas para llevar el DTI por debajo de 42%.");
+  if (isNum(R.cuotaStress) && isNum(R.capacidadPago) && R.cuotaStress > R.capacidadPago)
+    tips.push("Si la tasa sube +2%, tu cuota supera tu capacidad; amplía plazo o suma ingreso familiar.");
+  if (!tips.length) tips.push("Perfil sólido: negocia tasa preferencial y solicita pre-aprobación.");
   return tips;
 }
 
-// Plan de acción específico cuando no hay oferta viable
 function planMejoraSinOferta(R = {}) {
   const tips = [];
 
@@ -405,15 +398,12 @@ function planMejoraSinOferta(R = {}) {
   const entrada = toNum(R.entradaDisponible, 0);
   const ratioEntrada = valorVivienda > 0 ? entrada / valorVivienda : 0;
 
-  const ingresoStr = ingresoTotal
-    ? money(ingresoTotal, 0)
-    : "tu ingreso actual";
+  const ingresoStr = ingresoTotal ? money(ingresoTotal, 0) : "tu ingreso actual";
 
-  const ingresoBajo = ingresoTotal > 0 && ingresoTotal < 800; // referencia VIS
+  const ingresoBajo = ingresoTotal > 0 && ingresoTotal < 800;
   const dtiAlto = dtiCon > 0.45;
-  const entradaBaja = ratioEntrada < 0.1; // < 10 % de entrada
+  const entradaBaja = ratioEntrada < 0.1;
 
-  // Mensaje marco
   tips.push(
     "Con tus ingresos y deudas actuales, un crédito hipotecario no sería sostenible ni para ti ni para los bancos. Esto no es un 'no' definitivo, es un 'todavía no'."
   );
@@ -422,7 +412,6 @@ function planMejoraSinOferta(R = {}) {
     `Hoy tu ingreso familiar aproximado está alrededor de ${ingresoStr}. El reto principal es ajustar la combinación entre ingreso, deudas y entrada para que una cuota hipotecaria sea sostenible.`
   );
 
-  // 1) Ingreso
   if (ingresoBajo) {
     const metaIngreso = Math.max(800, Math.round(ingresoTotal * 1.2));
     tips.push(
@@ -433,7 +422,6 @@ function planMejoraSinOferta(R = {}) {
     );
   }
 
-  // 2) Deudas / DTI
   if (dtiAlto && ingresoTotal > 0) {
     const gapUSD = Math.ceil((dtiCon - 0.42) * ingresoTotal);
     tips.push(
@@ -443,12 +431,9 @@ function planMejoraSinOferta(R = {}) {
       )} al mes (pagando saldos o cancelando obligaciones) te acercaría a un nivel de endeudamiento más sano para una hipoteca.`
     );
   } else {
-    tips.push(
-      "Evita tomar nuevas deudas de consumo y prioriza pagar las que ya tienes para liberar capacidad de pago."
-    );
+    tips.push("Evita tomar nuevas deudas de consumo y prioriza pagar las que ya tienes para liberar capacidad de pago.");
   }
 
-  // 3) Entrada / ahorro
   if (entradaBaja && valorVivienda > 0) {
     const entrada20 = Math.round(valorVivienda * 0.2);
     const extraDown = Math.max(0, entrada20 - entrada);
@@ -466,7 +451,6 @@ function planMejoraSinOferta(R = {}) {
     );
   }
 
-  // 4) Formalización
   tips.push(
     "Formaliza tus ingresos (roles de pago claros o RUC/declaraciones e historial bancario ordenado). La forma en que demuestras tu ingreso pesa tanto como el monto."
   );
@@ -474,43 +458,25 @@ function planMejoraSinOferta(R = {}) {
   return tips;
 }
 
-// Plan de acción cuando el ingreso no está formalizado (Independiente/Mixto sin sustento)
 function planMejoraSinSustento(R) {
   const tips = [];
   const ingresoTotal = toNum(R.ingresoTotal, 0);
 
-  tips.push(
-    "Tus ingresos actuales pueden ser suficientes para pensar en una hipoteca, pero hoy los bancos no pueden contarlos como ingresos formales."
-  );
+  tips.push("Tus ingresos actuales pueden ser suficientes para pensar en una hipoteca, pero hoy los bancos no pueden contarlos como ingresos formales.");
 
   if (ingresoTotal > 0) {
     tips.push(
-      `Tu ingreso familiar estimado está alrededor de ${money(
-        ingresoTotal,
-        0
-      )}. El problema no es el monto, sino que no está formalizado de una forma que el banco pueda usar.`
+      `Tu ingreso familiar estimado está alrededor de ${money(ingresoTotal, 0)}. El problema no es el monto, sino que no está formalizado de una forma que el banco pueda usar.`
     );
   }
 
-  tips.push(
-    "Define tu camino principal: seguir como empleado (contrato + roles de pago) o como independiente (RUC, facturas y declaraciones de impuestos)."
-  );
-
+  tips.push("Define tu camino principal: seguir como empleado (contrato + roles de pago) o como independiente (RUC, facturas y declaraciones de impuestos).");
   tips.push(
     "Empieza a bancarizar tus ingresos: cobra la mayoría de tus pagos en 1–2 cuentas bancarias a tu nombre. Los bancos analizan tu historial de movimientos reales, no solo lo que declaras en el formulario."
   );
-
-  tips.push(
-    "Mantén un historial estable por al menos 9–12 meses con ingresos formales (roles o facturación constante) antes de volver a aplicar. Eso puede cambiar por completo la respuesta del banco."
-  );
-
-  tips.push(
-    "Evita nuevas deudas y reduce las que ya tienes para mostrar una capacidad de pago limpia y predecible."
-  );
-
-  tips.push(
-    "En paralelo, arma un plan de ahorro para tu entrada (por ejemplo USD 3.000–5.000). Llegar con ahorros + ingresos formalizados te pone en una posición muy fuerte frente a los bancos."
-  );
+  tips.push("Mantén un historial estable por al menos 9–12 meses con ingresos formales (roles o facturación constante) antes de volver a aplicar. Eso puede cambiar por completo la respuesta del banco.");
+  tips.push("Evita nuevas deudas y reduce las que ya tienes para mostrar una capacidad de pago limpia y predecible.");
+  tips.push("En paralelo, arma un plan de ahorro para tu entrada (por ejemplo USD 3.000–5.000). Llegar con ahorros + ingresos formalizados te pone en una posición muy fuerte frente a los bancos.");
 
   return tips;
 }
@@ -563,14 +529,17 @@ function drawAmortTable(doc, rows) {
 }
 
 // ============== Generador principal ==============
-export async function generarPDFLead(lead = {}, resultado = {}) {
+export async function generarPDFLead(lead = {}, resultadoRaw = {}) {
   console.log(
-    "📄 [PDF v2] Generando PDF AVANZADO para:",
+    "📄 [PDF] Generando PDF AVANZADO para:",
     lead?.email || lead?.nombre || "sin-identificar"
   );
+
+  // ✅ Fuente de verdad: normalizador (ya desanida y fija flags.sinOferta consistentemente)
+  const resultado = normalizeResultadoParaSalida(resultadoRaw);
   const echo = resultado?._echo || {};
 
-  // Código único HabitaLibre para tracking (si no viene, puedes generarlo antes)
+  // Código único HabitaLibre para tracking
   const codigoHL =
     resultado?.codigoHL ||
     lead?.codigoHL ||
@@ -579,38 +548,104 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     lead?._id ||
     null;
 
+  // ✅ Producto final (para textos)
+  const productoSugerido =
+    resultado?.productoSugerido ||
+    resultado?.productoElegido ||
+    resultado?.tipoCreditoSugerido ||
+    null;
+
+  const productoElegidoFinal =
+    resultado?.productoElegido ||
+    resultado?.tipoCreditoElegido ||
+    productoSugerido ||
+    null;
+
+  // ✅ sinOferta: prioridad motor
+  const sinOfertaFromEngine = pickBool(
+    resultado?.flags?.sinOferta,
+    resultado?.sinOferta
+  );
+
+  // ✅ capacidadPago robusta
+  const capacidadEfectiva = pickNumber(
+    resultado?.capacidadPagoPrograma,
+    resultado?.capacidadPago,
+    resultado?.capacidadPagoGlobal,
+    resultado?.bounds?.capacidadPago,
+    resultado?.bounds?.capacidadPagoGlobal,
+    resultado?.perfil?.capacidadPago
+  );
+
   // Normalizar entrada
   const R = {
-    capacidadPago: toNum(resultado?.capacidadPago, null),
-    montoMaximo: toNum(resultado?.montoMaximo, null),
-    precioMaxVivienda: toNum(resultado?.precioMaxVivienda, null),
-    tasaAnual: toNum(resultado?.tasaAnual, null),
-    plazoMeses: toInt(resultado?.plazoMeses, null),
-    ltv: toNum(resultado?.ltv, null),
-    dtiConHipoteca: toNum(resultado?.dtiConHipoteca, null),
-    cuotaEstimada: toNum(resultado?.cuotaEstimada, null),
-    cuotaStress: toNum(resultado?.cuotaStress, null),
+    capacidadPago: capacidadEfectiva,
+    montoMaximo: pickNumber(
+      resultado?.montoMaximo,
+      resultado?.montoPrestamoMax,
+      resultado?.prestamoMax,
+      resultado?.bounds?.montoMaximo,
+      resultado?.bounds?.montoPrestamoMax
+    ),
+    precioMaxVivienda: pickNumber(
+      resultado?.precioMaxVivienda,
+      resultado?.precioMax,
+      resultado?.valorMaxVivienda,
+      resultado?.bounds?.precioMaxVivienda,
+      resultado?.bounds?.precioMax
+    ),
+    tasaAnual: pickNumber(resultado?.tasaAnual, resultado?.tasaReferencial),
+    plazoMeses: pickNumber(
+      resultado?.plazoMeses,
+      resultado?.plazoMesesRecomendado,
+      resultado?.plazo,
+      resultado?.bounds?.plazoMeses
+    ),
+    ltv: pickNumber(resultado?.ltv, resultado?.bounds?.ltv),
+    dtiConHipoteca: pickNumber(
+      resultado?.dtiConHipoteca,
+      resultado?.bounds?.dtiConHipoteca
+    ),
+    cuotaEstimada: pickNumber(
+      resultado?.cuotaEstimada,
+      resultado?.bounds?.cuotaEstimada
+    ),
+    cuotaStress: pickNumber(resultado?.cuotaStress),
     productoElegido:
       resultado?.productoElegido ?? resultado?.tipoCreditoElegido ?? null,
-    valorVivienda: toNum(resultado?.valorVivienda, null),
-    entradaDisponible: toNum(resultado?.entradaDisponible, null),
+    valorVivienda: pickNumber(
+      resultado?.valorVivienda,
+      resultado?._echo?.valorVivienda,
+      resultado?.perfil?.valorVivienda
+    ),
+    entradaDisponible: pickNumber(
+      resultado?.entradaDisponible,
+      resultado?._echo?.entradaDisponible,
+      resultado?.perfil?.entradaDisponible
+    ),
     requeridos: resultado?.requeridos || {},
     bounds: resultado?.bounds || {},
     flags: resultado?.flags || {},
-    escenarios: resultado?.escenarios || {}, // 👈 NUEVO
-    // nuevo: ingreso total para plan de acción
-    ingresoTotal: toNum(resultado?.perfil?.ingresoTotal, null),
+    escenarios: resultado?.escenarios || {},
+    ingresoTotal: pickNumber(resultado?.perfil?.ingresoTotal, resultado?.ingresoTotal),
   };
 
-  // ==== Bancos recomendados (nuevo bloque de datos) ====
+  // ✅ sinOferta FINAL (si el motor no lo definió, fallback numérico)
+  const sinOferta =
+    typeof sinOfertaFromEngine === "boolean"
+      ? sinOfertaFromEngine
+      : calcularSinOfertaFallback(R);
+
+  // Bancos recomendados
   const { top: bancosTop, mejor: mejorBanco } = getTopBancos(resultado || {});
 
-  // ===== Lógica de plazo recortado por edad (para bloque explicativo) =====
+  // ===== Lógica de plazo recortado por edad =====
   const edadCliente = resultado?.perfil?.edad || 0;
-  const producto = (resultado?.productoElegido || "").toLowerCase();
-  const plazoRecomendadoMeses = resultado?.plazoMeses || 0;
+  const productoLower = String(
+    resultado?.productoElegido || productoElegidoFinal || ""
+  ).toLowerCase();
+  const plazoRecomendadoMeses = toNum(R.plazoMeses, 0);
 
-  // Plazo "normal" por tipo de producto
   const PLAZO_DEFAULT = {
     vis: 240,
     vip: 300,
@@ -618,11 +653,8 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     biess: 300,
     comercial: 240,
   };
-
   const plazoDefaultProducto =
-    PLAZO_DEFAULT[producto] || plazoRecomendadoMeses || 0;
-
-  // Límite máximo por edad: que no pase de 75 años al vencimiento
+    PLAZO_DEFAULT[productoLower] || plazoRecomendadoMeses || 0;
   const maxPlazoPorEdadMeses = Math.max(0, (75 - edadCliente) * 12);
 
   const recortadoPorEdad =
@@ -637,41 +669,16 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       ? (plazoRecomendadoMeses / 12).toFixed(0)
       : null;
 
-  // Flag principal: sin oferta viable hoy
-  const flagSinOferta = resultado?.flags?.sinOferta;
-
-  // Flag principal: sin oferta viable hoy (reglas más realistas)
-  const sinOferta =
-    typeof flagSinOferta === "boolean"
-      ? flagSinOferta
-      : !isNum(R.montoMaximo) ||
-        R.montoMaximo <= 0 ||
-        !isNum(R.precioMaxVivienda) ||
-        R.precioMaxVivienda <= 0 ||
-        // DTI muy alto
-        (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0.5) ||
-        // Cuota > capacidad de pago
-        (isNum(R.cuotaEstimada) &&
-          isNum(R.capacidadPago) &&
-          R.cuotaEstimada > R.capacidadPago) ||
-        // LTV demasiado alto
-        (isNum(R.ltv) && R.ltv > 0.9);
-
-  // 👉 Helper interno para describir el producto (reemplaza a nombreProducto(R))
+  // Helper interno para describir el producto
   const describeProducto = () => {
-    const raw = String(R.productoElegido || "").toLowerCase();
-
+    const raw = String(productoElegidoFinal || "").toLowerCase();
     if (!raw) return "un crédito hipotecario sostenible";
-
     if (raw.includes("vip")) return "crédito VIP (Vivienda de Interés Público)";
     if (raw.includes("vis")) return "crédito VIS (Vivienda de Interés Social)";
     if (raw.includes("biess")) return "crédito hipotecario BIESS";
-    if (raw.includes("priv") || raw.includes("banca") || raw.includes("comercial")) {
+    if (raw.includes("priv") || raw.includes("banca") || raw.includes("comercial"))
       return "crédito de banca privada";
-    }
-
-    // fallback genérico
-    return `crédito hipotecario ${R.productoElegido}`;
+    return `crédito hipotecario ${productoElegidoFinal}`;
   };
 
   // Crear PDF
@@ -687,7 +694,6 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     },
   });
 
-  // Mantener cursor consistente al agregar página
   doc.on("pageAdded", () => {
     doc.x = M;
     doc.y = M;
@@ -705,7 +711,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
 
   const W = doc.page.width - M * 2;
 
-  // ========= NUEVA SECCIÓN: Recomendación patrimonial estratégica =========
+  // ========= Recomendación patrimonial estratégica =========
   sectionTitle(doc, "Recomendación patrimonial estratégica");
 
   try {
@@ -742,20 +748,15 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       doc
         .fontSize(12)
         .fillColor(brand.text)
-        .text(
-          "Tus números no solo cuentan una historia financiera:",
-          M,
-          doc.y,
-          { width: W }
-        )
+        .text("Tus números no solo cuentan una historia financiera:", M, doc.y, {
+          width: W,
+        })
         .moveDown(0.2);
 
       doc
         .fontSize(12)
         .fillColor(brand.primaryDark)
-        .text("revelan tu potencial patrimonial real.", M, doc.y, {
-          width: W,
-        })
+        .text("revelan tu potencial patrimonial real.", M, doc.y, { width: W })
         .moveDown(0.8);
 
       doc
@@ -806,7 +807,6 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       );
       doc.moveDown(0.8);
 
-      // Ajustes que mejorarían el perfil (usa resultado.requeridos)
       const needs = R?.requeridos || {};
       if (
         (isNum(needs.downTo80) && needs.downTo80 > 0) ||
@@ -849,12 +849,9 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       doc
         .fontSize(11.5)
         .fillColor(brand.primaryDark)
-        .text(
-          "Tu meta no es endeudarte: es construir patrimonio.",
-          M,
-          doc.y,
-          { width: W }
-        );
+        .text("Tu meta no es endeudarte: es construir patrimonio.", M, doc.y, {
+          width: W,
+        });
       doc
         .fontSize(11)
         .fillColor(brand.mut)
@@ -884,11 +881,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     doc
       .fontSize(11)
       .fillColor(brand.bad)
-      .text(
-        "No se pudo generar la sección de recomendación patrimonial.",
-        M,
-        doc.y
-      );
+      .text("No se pudo generar la sección de recomendación patrimonial.", M, doc.y);
     rule(doc);
   }
 
@@ -901,10 +894,8 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   let x = M;
   let y = doc.y + 6;
 
-  // 👇 Asegurarnos de que el bloque completo de 3 filas de chips quepa en la página
-  const alturaBloqueChips = chipH * 3 + 40; // 3 filas + algo de respiro
-  const limiteInferior = doc.page.height - M - 40; // margen de seguridad sobre el pie
-
+  const alturaBloqueChips = chipH * 3 + 40;
+  const limiteInferior = doc.page.height - M - 40;
   if (y + alturaBloqueChips > limiteInferior) {
     doc.addPage();
     x = M;
@@ -925,13 +916,12 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     x + chipW + gap,
     y,
     "Monto máximo (est.)",
-    sinOferta || !isNum(R.montoMaximo) || R.montoMaximo <= 0
-      ? "—"
-      : money(R.montoMaximo, 0),
+    !isNum(R.montoMaximo) || R.montoMaximo <= 0 ? "—" : money(R.montoMaximo, 0),
     chipW,
     chipH
   );
   y += chipH + 10;
+
   chipAt(
     doc,
     x,
@@ -951,12 +941,13 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     chipH
   );
   y += chipH + 10;
+
   chipAt(
     doc,
     x,
     y,
     "LTV",
-    sinOferta || !isNum(R.ltv) || R.ltv <= 0 ? "—" : pct(R.ltv, 1),
+    !isNum(R.ltv) || R.ltv <= 0 ? "—" : pct(R.ltv, 1),
     chipW,
     chipH
   );
@@ -965,7 +956,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     x + chipW + gap,
     y,
     "Precio máx. de vivienda",
-    sinOferta || !isNum(R.precioMaxVivienda) || R.precioMaxVivienda <= 0
+    !isNum(R.precioMaxVivienda) || R.precioMaxVivienda <= 0
       ? "—"
       : money(R.precioMaxVivienda, 0),
     chipW,
@@ -994,6 +985,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
         { width: W }
       );
   }
+
   rule(doc);
 
   // ========= Score hipotecario + puntaje global =========
@@ -1001,41 +993,42 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   const scoreX = M;
   let scoreY = doc.y + 4;
 
-  // Normalizaciones de score
   let sLTV = 0.5;
   if (isNum(R.ltv) && R.ltv > 0) {
     if (R.ltv <= 0.8) sLTV = 1;
     else if (R.ltv >= 1) sLTV = 0;
     else sLTV = Math.max(0, 1 - (R.ltv - 0.8) / 0.2);
   }
+
   let sDTI = 0.5;
   if (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0) {
     if (R.dtiConHipoteca <= 0.35) sDTI = 1;
     else if (R.dtiConHipoteca >= 0.5) sDTI = 0;
     else sDTI = Math.max(0, 1 - (R.dtiConHipoteca - 0.35) / 0.15);
   }
+
   let sTasa = 0.5;
   if (isNum(R.tasaAnual) && R.tasaAnual > 0) {
     if (R.tasaAnual <= 0.055) sTasa = 1;
     else if (R.tasaAnual >= 0.12) sTasa = 0;
-    else sTasa = Math.max(0, 1 - (R.tasaAnual - 0.055) / (0.12 - 0.055));
+    else
+      sTasa = Math.max(
+        0,
+        1 - (R.tasaAnual - 0.055) / (0.12 - 0.055)
+      );
   }
 
   const colorL = sLTV >= 0.8 ? brand.ok : sLTV >= 0.5 ? brand.warn : brand.bad;
   const colorD = sDTI >= 0.8 ? brand.ok : sDTI >= 0.5 ? brand.warn : brand.bad;
   const colorT = sTasa >= 0.8 ? brand.ok : sTasa >= 0.5 ? brand.warn : brand.bad;
 
-  const hintL = sinOferta
-    ? "Aún no hay crédito asignado; el LTV se definirá cuando tu capacidad alcance una vivienda específica."
-    : explLTV(R.ltv);
-  const hintD = sinOferta
-    ? "Hoy tus ingresos y deudas no permiten una cuota hipotecaria sostenible. Tu primer objetivo es reforzar la capacidad de pago."
-    : explDTI(R.dtiConHipoteca);
+  const hintL = explLTV(R.ltv);
+  const hintD = explDTI(R.dtiConHipoteca);
 
   const ltvLabel =
-    sinOferta || !isNum(R.ltv) || R.ltv <= 0 ? "LTV" : `LTV (${pct(R.ltv, 1)})`;
+    !isNum(R.ltv) || R.ltv <= 0 ? "LTV" : `LTV (${pct(R.ltv, 1)})`;
   const dtiLabel =
-    sinOferta || !isNum(R.dtiConHipoteca) || R.dtiConHipoteca <= 0
+    !isNum(R.dtiConHipoteca) || R.dtiConHipoteca <= 0
       ? "DTI"
       : `DTI (${pct(R.dtiConHipoteca, 1)})`;
 
@@ -1055,14 +1048,13 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     colorT
   );
 
-  // Termómetro/puntaje global
-  const scoreRaw = puntajeGlobal(R); // 0..100
+  const scoreRaw = puntajeGlobal(R);
   const score = sinOferta ? Math.min(scoreRaw, 40) : scoreRaw;
   const termW = 360;
   const termFill = Math.round((score / 100) * termW);
-  const termColor =
-    score >= 80 ? brand.ok : score >= 60 ? brand.warn : brand.bad;
+  const termColor = score >= 80 ? brand.ok : score >= 60 ? brand.warn : brand.bad;
   const yTherm = doc.y + 10;
+
   const scoreLabel = sinOferta
     ? `Puntaje global HabitaLibre: ${score}/100 (perfil en construcción)`
     : `Puntaje global HabitaLibre: ${score}/100`;
@@ -1071,11 +1063,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   const yb = yTherm + 16;
   doc.save().roundedRect(scoreX, yb, termW, 10, 5).fill(brand.barBg).restore();
   if (termFill > 0)
-    doc
-      .save()
-      .roundedRect(scoreX, yb, termFill, 10, 5)
-      .fill(termColor)
-      .restore();
+    doc.save().roundedRect(scoreX, yb, termFill, 10, 5).fill(termColor).restore();
 
   doc.moveDown(0.2);
   rule(doc);
@@ -1091,10 +1079,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     "DTI (Debt-to-Income): Deudas mensuales (incluida la hipoteca) / ingreso. Mantenerlo bajo indica solvencia.",
     M
   );
-  doc.text(
-    "Tasa referencial: Costo anual del crédito. Puede variar por producto y perfil.",
-    M
-  );
+  doc.text("Tasa referencial: Costo anual del crédito. Puede variar por producto y perfil.", M);
   doc.text(
     "Plazo: Número de años para pagar. Más plazo, menor cuota (pero mayor costo total).",
     M
@@ -1102,38 +1087,24 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   if (isNum(R.plazoMeses))
     doc
       .fillColor(brand.mut)
-      .text(
-        `~${Math.round(R.plazoMeses / 12)} años: balance cuota/costo total.`,
-        M
-      );
+      .text(`~${Math.round(R.plazoMeses / 12)} años: balance cuota/costo total.`, M);
   rule(doc);
 
   // ========= Plan de acción recomendado =========
   sectionTitle(doc, "Plan de acción recomendado");
 
   let tips;
-  if (resultado?.flags?.sinSustento) {
-    tips = planMejoraSinSustento(R);
-  } else if (sinOferta) {
-    tips = planMejoraSinOferta(R);
-  } else {
-    tips = planMejora(R);
-  }
+  if (resultado?.flags?.sinSustento) tips = planMejoraSinSustento(R);
+  else if (sinOferta) tips = planMejoraSinOferta(R);
+  else tips = planMejora(R);
 
   doc.fillColor(brand.text).fontSize(11);
   tips.forEach((t) => doc.text(`• ${t}`, M, doc.y, { width: W }));
   doc.moveDown(0.6);
 
-  // ⚠️ Bloque extra cuando el plazo está limitado por edad
   if (recortadoPorEdad && plazoRecomendadoAnios) {
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(10)
-      .fillColor("#b91c1c") // rojo sobrio
-      .text("Importante por tu edad", { continued: false });
-
+    doc.font("Helvetica-Bold").fontSize(10).fillColor("#b91c1c").text("Importante por tu edad");
     doc.moveDown(0.15);
-
     doc
       .font("Helvetica")
       .fontSize(9)
@@ -1143,11 +1114,10 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
           "Eso hace que la cuota sea más alta que en un crédito a 15–20 años. " +
           "Si participara un garante más joven, algunas entidades podrían ampliar el plazo y reducir la cuota mensual."
       );
-
     doc.moveDown(0.4);
   }
 
-  // ========= NUEVA SECCIÓN: Dónde tienes más probabilidad de aprobación =========
+  // ========= Dónde tienes más probabilidad de aprobación =========
   if (bancosTop && bancosTop.length) {
     sectionTitle(doc, "Dónde tienes más probabilidad de aprobación");
 
@@ -1197,15 +1167,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       }`;
       const color = colorProbabilidad(probLabel);
 
-      miniBar(
-        doc,
-        M,
-        yB,
-        labelLinea,
-        probScore != null ? probScore : 0,
-        100,
-        color
-      );
+      miniBar(doc, M, yB, labelLinea, probScore != null ? probScore : 0, 100, color);
       yB = doc.y + 4;
 
       if (probLabel || probScore != null) {
@@ -1213,9 +1175,9 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
           .fontSize(9.5)
           .fillColor(brand.mut)
           .text(
-            `Probabilidad estimada: ${
-              probLabel || "Media"
-            }${probScore != null ? ` · ${probScore}%` : ""}`,
+            `Probabilidad estimada: ${probLabel || "Media"}${
+              probScore != null ? ` · ${probScore}%` : ""
+            }`,
             M,
             yB,
             { width: W }
@@ -1243,7 +1205,6 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   sectionTitle(doc, "¿Qué pasa si sube la tasa? (stress +1% / +2% / +3%)");
 
   if (
-    !sinOferta &&
     isNum(R.montoMaximo) &&
     R.montoMaximo > 0 &&
     isNum(R.tasaAnual) &&
@@ -1259,21 +1220,15 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     const c0 = pmt(r0, R.plazoMeses, R.montoMaximo);
     const totIntBase = c0 * R.plazoMeses - R.montoMaximo;
 
-    // Etiqueta base
     doc
       .fontSize(11.5)
       .fillColor(brand.text)
       .text(`Base — cuota ${money(c0, 2)}`, x0, y0, { width: W2 });
     y0 += 16;
-    // Barra base
     doc.save().roundedRect(x0, y0, barW, barH, 5).fill(brand.barBg).restore();
     const baseFill = Math.round((totIntBase / (totIntBase * 1.25)) * barW);
     if (baseFill > 0)
-      doc
-        .save()
-        .roundedRect(x0, y0, baseFill, barH, 5)
-        .fill(brand.primary)
-        .restore();
+      doc.save().roundedRect(x0, y0, baseFill, barH, 5).fill(brand.primary).restore();
     y0 += 24;
 
     const deltas = [0.01, 0.02, 0.03];
@@ -1290,12 +1245,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       doc
         .fontSize(11.5)
         .fillColor(brand.text)
-        .text(
-          `+${Math.round(d * 100)}% — cuota ${money(c, 2)}`,
-          x0,
-          y0,
-          { width: W2 }
-        );
+        .text(`+${Math.round(d * 100)}% — cuota ${money(c, 2)}`, x0, y0, { width: W2 });
       y0 += 16;
 
       doc.save().roundedRect(x0, y0, barW, barH, 5).fill(brand.barBg).restore();
@@ -1304,11 +1254,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
         Math.min(barW, Math.round((totInt / (totIntBase * 1.25)) * barW))
       );
       if (fill > 0)
-        doc
-          .save()
-          .roundedRect(x0, y0, fill, barH, 5)
-          .fill(brand.primaryDark)
-          .restore();
+        doc.save().roundedRect(x0, y0, fill, barH, 5).fill(brand.primaryDark).restore();
       y0 += 24;
     });
 
@@ -1322,11 +1268,11 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
         M
       );
   }
+
   rule(doc);
 
-  // ========= Amortización 12 meses + Proyección 5 años =========
+  // ========= Amortización / Proyección =========
   if (
-    !sinOferta &&
     isNum(R.montoMaximo) &&
     R.montoMaximo > 0 &&
     isNum(R.tasaAnual) &&
@@ -1361,29 +1307,15 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     const proj = proyeccionCincoAnios(R.montoMaximo, r, c);
     sectionTitle(doc, "Proyección a 5 años");
     doc.fontSize(11).fillColor(brand.text);
-    doc.text(
-      `Intereses pagados (60 meses): ${money(proj.intereses, 2)}`,
-      M
-    );
-    doc.text(
-      `Capital amortizado (60 meses): ${money(proj.capital, 2)}`,
-      M
-    );
-    doc.text(
-      `Saldo estimado al mes 60: ${money(proj.saldo, 2)}`,
-      M
-    );
+    doc.text(`Intereses pagados (60 meses): ${money(proj.intereses, 2)}`, M);
+    doc.text(`Capital amortizado (60 meses): ${money(proj.capital, 2)}`, M);
+    doc.text(`Saldo estimado al mes 60: ${money(proj.saldo, 2)}`, M);
     doc.moveDown(0.6);
   }
 
   // ========= Afinidad por tipo de crédito =========
   sectionTitle(doc, "Afinidad por tipo de crédito");
-
-  // Usamos los escenarios que vienen del backend (legacy o nuevos)
-  const esc =
-    resultado?.escenarios || resultado?.escenariosHL || {};
-
-  // Normalizamos por si vienen en mayúsculas / nombres distintos
+  const esc = resultado?.escenariosHL || resultado?.escenarios || {};
   const escNorm = {
     vip: esc.vip || esc.VIP || null,
     vis: esc.vis || esc.VIS || null,
@@ -1394,24 +1326,35 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   function esViable(nodo) {
     if (!nodo) return false;
     if (typeof nodo.viable === "boolean") return nodo.viable;
-    if (typeof nodo.score === "number") return nodo.score >= 0.5; // fallback genérico
+    if (typeof nodo.score === "number") return nodo.score >= 0.5;
     return false;
   }
 
-  // 👉 Heurística específica para BIESS usando lo que devuelve /precalificar
-  const afiliadoBIESS =
-    !!echo.afiliadoIESS || !!resultado?.perfil?.afiliadoIess;
+  // ✅ afiliación IESS: en _echo viene afiliadoIESS boolean
+  const afiliadoBIESS = !!(
+    echo.afiliadoIESS ??
+    echo.afiliadoIess ??
+    echo.afiliado ??
+    resultado?.perfil?.afiliadoIess ??
+    resultado?.perfil?.afiliadoIESS
+  );
 
   const aportesTotales = toNum(
-    echo.iessAportesTotales ?? echo.aportesTotalesIess,
-    0
-  );
-  const aportesConsecutivos = toNum(
-    echo.iessAportesConsecutivos ?? echo.aportesConsecutivosIess,
+    echo.iessAportesTotales ??
+      echo.aportesTotales ??
+      echo.aportesTotalesIess ??
+      echo.iess_totales,
     0
   );
 
-  // Reglas base BIESS
+  const aportesConsecutivos = toNum(
+    echo.iessAportesConsecutivos ??
+      echo.aportesConsecutivos ??
+      echo.aportesConsecutivosIess ??
+      echo.iess_consecutivos,
+    0
+  );
+
   const biessHeuristico =
     !sinOferta &&
     afiliadoBIESS &&
@@ -1422,41 +1365,24 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     isNum(R.dtiConHipoteca) &&
     R.dtiConHipoteca <= 0.4;
 
-  // Qué producto es el principal (para marcarlo como "Recomendado")
-  const tagProd = String(R.productoElegido || "").toLowerCase();
+  const tagProd = String(productoElegidoFinal || "").toLowerCase();
   let creditoPrincipal = null;
   if (tagProd.includes("vip")) creditoPrincipal = "VIP";
   else if (tagProd.includes("vis")) creditoPrincipal = "VIS";
   else if (tagProd.includes("biess")) creditoPrincipal = "BIESS";
-  else if (
-    tagProd.includes("priv") ||
-    tagProd.includes("banca") ||
-    tagProd.includes("comercial")
-  )
+  else if (tagProd.includes("priv") || tagProd.includes("banca") || tagProd.includes("comercial"))
     creditoPrincipal = "Banca Privada";
 
-  // Determinamos afinidad por escenarios + heurísticas
   const filasAfinidad = [
     { name: "VIP", key: "vip", ok: esViable(escNorm.vip) },
     { name: "VIS", key: "vis", ok: esViable(escNorm.vis) },
-    {
-      name: "BIESS",
-      key: "biess",
-      ok: esViable(escNorm.biess) || biessHeuristico,
-    },
-    {
-      name: "Banca Privada",
-      key: "privada",
-      ok: esViable(escNorm.privada),
-    },
+    { name: "BIESS", key: "biess", ok: esViable(escNorm.biess) || biessHeuristico },
+    { name: "Banca Privada", key: "privada", ok: esViable(escNorm.privada) },
   ];
 
-  // 🔁 Fallback: si ningún escenario marca viable pero sí tenemos productoElegido,
-  // marcamos solo ese producto como viable.
+  // Si el motor no marca nada viable, evita “todo pendiente” cuando sí hay ruta recomendada
   if (!filasAfinidad.some((f) => f.ok) && creditoPrincipal) {
-    const filaPrincipal = filasAfinidad.find(
-      (f) => f.name === creditoPrincipal
-    );
+    const filaPrincipal = filasAfinidad.find((f) => f.name === creditoPrincipal);
     if (filaPrincipal) filaPrincipal.ok = true;
   }
 
@@ -1475,10 +1401,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
     doc
       .fillColor(brand.text)
       .fontSize(12)
-      .text(row.name, M, yA, {
-        width: colHalf,
-        continued: false,
-      });
+      .text(row.name, M, yA, { width: colHalf });
 
     let labelAfinidad;
     let colorAfinidad;
@@ -1487,11 +1410,9 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
       labelAfinidad = "No viable hoy (ver plan de acción)";
       colorAfinidad = brand.mut;
     } else if (row.ok && esPrincipal) {
-      // 👉 Solo UN producto recomendado
       labelAfinidad = "Recomendado";
       colorAfinidad = brand.ok;
     } else if (row.ok) {
-      // Otros productos que sí podrían aplicar
       labelAfinidad = "Viable";
       colorAfinidad = brand.ok;
     } else {
@@ -1510,7 +1431,7 @@ export async function generarPDFLead(lead = {}, resultado = {}) {
   doc.y = yA + 4;
   rule(doc);
 
-  // === Cierre del generador ===
+  // === Cierre ===
   pie(doc, codigoHL);
   doc.end();
   return await pdfDone;

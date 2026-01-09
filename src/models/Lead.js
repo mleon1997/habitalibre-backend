@@ -8,14 +8,14 @@ const LeadSchema = new mongoose.Schema(
     telefono: { type: String, index: true },
     ciudad: { type: String, index: true },
 
-    // 👇 Campos que usa el dashboard
+    // vínculo con customer/user
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
+
     producto: { type: String },
     scoreHL: { type: Number },
 
-    // 👇 Horizonte de compra (0-6, 6-12, 12-24, 24+)
     tiempoCompra: { type: String, index: true },
 
-    // 👇 NUEVO: sustento de ingresos para análisis
     sustentoIndependiente: {
       type: String,
       enum: ["declaracion", "movimientos", "ninguno", null],
@@ -23,19 +23,21 @@ const LeadSchema = new mongoose.Schema(
       index: true,
     },
 
-    // 👇 Aquí guardas TODO el resultado del simulador
+    // ✅ CANÓNICO: aquí debe quedar el resultado del simulador
     resultado: { type: Object },
+
+    // ✅ timestamps explícitos (para elegir siempre el más reciente)
+    resultadoUpdatedAt: { type: Date, index: true },
 
     aceptaTerminos: Boolean,
     aceptaCompartir: Boolean,
     origen: String,
     metadata: Object,
 
-    // 👇 NUEVO: Código HabitaLibre para tracking con bancos
     codigoHL: {
       type: String,
       unique: true,
-      sparse: true,   // permite que algunos leads no tengan código sin romper el índice
+      sparse: true,
       index: true,
     },
   },
