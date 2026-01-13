@@ -33,12 +33,22 @@ const HOST =
   process.env.HOST ||
   (IS_RENDER || process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 
+// ✅ Levantar server
 const server = app.listen(PORT, HOST, () => {
-  const addr = server.address();
-  const where =
-    typeof addr === "string"
-      ? addr
-      : `http://${addr.address}:${addr.port}`;
+  const addr = server.address(); // puede ser string | object | null
+
+  // 🔒 FIX: handle null + formatos distintos
+  let where = `http://${HOST}:${PORT}`;
+
+  if (typeof addr === "string") {
+    where = addr;
+  } else if (addr && typeof addr === "object") {
+    const host = addr.address === "::" ? "localhost" : addr.address; // bonito en Mac
+    where = `http://${host}:${addr.port}`;
+  } else {
+    // addr === null -> dejamos fallback
+    where = `http://${HOST}:${PORT}`;
+  }
 
   console.log(`✅ API HabitaLibre escuchando en: ${where}`);
   console.log(`   HOST=${HOST} PORT=${PORT} NODE_ENV=${process.env.NODE_ENV}`);
@@ -46,7 +56,13 @@ const server = app.listen(PORT, HOST, () => {
 
 // Manejo básico de errores para no “morir” sin info
 server.on("error", (err) => {
-  console.error("❌ Error levantando server:", err);
+  console.error("❌ Error levantando server:", err?.code || "", err?.message || err);
+
+  // Tip típico: puerto ocupado
+  if (err?.code === "EADDRINUSE") {
+    console.error(`⚠️  Puerto en uso: ${PORT}. Prueba cerrar el proceso o cambiar PORT.`);
+  }
+
   process.exit(1);
 });
 

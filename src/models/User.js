@@ -35,6 +35,11 @@ const UserSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Reset password (olvidé mi contraseña)
+resetPasswordTokenHash: { type: String, default: null },
+resetPasswordExpiresAt: { type: Date, default: null },
+
+
     // ✅ Journey independiente: no se enlaza automáticamente a simulación
     currentLeadId: {
       type: mongoose.Schema.Types.ObjectId,
