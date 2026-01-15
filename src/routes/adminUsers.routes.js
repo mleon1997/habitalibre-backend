@@ -9,7 +9,7 @@ import {
 
 const router = Router();
 
-// 🔒 TODAS protegidas
+// 🔒 protege todo el módulo
 router.use(adminAuth);
 
 router.get("/kpis", kpisAdminUsers);
