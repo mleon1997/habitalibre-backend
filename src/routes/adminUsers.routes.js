@@ -9,11 +9,9 @@ import {
 
 const router = Router();
 
-// 🔒 protege todo el módulo
-router.use(adminAuth);
-
-router.get("/kpis", kpisAdminUsers);
-router.get("/", listAdminUsers);
-router.get("/export/csv", exportAdminUsersCSV);
+// Protegido
+router.get("/kpis", adminAuth, kpisAdminUsers);
+router.get("/", adminAuth, listAdminUsers);
+router.get("/export/csv", adminAuth, exportAdminUsersCSV);
 
 export default router;

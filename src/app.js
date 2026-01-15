@@ -10,21 +10,22 @@ import mongoose from "mongoose";
 import compression from "compression";
 import helmet from "helmet";
 
+import { verifySmtp } from "./utils/mailer.js";
 
 // Rutas
-import authRoutes from "./routes/auth.routes.js"; // 🔐 ADMIN
+import authRoutes from "./routes/auth.routes.js"; // 🔐 ADMIN legacy (/api/auth) si lo sigues usando
+import adminAuthRoutes from "./routes/adminAuth.routes.js"; // 🔐 ADMIN (/api/admin/login)
+import adminUsersRoutes from "./routes/adminUsers.routes.js"; // 🔐 ADMIN USERS (/api/admin/users)
+
 import customerAuthRoutes from "./routes/customerAuth.routes.js"; // 👤 CUSTOMER AUTH
 import customerRoutes from "./routes/customer.routes.js";
+import customerLeadsRoutes from "./routes/customerLeads.routes.js";
+
 import diagRoutes from "./routes/diag.routes.js";
+import diagMailerRoutes from "./routes/diagMailer.routes.js";
 import precalificarRoutes from "./routes/precalificar.routes.js";
 import leadsRoutes from "./routes/leads.routes.js";
 import healthRoutes from "./routes/health.routes.js";
-import customerLeadsRoutes from "./routes/customerLeads.routes.js";
-import diagMailerRoutes from "./routes/diagMailer.routes.js";
-import adminUsersRoutes from "./routes/adminUsers.routes.js";
-
-
-import { verifySmtp } from "./utils/mailer.js";
 
 // ================================
 // App
@@ -37,7 +38,6 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
-
 
 /* ================================
    Helpers CORS
@@ -96,10 +96,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
-app.use("/api/diag", diagMailerRoutes);
-app.use("/api/admin/users", adminUsersRoutes);
-
-
 /* ================================
    Healthcheck (Render)
 ================================ */
@@ -108,7 +104,13 @@ app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 /* ================================
    Rutas API (UNA sola vez)
 ================================ */
+
 // 🔐 Admin
+// (1) Nuevo login admin + panel protegido
+app.use("/api/admin", adminAuthRoutes);         // POST /api/admin/login
+app.use("/api/admin/users", adminUsersRoutes);  // GET /, /kpis, /export/csv
+
+// (2) Legacy admin (si todavía lo usas en alguna parte)
 app.use("/api/auth", authRoutes);
 
 // 👤 Customer Journey
@@ -117,6 +119,7 @@ app.use("/api/customer", customerRoutes);
 app.use("/api/customer/leads", customerLeadsRoutes);
 
 // Diagnóstico / Precalificación
+app.use("/api/diag/mailer", diagMailerRoutes); // ✅ mejor explícito para no pisar /api/diag
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
 app.use("/api/health", healthRoutes);

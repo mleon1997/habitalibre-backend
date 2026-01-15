@@ -1,5 +1,4 @@
 // src/controllers/adminUsers.controller.js
-import mongoose from "mongoose";
 import User from "../models/User.js";
 import CustomerLead from "../models/CustomerLead.js";
 
@@ -7,11 +6,9 @@ import CustomerLead from "../models/CustomerLead.js";
 function pickStr(v) {
   return String(v ?? "").trim();
 }
-
 function contains(a, b) {
   return pickStr(a).toLowerCase().includes(pickStr(b).toLowerCase());
 }
-
 function toISO(d) {
   try {
     return new Date(d).toISOString();
@@ -55,7 +52,7 @@ export async function listAdminUsers(req, res) {
     const horizonteFilter = pickStr(req.query.horizonte);
     const soloJourney = String(req.query.soloJourney || "").toLowerCase() === "true";
 
-    // 1) Users base
+    // 1) Users base (paginados)
     const [totalUsers, users] = await Promise.all([
       User.countDocuments({}),
       User.find({})
@@ -67,9 +64,6 @@ export async function listAdminUsers(req, res) {
 
     // 2) Buscar customer leads por esos users
     const userIds = users.map((u) => u._id);
-
-    // OJO: en tu DB ya vi que customerId a veces está como ObjectId (no como string),
-    // así que buscamos por ambas variantes.
     const userIdStrings = userIds.map((id) => String(id));
 
     const leads = await CustomerLead.find({
@@ -84,8 +78,7 @@ export async function listAdminUsers(req, res) {
     // 3) Map: latest lead por user
     const latestLeadByUser = new Map();
     for (const l of leads) {
-      const cid = l.customerId;
-      const key = String(cid);
+      const key = String(l.customerId);
       const cur = latestLeadByUser.get(key);
       if (!cur) {
         latestLeadByUser.set(key, l);
@@ -100,7 +93,6 @@ export async function listAdminUsers(req, res) {
     let items = users.map((u) => {
       const lead = latestLeadByUser.get(String(u._id)) || null;
 
-      // intenta sacar datos desde entrada/resultado
       const entrada = lead?.entrada || lead?.input || lead?.metadata?.input || {};
       const resultado = lead?.resultado || {};
 
@@ -112,12 +104,11 @@ export async function listAdminUsers(req, res) {
 
       const status = lead ? pickStr(lead.status || "precalificado") : "sin_journey";
       const etapa = lead ? (resultado?.etapa || resultado?.stage || "califica") : "sin_journey";
-
       const lastActivity = lead?.updatedAt || u.updatedAt || u.createdAt;
 
       return {
         userId: String(u._id),
-        email: u.email,
+        email: pickStr(u.email),
         nombre: pickStr(u.nombre),
         apellido: pickStr(u.apellido),
         telefono: pickStr(u.telefono),
@@ -128,7 +119,7 @@ export async function listAdminUsers(req, res) {
 
         ciudad,
         horizonte,
-        producto: producto || (lead ? "-" : "-"),
+        producto: producto || "-",
         cuotaEstimada: cuotaEstimada || "",
         scoreHL,
 
@@ -137,30 +128,19 @@ export async function listAdminUsers(req, res) {
       };
     });
 
-    // 5) Filtros (en memoria, suficiente para MVP)
+    // 5) Filtros en memoria
     if (soloJourney) items = items.filter((x) => x.hasJourney);
 
     if (q) {
       items = items.filter((x) =>
-        [x.email, `${x.nombre} ${x.apellido}`, x.telefono].some((v) => contains(v, q))
+        [x.email, `${x.nombre} ${x.apellido}`.trim(), x.telefono].some((v) => contains(v, q))
       );
     }
 
-    if (statusFilter) {
-      items = items.filter((x) => String(x.status) === statusFilter);
-    }
-
-    if (productoFilter) {
-      items = items.filter((x) => contains(x.producto, productoFilter));
-    }
-
-    if (ciudadFilter) {
-      items = items.filter((x) => contains(x.ciudad, ciudadFilter));
-    }
-
-    if (horizonteFilter) {
-      items = items.filter((x) => contains(x.horizonte, horizonteFilter));
-    }
+    if (statusFilter) items = items.filter((x) => String(x.status) === statusFilter);
+    if (productoFilter) items = items.filter((x) => contains(x.producto, productoFilter));
+    if (ciudadFilter) items = items.filter((x) => contains(x.ciudad, ciudadFilter));
+    if (horizonteFilter) items = items.filter((x) => contains(x.horizonte, horizonteFilter));
 
     return res.json({
       ok: true,
@@ -178,17 +158,12 @@ export async function listAdminUsers(req, res) {
 
 /**
  * GET /api/admin/users/export/csv
- * Exporta el listado (con filtros) como CSV
  */
 export async function exportAdminUsersCSV(req, res) {
   try {
-    // Reusamos listAdminUsers pero forzando un límite mayor
-    const fakeReq = {
-      ...req,
-      query: { ...req.query, page: 1, limit: 200 },
-    };
+    // Reusar listAdminUsers con límite alto
+    const fakeReq = { ...req, query: { ...req.query, page: 1, limit: 200 } };
 
-    // Ejecutamos listAdminUsers y capturamos resultado
     let payload = null;
     const fakeRes = {
       status: () => fakeRes,
