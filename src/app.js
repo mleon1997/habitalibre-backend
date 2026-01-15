@@ -21,6 +21,7 @@ import leadsRoutes from "./routes/leads.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import customerLeadsRoutes from "./routes/customerLeads.routes.js";
 import diagMailerRoutes from "./routes/diagMailer.routes.js";
+import adminUsersRoutes from "./routes/adminUsers.routes.js";
 
 
 import { verifySmtp } from "./utils/mailer.js";
@@ -36,7 +37,7 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use("/api/diag", diagMailerRoutes);
+
 
 /* ================================
    Helpers CORS
@@ -94,6 +95,9 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
+
+app.use("/api/diag", diagMailerRoutes);
+app.use("/api/admin/users", adminUsersRoutes);
 
 
 /* ================================
