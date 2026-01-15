@@ -1,5 +1,6 @@
 // src/routes/adminUsers.routes.js
 import { Router } from "express";
+import adminAuth from "../middlewares/adminAuth.js";
 import {
   kpisAdminUsers,
   listarAdminUsers,
@@ -8,13 +9,9 @@ import {
 
 const router = Router();
 
-// KPIs
-router.get("/kpis", kpisAdminUsers);
-
-// Export CSV (con filtros)
-router.get("/export.csv", exportAdminUsersCSV);
-
-// Listado (con filtros + paginación)
-router.get("/", listarAdminUsers);
+// 🔒 Todo el módulo protegido
+router.get("/kpis", adminAuth, kpisAdminUsers);
+router.get("/export.csv", adminAuth, exportAdminUsersCSV);
+router.get("/", adminAuth, listarAdminUsers);
 
 export default router;
