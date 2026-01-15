@@ -1,288 +1,236 @@
 // src/controllers/adminUsers.controller.js
+import mongoose from "mongoose";
 import User from "../models/User.js";
 import CustomerLead from "../models/CustomerLead.js";
 
-function normStr(v) {
-  return String(v || "").trim();
+// Helpers
+function pickStr(v) {
+  return String(v ?? "").trim();
 }
 
-function toIdStr(v) {
-  if (!v) return "";
+function contains(a, b) {
+  return pickStr(a).toLowerCase().includes(pickStr(b).toLowerCase());
+}
+
+function toISO(d) {
   try {
-    return String(v);
+    return new Date(d).toISOString();
   } catch {
-    return "";
+    return null;
   }
 }
 
-function pickEntrada(lead) {
-  return lead?.entrada || lead?.input || lead?.metadata?.input || {};
-}
-
-function pickResultado(lead) {
-  return lead?.resultado || {};
-}
-
-function pickProducto(resultado) {
-  return (
-    resultado?.productoSugerido ||
-    resultado?.producto ||
-    resultado?.productoTentativo ||
-    ""
-  );
-}
-
-function pickScore(resultado) {
-  const s =
-    resultado?.scoreHL ??
-    resultado?.score ??
-    resultado?.scoreHabitaLibre ??
-    null;
-  return s === null || s === undefined ? null : Number(s);
-}
-
-function csvEscape(v) {
-  const s = String(v ?? "");
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-async function buildAdminUsersItems(req, { limitOverride } = {}) {
-  const page = Math.max(parseInt(req.query.page || "1", 10), 1);
-  const limit = limitOverride
-    ? Math.min(Math.max(parseInt(String(limitOverride), 10), 1), 5000)
-    : Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
-  const skip = (page - 1) * limit;
-
-  const q = normStr(req.query.q);
-  const statusFilter = normStr(req.query.status);
-  const productoFilter = normStr(req.query.producto);
-  const ciudadFilter = normStr(req.query.ciudad);
-  const horizonteFilter = normStr(req.query.horizonte);
-  const soloJourney = normStr(req.query.soloJourney) === "1";
-
-  const userFilter = {};
-  if (q) {
-    userFilter.$or = [
-      { email: { $regex: q, $options: "i" } },
-      { nombre: { $regex: q, $options: "i" } },
-      { apellido: { $regex: q, $options: "i" } },
-      { telefono: { $regex: q, $options: "i" } },
-    ];
-  }
-
-  const users = await User.find(userFilter)
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean();
-
-  const userIdStrs = users.map((u) => toIdStr(u._id));
-  const userEmails = users
-    .map((u) => normStr(u.email).toLowerCase())
-    .filter(Boolean);
-
-  // Leads que matcheen:
-  // - customerId string en CustomerLead
-  // - customerId ObjectId en CustomerLead
-  // - fallback por email
-  const leads = await CustomerLead.find({
-    $or: [
-      { customerId: { $in: userIdStrs } }, // docs donde customerId es string
-      { customerId: { $in: users.map((u) => u._id) } }, // docs donde customerId es ObjectId
-      { customerEmail: { $in: userEmails } }, // fallback
-    ],
-  })
-    .sort({ updatedAt: -1 })
-    .lean();
-
-  // Índice por customerId string
-  const leadByCustomerIdStr = new Map();
-  for (const l of leads) {
-    const cid = toIdStr(l.customerId);
-    if (cid && !leadByCustomerIdStr.has(cid)) leadByCustomerIdStr.set(cid, l);
-  }
-
-  // Índice por email
-  const leadByEmail = new Map();
-  for (const l of leads) {
-    const em = normStr(l.customerEmail).toLowerCase();
-    if (em && !leadByEmail.has(em)) leadByEmail.set(em, l);
-  }
-
-  let items = users.map((u) => {
-    const uid = toIdStr(u._id);
-    const emailLc = normStr(u.email).toLowerCase();
-
-    const lead = leadByCustomerIdStr.get(uid) || leadByEmail.get(emailLc) || null;
-
-    const entrada = pickEntrada(lead);
-    const resultado = pickResultado(lead);
-
-    const producto = pickProducto(resultado);
-    const scoreHL = pickScore(resultado);
-
-    const ciudad = entrada?.ciudad || entrada?.city || "";
-    const horizonte = entrada?.horizonteCompra || entrada?.horizonte || "";
-
-    // Etapa v1
-    let etapa = "sin_journey";
-    if (lead) etapa = producto ? "califica" : "en_camino";
-
-    // Opcionales (si existen en tu motor)
-    const capacidadCompra =
-      resultado?.capacidadCompra ??
-      resultado?.capacidad_compra ??
-      resultado?.capacidad ??
-      "";
-    const cuotaEstimada = resultado?.cuotaEstimada ?? resultado?.cuota ?? "";
-
-    return {
-      userId: uid,
-      email: u.email || "",
-      nombre: u.nombre || "",
-      apellido: u.apellido || "",
-      telefono: u.telefono || "",
-      hasJourney: !!lead,
-      status: lead?.status || "sin_journey",
-      etapa, // califica | en_camino | sin_journey
-      producto: producto || "",
-      scoreHL,
-      ciudad,
-      horizonte,
-      capacidadCompra,
-      cuotaEstimada,
-      lastActivity: lead?.updatedAt || u.updatedAt,
-      createdAt: u.createdAt,
-    };
-  });
-
-  // Filtros por datos del lead
-  if (soloJourney) items = items.filter((x) => x.hasJourney);
-  if (statusFilter) items = items.filter((x) => String(x.status) === statusFilter);
-  if (productoFilter)
-    items = items.filter((x) =>
-      String(x.producto).toLowerCase().includes(productoFilter.toLowerCase())
-    );
-  if (ciudadFilter)
-    items = items.filter(
-      (x) => String(x.ciudad).toLowerCase() === ciudadFilter.toLowerCase()
-    );
-  if (horizonteFilter)
-    items = items.filter((x) => String(x.horizonte) === horizonteFilter);
-
-  return { items, page, limit };
-}
-
-/**
- * GET /api/admin/users/kpis
- */
+// ✅ KPI simple: total de users
 export async function kpisAdminUsers(req, res) {
   try {
     const totalUsers = await User.countDocuments({});
     return res.json({ ok: true, totalUsers });
   } catch (err) {
     console.error("[kpisAdminUsers]", err);
-    return res
-      .status(500)
-      .json({ ok: false, message: "Error al calcular KPIs de usuarios" });
+    return res.status(500).json({ ok: false, message: "Error cargando KPIs" });
   }
 }
 
 /**
  * GET /api/admin/users
+ * Query params:
+ * - page, limit
+ * - q (email/nombre/telefono)
+ * - status (precalificado | sin_journey | etc)
+ * - producto (VIP|VIS|BIESS)
+ * - ciudad
+ * - horizonte
+ * - soloJourney (true/false)
  */
-export async function listarAdminUsers(req, res) {
+export async function listAdminUsers(req, res) {
   try {
-    const { items, page, limit } = await buildAdminUsersItems(req);
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 20)));
+    const skip = (page - 1) * limit;
 
-    // Para UI: total users (sin filtros de lead), si lo quieres aquí también
-    const q = normStr(req.query.q);
-    const userFilter = {};
-    if (q) {
-      userFilter.$or = [
-        { email: { $regex: q, $options: "i" } },
-        { nombre: { $regex: q, $options: "i" } },
-        { apellido: { $regex: q, $options: "i" } },
-        { telefono: { $regex: q, $options: "i" } },
-      ];
+    const q = pickStr(req.query.q);
+    const statusFilter = pickStr(req.query.status);
+    const productoFilter = pickStr(req.query.producto);
+    const ciudadFilter = pickStr(req.query.ciudad);
+    const horizonteFilter = pickStr(req.query.horizonte);
+    const soloJourney = String(req.query.soloJourney || "").toLowerCase() === "true";
+
+    // 1) Users base
+    const [totalUsers, users] = await Promise.all([
+      User.countDocuments({}),
+      User.find({})
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+    ]);
+
+    // 2) Buscar customer leads por esos users
+    const userIds = users.map((u) => u._id);
+
+    // OJO: en tu DB ya vi que customerId a veces está como ObjectId (no como string),
+    // así que buscamos por ambas variantes.
+    const userIdStrings = userIds.map((id) => String(id));
+
+    const leads = await CustomerLead.find({
+      $or: [
+        { customerId: { $in: userIds } },       // si quedó ObjectId
+        { customerId: { $in: userIdStrings } }, // si quedó string
+      ],
+    })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    // 3) Map: latest lead por user
+    const latestLeadByUser = new Map();
+    for (const l of leads) {
+      const cid = l.customerId;
+      const key = String(cid);
+      const cur = latestLeadByUser.get(key);
+      if (!cur) {
+        latestLeadByUser.set(key, l);
+        continue;
+      }
+      const curTime = new Date(cur.updatedAt || cur.createdAt || 0).getTime();
+      const newTime = new Date(l.updatedAt || l.createdAt || 0).getTime();
+      if (newTime > curTime) latestLeadByUser.set(key, l);
     }
 
-    const totalUsers = await User.countDocuments(userFilter);
+    // 4) Construir items enriquecidos
+    let items = users.map((u) => {
+      const lead = latestLeadByUser.get(String(u._id)) || null;
+
+      // intenta sacar datos desde entrada/resultado
+      const entrada = lead?.entrada || lead?.input || lead?.metadata?.input || {};
+      const resultado = lead?.resultado || {};
+
+      const ciudad = pickStr(entrada?.ciudad || entrada?.city || "");
+      const horizonte = pickStr(entrada?.horizonte || entrada?.horizonteCompra || "");
+      const producto = pickStr(resultado?.productoSugerido || resultado?.producto || "");
+      const cuotaEstimada = Number(resultado?.cuotaEstimada || 0) || 0;
+      const scoreHL = resultado?.scoreHL ?? resultado?.score ?? null;
+
+      const status = lead ? pickStr(lead.status || "precalificado") : "sin_journey";
+      const etapa = lead ? (resultado?.etapa || resultado?.stage || "califica") : "sin_journey";
+
+      const lastActivity = lead?.updatedAt || u.updatedAt || u.createdAt;
+
+      return {
+        userId: String(u._id),
+        email: u.email,
+        nombre: pickStr(u.nombre),
+        apellido: pickStr(u.apellido),
+        telefono: pickStr(u.telefono),
+
+        hasJourney: !!lead,
+        status,
+        etapa,
+
+        ciudad,
+        horizonte,
+        producto: producto || (lead ? "-" : "-"),
+        cuotaEstimada: cuotaEstimada || "",
+        scoreHL,
+
+        lastActivity: toISO(lastActivity),
+        createdAt: toISO(u.createdAt),
+      };
+    });
+
+    // 5) Filtros (en memoria, suficiente para MVP)
+    if (soloJourney) items = items.filter((x) => x.hasJourney);
+
+    if (q) {
+      items = items.filter((x) =>
+        [x.email, `${x.nombre} ${x.apellido}`, x.telefono].some((v) => contains(v, q))
+      );
+    }
+
+    if (statusFilter) {
+      items = items.filter((x) => String(x.status) === statusFilter);
+    }
+
+    if (productoFilter) {
+      items = items.filter((x) => contains(x.producto, productoFilter));
+    }
+
+    if (ciudadFilter) {
+      items = items.filter((x) => contains(x.ciudad, ciudadFilter));
+    }
+
+    if (horizonteFilter) {
+      items = items.filter((x) => contains(x.horizonte, horizonteFilter));
+    }
 
     return res.json({
       ok: true,
       page,
       limit,
       totalUsers,
+      count: items.length,
       items,
     });
   } catch (err) {
-    console.error("[listarAdminUsers]", err);
+    console.error("[listAdminUsers]", err);
     return res.status(500).json({ ok: false, message: "Error listando usuarios" });
   }
 }
 
 /**
- * GET /api/admin/users/export.csv
- * Exporta CSV con los filtros actuales.
+ * GET /api/admin/users/export/csv
+ * Exporta el listado (con filtros) como CSV
  */
 export async function exportAdminUsersCSV(req, res) {
   try {
-    // exporta más filas
-    const limitOverride = req.query.limit || "2000";
-    const { items } = await buildAdminUsersItems(req, { limitOverride });
+    // Reusamos listAdminUsers pero forzando un límite mayor
+    const fakeReq = {
+      ...req,
+      query: { ...req.query, page: 1, limit: 200 },
+    };
 
-    const header = [
+    // Ejecutamos listAdminUsers y capturamos resultado
+    let payload = null;
+    const fakeRes = {
+      status: () => fakeRes,
+      json: (j) => {
+        payload = j;
+        return j;
+      },
+    };
+
+    await listAdminUsers(fakeReq, fakeRes);
+
+    if (!payload?.ok) {
+      return res.status(500).json({ ok: false, message: "No se pudo generar CSV" });
+    }
+
+    const rows = payload.items || [];
+    const cols = [
       "userId",
       "email",
       "nombre",
       "apellido",
       "telefono",
       "ciudad",
-      "etapa",
-      "status",
-      "producto",
-      "scoreHL",
       "horizonte",
-      "capacidadCompra",
+      "hasJourney",
+      "status",
+      "etapa",
+      "producto",
       "cuotaEstimada",
+      "scoreHL",
       "lastActivity",
       "createdAt",
     ];
 
-    const rows = [header.join(",")];
-
-    for (const u of items) {
-      const line = [
-        u.userId,
-        u.email,
-        u.nombre,
-        u.apellido,
-        u.telefono,
-        u.ciudad,
-        u.etapa,
-        u.status,
-        u.producto,
-        u.scoreHL ?? "",
-        u.horizonte,
-        u.capacidadCompra ?? "",
-        u.cuotaEstimada ?? "",
-        u.lastActivity ? new Date(u.lastActivity).toISOString() : "",
-        u.createdAt ? new Date(u.createdAt).toISOString() : "",
-      ].map(csvEscape);
-
-      rows.push(line.join(","));
-    }
-
-    const csv = rows.join("\n");
-    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv =
+      cols.join(",") +
+      "\n" +
+      rows.map((r) => cols.map((c) => esc(r[c])).join(",")).join("\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="habitalibre-users-${ts}.csv"`
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="hl-users-${Date.now()}.csv"`);
     return res.status(200).send(csv);
   } catch (err) {
     console.error("[exportAdminUsersCSV]", err);

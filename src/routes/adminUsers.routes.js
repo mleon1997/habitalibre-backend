@@ -3,15 +3,17 @@ import { Router } from "express";
 import adminAuth from "../middlewares/adminAuth.js";
 import {
   kpisAdminUsers,
-  listarAdminUsers,
+  listAdminUsers,
   exportAdminUsersCSV,
 } from "../controllers/adminUsers.controller.js";
 
 const router = Router();
 
-// 🔒 Todo el módulo protegido
-router.get("/kpis", adminAuth, kpisAdminUsers);
-router.get("/export.csv", adminAuth, exportAdminUsersCSV);
-router.get("/", adminAuth, listarAdminUsers);
+// 🔒 TODAS protegidas
+router.use(adminAuth);
+
+router.get("/kpis", kpisAdminUsers);
+router.get("/", listAdminUsers);
+router.get("/export/csv", exportAdminUsersCSV);
 
 export default router;
