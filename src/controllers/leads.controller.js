@@ -327,3 +327,117 @@ export async function statsLeads(req, res) {
     return res.status(500).json({ ok: false, total: 0, hoy: 0 });
   }
 }
+
+/* ===========================================================
+   POST /api/leads/whatsapp  (crear/actualizar lead desde ManyChat)
+   - Seguridad por API KEY
+   - Upsert por telefono (principal) o email (si viene)
+   - Guarda todo en metadata.whatsapp para no romper tu schema
+=========================================================== */
+export async function crearLeadWhatsapp(req, res) {
+  try {
+    // ✅ Seguridad simple (ideal para webhooks)
+    const apiKey = String(req.headers["x-api-key"] || "");
+    const expected = String(process.env.MANYCHAT_API_KEY || "");
+    if (!expected || apiKey !== expected) {
+      return res.status(401).json({ ok: false, msg: "No autorizado" });
+    }
+
+    const body = req.body || {};
+
+    // ManyChat puede mandar campos con nombres distintos.
+    // Normalizamos lo mínimo:
+    const nombre = String(body.nombre || body.full_name || body.name || "").trim() || null;
+
+    const emailRaw = body.email || body.email_address || null;
+    const email = emailRaw ? String(emailRaw).trim().toLowerCase() : null;
+
+    // Tel: clave para upsert. Asegura formato string.
+    const telefonoRaw =
+      body.telefono || body.phone || body.phone_number || body.whatsapp_phone || null;
+    const telefono = telefonoRaw ? String(telefonoRaw).trim() : null;
+
+    // Ciudad final
+    const ciudad = String(body.ciudad || body.ciudad_compra || body.city || "").trim() || null;
+
+    // Campos de tu flow
+    const tipoCompraNumero = body.tipo_compra_numero ?? body.tipo_compra ?? null; // 1/2
+    const tipoCompraTexto =
+      String(body.tipo_compra_texto || "").trim() ||
+      (String(tipoCompraNumero) === "1" ? "SOLO" : String(tipoCompraNumero) === "2" ? "EN_PAREJA" : null);
+
+    const ingresoMensual =
+      body.ingreso_mensual ?? body.ingreso ?? body.ingreso_neto_mensual ?? null;
+
+    const afiliadoIess =
+      typeof body.afiliado_iess === "boolean"
+        ? body.afiliado_iess
+        : String(body.afiliado_iess || "").toLowerCase() === "si"
+        ? true
+        : String(body.afiliado_iess || "").toLowerCase() === "no"
+        ? false
+        : null;
+
+    const tiempoCompra = String(body.tiempo_compra || body.horizonte || "").trim() || null;
+
+    // ✅ Validación mínima: al menos teléfono o email para identificar lead
+    if (!telefono && !email) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Falta identificador: telefono o email",
+      });
+    }
+
+    // 🔎 filtro principal para upsert
+    const filter = telefono ? { telefono } : { email };
+
+    // ✅ payload base
+    const update = {
+      $set: {
+        ...(nombre ? { nombre } : {}),
+        ...(email ? { email } : {}),
+        ...(telefono ? { telefono } : {}),
+        ...(ciudad ? { ciudad } : {}),
+        ...(tiempoCompra ? { tiempoCompra } : {}),
+        origen: "WhatsApp (ManyChat)",
+        // Guarda todo lo recibido sin pelearte con schema
+        metadata: {
+          canal: "WhatsApp",
+          whatsapp: {
+            ...body, // 👈 así nunca pierdes data
+            tipo_compra_texto: tipoCompraTexto,
+          },
+        },
+        resultadoUpdatedAt: new Date(), // útil para ordenar “último update”
+      },
+      $setOnInsert: {
+        aceptaTerminos: null,
+        aceptaCompartir: null,
+      },
+    };
+
+    // ✅ Upsert
+    let lead = await Lead.findOneAndUpdate(filter, update, {
+      new: true,
+      upsert: true,
+    });
+
+    // ✅ Si es nuevo y no tiene codigoHL, generarlo una sola vez
+    if (!lead.codigoHL) {
+      const codigoHL = generarCodigoHLDesdeObjectId(lead._id);
+      lead.codigoHL = codigoHL;
+      await lead.save();
+    }
+
+    return res.status(200).json({
+      ok: true,
+      msg: "Lead WhatsApp guardado",
+      leadId: lead._id,
+      codigoHL: lead.codigoHL,
+    });
+  } catch (err) {
+    console.error("❌ Error en crearLeadWhatsapp:", err);
+    return res.status(500).json({ ok: false, msg: "Error interno" });
+  }
+}
+

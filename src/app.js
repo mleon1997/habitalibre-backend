@@ -1,8 +1,4 @@
 // src/app.js
-
-// ================================
-// Imports
-// ================================
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -12,12 +8,14 @@ import helmet from "helmet";
 
 import { verifySmtp } from "./utils/mailer.js";
 
+// ================================
 // Rutas
-import authRoutes from "./routes/auth.routes.js"; // 🔐 ADMIN legacy (/api/auth) si lo sigues usando
-import adminAuthRoutes from "./routes/adminAuth.routes.js"; // 🔐 ADMIN (/api/admin/login)
-import adminUsersRoutes from "./routes/adminUsers.routes.js"; // 🔐 ADMIN USERS (/api/admin/users)
+// ================================
+import authRoutes from "./routes/auth.routes.js"; // (si lo usas aún)
+import adminAuthRoutes from "./routes/adminAuth.routes.js"; // POST /api/admin/login
+import adminUsersRoutes from "./routes/adminUsers.routes.js"; // /api/admin/users/...
 
-import customerAuthRoutes from "./routes/customerAuth.routes.js"; // 👤 CUSTOMER AUTH
+import customerAuthRoutes from "./routes/customerAuth.routes.js";
 import customerRoutes from "./routes/customer.routes.js";
 import customerLeadsRoutes from "./routes/customerLeads.routes.js";
 
@@ -36,7 +34,7 @@ app.set("trust proxy", true);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(compression());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 /* ================================
@@ -88,7 +86,7 @@ const corsOptions = {
     return cb(new Error(`CORS bloqueado para origen: ${origin}`), false);
   },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
   credentials: false,
   optionsSuccessStatus: 204,
 };
@@ -102,15 +100,14 @@ app.options(/.*/, cors(corsOptions));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 
 /* ================================
-   Rutas API (UNA sola vez)
+   Rutas API
 ================================ */
 
-// 🔐 Admin
-// (1) Nuevo login admin + panel protegido
-app.use("/api/admin", adminAuthRoutes);         // POST /api/admin/login
-app.use("/api/admin/users", adminUsersRoutes);  // GET /, /kpis, /export/csv
+// 🔐 Admin (NUEVO)
+app.use("/api/admin", adminAuthRoutes); // POST /api/admin/login
+app.use("/api/admin/users", adminUsersRoutes); // GET /, /kpis, /export/csv
 
-// (2) Legacy admin (si todavía lo usas en alguna parte)
+// (si aún usas auth viejo en /api/auth)
 app.use("/api/auth", authRoutes);
 
 // 👤 Customer Journey
@@ -119,7 +116,7 @@ app.use("/api/customer", customerRoutes);
 app.use("/api/customer/leads", customerLeadsRoutes);
 
 // Diagnóstico / Precalificación
-app.use("/api/diag/mailer", diagMailerRoutes); // ✅ mejor explícito para no pisar /api/diag
+app.use("/api/diag/mailer", diagMailerRoutes); // 👈 (mejor separado para no pisar /api/diag)
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
 app.use("/api/health", healthRoutes);
