@@ -4,7 +4,13 @@ import jwt from "jsonwebtoken";
 import Lead from "../models/Lead.js";
 import User from "../models/User.js";
 
-import { crearLead, listarLeads, statsLeads } from "../controllers/leads.controller.js";
+import {
+  crearLead,
+  listarLeads,
+  statsLeads,
+  crearLeadWhatsapp,
+} from "../controllers/leads.controller.js";
+
 import { authMiddleware, requireAdmin } from "../middlewares/auth.js";
 import { verificarCustomer } from "../middlewares/customerAuth.js";
 
@@ -41,11 +47,17 @@ function customerOptional(req, _res, next) {
 }
 
 /* ===========================================================
+   ✅ Webhook ManyChat WhatsApp (API KEY)
+   POST /api/leads/whatsapp
+   =========================================================== */
+router.post("/whatsapp", crearLeadWhatsapp);
+
+// (Opcional) ping de salud del webhook
+router.get("/whatsapp/ping", (_req, res) => res.json({ ok: true, pong: true }));
+
+/* ===========================================================
    ✅ Lead del customer logueado (Opción A)
    GET /api/leads/mine  (PROTEGIDO CUSTOMER)
-   - Obtiene userId del token
-   - Resuelve el lead actual desde User.currentLeadId (ideal)
-   - Fallback: último lead por userId
    =========================================================== */
 router.get("/mine", verificarCustomer, async (req, res) => {
   try {
@@ -80,8 +92,6 @@ router.get("/mine", verificarCustomer, async (req, res) => {
 /* ===========================================================
    Crear nuevo lead desde el simulador (PÚBLICO)
    POST /api/leads
-   ✅ Si viene token customer, el controller puede linkear user/lead
-   (Con Opción A: req.customer.userId)
    =========================================================== */
 router.post("/", customerOptional, crearLead);
 
