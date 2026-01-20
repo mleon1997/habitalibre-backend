@@ -9,6 +9,8 @@ import {
   listarLeads,
   statsLeads,
   crearLeadWhatsapp,
+  crearLeadManychat,
+  crearLeadInstagram,
 } from "../controllers/leads.controller.js";
 
 import { authMiddleware, requireAdmin } from "../middlewares/auth.js";
@@ -17,7 +19,7 @@ import { verificarCustomer } from "../middlewares/customerAuth.js";
 const router = Router();
 
 /**
- * Middleware opcional (Opción A):
+ * Middleware opcional:
  * Si viene Bearer token customer válido, setea req.customer = { userId, email }.
  * Si no viene o es inválido, continúa normal (NO bloquea).
  */
@@ -35,7 +37,6 @@ function customerOptional(req, _res, next) {
     // si viene typ y no es customer -> ignoramos (no bloqueamos)
     if (payload?.typ && payload.typ !== "customer") return next();
 
-    // ✅ Opción A: sub = userId
     const userId = payload?.sub || payload?.userId || payload?.id || null;
     if (!userId) return next();
 
@@ -47,16 +48,23 @@ function customerOptional(req, _res, next) {
 }
 
 /* ===========================================================
-   ✅ Webhook ManyChat WhatsApp (API KEY)
-   POST /api/leads/whatsapp
+   ✅ Webhook ManyChat (unificado)
+   POST /api/leads/manychat  (API KEY)
    =========================================================== */
+router.post("/manychat", crearLeadManychat);
+
+// ✅ Opcional: endpoint dedicado IG (API KEY)
+router.post("/instagram", crearLeadInstagram);
+
+// ✅ Compat: WhatsApp legacy (API KEY)
 router.post("/whatsapp", crearLeadWhatsapp);
 
 // (Opcional) ping de salud del webhook
 router.get("/whatsapp/ping", (_req, res) => res.json({ ok: true, pong: true }));
+router.get("/manychat/ping", (_req, res) => res.json({ ok: true, pong: true }));
 
 /* ===========================================================
-   ✅ Lead del customer logueado (Opción A)
+   ✅ Lead del customer logueado
    GET /api/leads/mine  (PROTEGIDO CUSTOMER)
    =========================================================== */
 router.get("/mine", verificarCustomer, async (req, res) => {
@@ -64,7 +72,6 @@ router.get("/mine", verificarCustomer, async (req, res) => {
     const userId = req.customer?.userId;
     if (!userId) return res.status(401).json({ error: "Token inválido" });
 
-    // 1) Intentar por currentLeadId (recomendado)
     const user = await User.findById(userId).select("_id currentLeadId").lean();
 
     let lead = null;
@@ -73,7 +80,6 @@ router.get("/mine", verificarCustomer, async (req, res) => {
       lead = await Lead.findById(user.currentLeadId).lean();
     }
 
-    // 2) Fallback: último lead asociado a este userId
     if (!lead) {
       lead = await Lead.findOne({ userId }).sort({ createdAt: -1 }).lean();
     }

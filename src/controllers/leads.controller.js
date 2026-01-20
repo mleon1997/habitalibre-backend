@@ -37,10 +37,6 @@ function extraerProducto(resultado) {
 
 /* ===========================================================
    ✅ SANITIZAR resultado recibido del FRONT
-
-   REGLA:
-   - BORRAR solo `resultado.sinOferta` (top-level legacy)
-   - ❌ NO BORRAR `resultado.flags.sinOferta` porque ESA es la fuente del motor
 =========================================================== */
 function sanitizarResultadoCliente(resultado = {}) {
   const limpio = { ...(resultado || {}) };
@@ -48,14 +44,116 @@ function sanitizarResultadoCliente(resultado = {}) {
   // legacy: top-level sinOferta (lo eliminamos para evitar pisar)
   if ("sinOferta" in limpio) delete limpio.sinOferta;
 
-  // ✅ IMPORTANTÍSIMO:
-  // NO tocar flags.sinOferta (si el frontend lo manda, es la verdad del motor)
-  // Solo aseguramos que flags sea objeto plano si existe.
+  // NO tocar flags.sinOferta
   if (limpio.flags && typeof limpio.flags === "object") {
     limpio.flags = { ...limpio.flags };
   }
 
   return limpio;
+}
+
+/* ===========================================================
+   Helpers Manychat
+=========================================================== */
+
+function getApiKeyOk(req) {
+  const apiKey = String(req.headers["x-api-key"] || "");
+  const expected = String(process.env.MANYCHAT_API_KEY || "");
+  return !!expected && apiKey === expected;
+}
+
+function toBoolSiNo(v) {
+  if (typeof v === "boolean") return v;
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "si" || s === "sí") return true;
+  if (s === "no") return false;
+  return null;
+}
+
+function pickNombreManychat(body = {}) {
+  const first = String(body.first_name || body.firstName || "").trim();
+  const last = String(body.last_name || body.lastName || "").trim();
+  const full =
+    String(body.nombre || body.full_name || body.name || "").trim() ||
+    [first, last].filter(Boolean).join(" ").trim();
+
+  return full || null;
+}
+
+function pickIgUsername(body = {}) {
+  const u =
+    String(
+      body.instagram_username ||
+        body.ig_username ||
+        body.username ||
+        body.igUsername ||
+        ""
+    ).trim() || null;
+
+  return u ? u.replace(/^@/, "") : null;
+}
+
+function pickTelefono(body = {}) {
+  const telefonoRaw =
+    body.telefono ||
+    body.phone ||
+    body.phone_number ||
+    body.whatsapp_phone ||
+    null;
+
+  return telefonoRaw ? String(telefonoRaw).trim() : null;
+}
+
+function pickEmail(body = {}) {
+  const emailRaw = body.email || body.email_address || null;
+  return emailRaw ? String(emailRaw).trim().toLowerCase() : null;
+}
+
+function pickCiudad(body = {}) {
+  return (
+    String(body.ciudad || body.ciudad_compra || body.city || "").trim() || null
+  );
+}
+
+function pickTiempoCompra(body = {}) {
+  return (
+    String(body.tiempoCompra || body.tiempo_compra || body.horizonte || "")
+      .trim() || null
+  );
+}
+
+/**
+ * Normaliza canal a { web, whatsapp, instagram }
+ * - NO asume: si viene canal explícito, lo usa
+ * - si no viene, infiere por campos observables del payload:
+ *   - si hay instagram_username -> instagram
+ *   - si hay whatsapp_phone/phone -> whatsapp
+ */
+function inferCanalManychat(body = {}) {
+  const canalRaw = String(body.canal || body.channel || "").trim().toLowerCase();
+  if (canalRaw === "instagram" || canalRaw === "ig") return "instagram";
+  if (canalRaw === "whatsapp" || canalRaw === "wa") return "whatsapp";
+
+  const ig = pickIgUsername(body);
+  if (ig) return "instagram";
+
+  const tel = pickTelefono(body);
+  if (tel) return "whatsapp";
+
+  // fallback seguro
+  return "whatsapp";
+}
+
+function pickSubscriberId(body = {}) {
+  const id =
+    body.subscriber_id ||
+    body.subscriberId ||
+    body.contact_id ||
+    body.contactId ||
+    body.id ||
+    null;
+
+  return id != null ? String(id).trim() : null;
 }
 
 /* ===========================================================
@@ -86,25 +184,11 @@ export async function crearLead(req, res) {
     const tokenEmail = String(req.customer?.email || "").toLowerCase().trim();
     const emailEfectivo = tokenEmail || emailNorm;
 
-    // ✅ 1) Sanitiza lo que llega del FRONT (sin borrar flags.sinOferta)
     const resultadoSanitizado = sanitizarResultadoCliente(resultado);
-
-    // ✅ DEBUG CRÍTICO (para que esto NO vuelva a ser a ciegas)
-    console.log("🧪 [LEADS] resultado recibido (keys):", Object.keys(resultado || {}));
-    console.log("🧪 [LEADS] flags recibidos:", resultado?.flags || null);
-    console.log(
-      "🧪 [LEADS] flags.sinOferta recibido:",
-      typeof resultado?.flags?.sinOferta === "boolean" ? resultado.flags.sinOferta : "(no viene boolean)"
-    );
-
-    // ✅ 2) Normaliza (si flags.sinOferta viene, NO se recalcula)
     const resultadoNormalizado = normalizeResultadoParaSalida(resultadoSanitizado);
 
-    // ✅ Extrae campos consistentes
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
-
-    // ✅ sinOferta: SOLO desde normalizador (que respeta flags.sinOferta si vino)
     const sinOferta = resultadoNormalizado?.flags?.sinOferta === true;
 
     console.info("✅ Nuevo lead recibido:", {
@@ -121,9 +205,6 @@ export async function crearLead(req, res) {
       customerLeadIdFromToken: req.customer?.leadId || null,
     });
 
-    /* ======================================================
-       Link userId si existe
-    ====================================================== */
     let userIdFinal = null;
     let linkedToUser = false;
     let linkedMethod = "none";
@@ -146,7 +227,7 @@ export async function crearLead(req, res) {
       }
     }
 
-    // 1) Crear lead
+    // Crear lead
     let lead = await Lead.create({
       nombre,
       email: emailEfectivo,
@@ -162,8 +243,12 @@ export async function crearLead(req, res) {
       tiempoCompra: tiempoCompra || null,
       sustentoIndependiente: sustentoIndependiente || null,
 
-      // ✅ guardar NORMALIZADO
       resultado: resultadoNormalizado,
+      resultadoUpdatedAt: new Date(),
+
+      // ✅ NUEVO (canon)
+      canal: "web",
+      fuente: "form",
 
       origen: "Simulador Hipoteca Exprés",
       metadata: {
@@ -174,7 +259,7 @@ export async function crearLead(req, res) {
       userId: userIdFinal || null,
     });
 
-    // 2) Código HL
+    // Código HL
     const codigoHL = generarCodigoHLDesdeObjectId(lead._id);
     lead.codigoHL = codigoHL;
     await lead.save();
@@ -186,20 +271,15 @@ export async function crearLead(req, res) {
       );
     }
 
-    // 3) Preparar para mailer/PDF
     const leadPlano = lead.toObject();
 
     const resultadoConCodigo = {
       ...resultadoNormalizado,
       codigoHL,
-
-      // ✅ flags CONSISTENTES
       flags: {
         ...(resultadoNormalizado.flags || {}),
         sinOferta: resultadoNormalizado?.flags?.sinOferta === true,
       },
-
-      // compat
       productoElegido:
         producto ||
         resultadoNormalizado.productoElegido ||
@@ -215,24 +295,7 @@ export async function crearLead(req, res) {
       productoSugerido: resultadoNormalizado.productoSugerido || null,
     };
 
-    console.log("📩 resultado para mailer/PDF (FULL CHECK):", {
-      sinOferta: resultadoConCodigo?.flags?.sinOferta,
-      productoElegido: resultadoConCodigo.productoElegido,
-      productoSugerido: resultadoConCodigo.productoSugerido,
-      bancoSugerido: resultadoConCodigo.bancoSugerido,
-      cuotaEstimada: resultadoConCodigo.cuotaEstimada,
-      capacidadPago:
-        resultadoConCodigo.capacidadPagoPrograma ??
-        resultadoConCodigo.capacidadPago ??
-        resultadoConCodigo.capacidadPagoGlobal ??
-        null,
-      dtiConHipoteca: resultadoConCodigo.dtiConHipoteca,
-      ltv: resultadoConCodigo.ltv,
-      tasaAnual: resultadoConCodigo.tasaAnual,
-      plazoMeses: resultadoConCodigo.plazoMeses,
-    });
-
-    // 4) Enviar correos
+    // Enviar correos
     try {
       await Promise.all([
         enviarCorreoCliente(leadPlano, resultadoConCodigo),
@@ -261,6 +324,7 @@ export async function crearLead(req, res) {
 
 /* ===========================================================
    GET /api/leads   (listado paginado + filtros)
+   ✅ agrega sustentoIndependiente + canal + fuente
 =========================================================== */
 export async function listarLeads(req, res) {
   try {
@@ -270,13 +334,31 @@ export async function listarLeads(req, res) {
       100
     );
 
-    const { email, telefono, ciudad, tiempoCompra } = req.query || {};
+    const {
+      email,
+      telefono,
+      ciudad,
+      tiempoCompra,
+      sustentoIndependiente,
+      canal,
+      fuente,
+    } = req.query || {};
+
     const filter = {};
 
-    if (email) filter.email = { $regex: email.trim(), $options: "i" };
-    if (telefono) filter.telefono = { $regex: telefono.trim(), $options: "i" };
-    if (ciudad) filter.ciudad = { $regex: ciudad.trim(), $options: "i" };
-    if (tiempoCompra) filter.tiempoCompra = tiempoCompra;
+    if (email) filter.email = { $regex: String(email).trim(), $options: "i" };
+    if (telefono) filter.telefono = { $regex: String(telefono).trim(), $options: "i" };
+    if (ciudad) filter.ciudad = { $regex: String(ciudad).trim(), $options: "i" };
+    if (tiempoCompra) filter.tiempoCompra = String(tiempoCompra).trim();
+
+    // ✅ antes tu front lo mandaba pero backend no lo filtraba
+    if (sustentoIndependiente) {
+      filter.sustentoIndependiente = String(sustentoIndependiente).trim();
+    }
+
+    // ✅ nuevos filtros canónicos
+    if (canal) filter.canal = String(canal).trim().toLowerCase();
+    if (fuente) filter.fuente = String(fuente).trim().toLowerCase();
 
     const total = await Lead.countDocuments(filter);
     const totalPaginas = Math.max(1, Math.ceil(total / limit));
@@ -310,88 +392,149 @@ export async function listarLeads(req, res) {
 
 /* ===========================================================
    GET /api/leads/stats
+   ✅ hoy + semana + semanaAnterior + breakdown por canal/fuente
 =========================================================== */
 export async function statsLeads(req, res) {
   try {
     const total = await Lead.countDocuments({});
-    const inicioHoy = new Date();
+
+    const now = new Date();
+
+    // hoy (desde 00:00)
+    const inicioHoy = new Date(now);
     inicioHoy.setHours(0, 0, 0, 0);
 
-    const hoy = await Lead.countDocuments({
-      createdAt: { $gte: inicioHoy },
+    // inicio semana (lunes 00:00)
+    const inicioSemana = new Date(now);
+    const day = inicioSemana.getDay(); // 0 domingo, 1 lunes...
+    const diffToMonday = (day + 6) % 7; // lunes => 0
+    inicioSemana.setDate(inicioSemana.getDate() - diffToMonday);
+    inicioSemana.setHours(0, 0, 0, 0);
+
+    // semana anterior: [inicioSemanaAnterior, inicioSemana)
+    const inicioSemanaAnterior = new Date(inicioSemana);
+    inicioSemanaAnterior.setDate(inicioSemanaAnterior.getDate() - 7);
+
+    const hoy = await Lead.countDocuments({ createdAt: { $gte: inicioHoy } });
+    const semana = await Lead.countDocuments({ createdAt: { $gte: inicioSemana } });
+    const semanaAnterior = await Lead.countDocuments({
+      createdAt: { $gte: inicioSemanaAnterior, $lt: inicioSemana },
     });
 
-    return res.json({ ok: true, total, hoy });
+    // breakdown histórico (para tu dashboard)
+    const byCanal = await Lead.aggregate([
+      { $group: { _id: "$canal", total: { $sum: 1 } } },
+      { $sort: { total: -1 } },
+    ]);
+
+    const byFuente = await Lead.aggregate([
+      { $group: { _id: "$fuente", total: { $sum: 1 } } },
+      { $sort: { total: -1 } },
+    ]);
+
+    return res.json({
+      ok: true,
+      total,
+      hoy,
+      semana,
+      semanaAnterior,
+      byCanal,
+      byFuente,
+    });
   } catch (err) {
     console.error("❌ Error en statsLeads:", err);
-    return res.status(500).json({ ok: false, total: 0, hoy: 0 });
+    return res.status(500).json({
+      ok: false,
+      total: 0,
+      hoy: 0,
+      semana: 0,
+      semanaAnterior: 0,
+      byCanal: [],
+      byFuente: [],
+    });
   }
 }
 
 /* ===========================================================
-   POST /api/leads/whatsapp  (crear/actualizar lead desde ManyChat)
+   POST /api/leads/manychat  (unificado IG + WhatsApp)
    - Seguridad por API KEY
-   - Upsert por telefono (principal) o email (si viene)
-   - Guarda todo en metadata.whatsapp para no romper tu schema
+   - Upsert por manychatSubscriberId si viene
+   - Fallback: telefono o email (whatsapp)
 =========================================================== */
-export async function crearLeadWhatsapp(req, res) {
+export async function crearLeadManychat(req, res) {
   try {
-    // ✅ Seguridad simple (ideal para webhooks)
-    const apiKey = String(req.headers["x-api-key"] || "");
-    const expected = String(process.env.MANYCHAT_API_KEY || "");
-    if (!expected || apiKey !== expected) {
+    if (!getApiKeyOk(req)) {
       return res.status(401).json({ ok: false, msg: "No autorizado" });
     }
 
     const body = req.body || {};
 
-    // ManyChat puede mandar campos con nombres distintos.
-    // Normalizamos lo mínimo:
-    const nombre = String(body.nombre || body.full_name || body.name || "").trim() || null;
+    const canal = inferCanalManychat(body); // whatsapp | instagram
+    const subscriberId = pickSubscriberId(body);
+    const igUsername = canal === "instagram" ? pickIgUsername(body) : null;
 
-    const emailRaw = body.email || body.email_address || null;
-    const email = emailRaw ? String(emailRaw).trim().toLowerCase() : null;
+    const nombre = pickNombreManychat(body);
 
-    // Tel: clave para upsert. Asegura formato string.
-    const telefonoRaw =
-      body.telefono || body.phone || body.phone_number || body.whatsapp_phone || null;
-    const telefono = telefonoRaw ? String(telefonoRaw).trim() : null;
+    const email = pickEmail(body);
+    const telefono = pickTelefono(body);
 
-    // Ciudad final
-    const ciudad = String(body.ciudad || body.ciudad_compra || body.city || "").trim() || null;
+    const ciudad = pickCiudad(body);
+    const tiempoCompra = pickTiempoCompra(body);
 
-    // Campos de tu flow
-    const tipoCompraNumero = body.tipo_compra_numero ?? body.tipo_compra ?? null; // 1/2
-    const tipoCompraTexto =
-      String(body.tipo_compra_texto || "").trim() ||
-      (String(tipoCompraNumero) === "1" ? "SOLO" : String(tipoCompraNumero) === "2" ? "EN_PAREJA" : null);
-
+    // Campos custom vistos en tu screenshot
+    const afiliadoIess = toBoolSiNo(body.afiliado_iess);
     const ingresoMensual =
-      body.ingreso_mensual ?? body.ingreso ?? body.ingreso_neto_mensual ?? null;
-
-    const afiliadoIess =
-      typeof body.afiliado_iess === "boolean"
-        ? body.afiliado_iess
-        : String(body.afiliado_iess || "").toLowerCase() === "si"
-        ? true
-        : String(body.afiliado_iess || "").toLowerCase() === "no"
-        ? false
+      body.ingreso_mensual != null && body.ingreso_mensual !== ""
+        ? Number(body.ingreso_mensual)
         : null;
 
-    const tiempoCompra = String(body.tiempo_compra || body.horizonte || "").trim() || null;
+    const aniosEstabilidad =
+      body.anios_estabilidad != null && body.anios_estabilidad !== ""
+        ? Number(body.anios_estabilidad)
+        : null;
 
-    // ✅ Validación mínima: al menos teléfono o email para identificar lead
-    if (!telefono && !email) {
-      return res.status(400).json({
-        ok: false,
-        msg: "Falta identificador: telefono o email",
-      });
+    const tipoCompraRaw = String(body.tipo_compra || "").trim().toLowerCase();
+    const tipoCompraTexto =
+      tipoCompraRaw === "solo"
+        ? "SOLO"
+        : tipoCompraRaw === "pareja"
+        ? "EN_PAREJA"
+        : null;
+
+    // ✅ Regla de identificación (NO asumir)
+    // - Instagram: requiere subscriberId o username
+    // - WhatsApp: requiere telefono o email (o subscriberId)
+    if (canal === "instagram") {
+      if (!subscriberId && !igUsername) {
+        return res.status(400).json({
+          ok: false,
+          msg: "Falta subscriber_id o instagram_username para Instagram",
+        });
+      }
+    } else {
+      if (!subscriberId && !telefono && !email) {
+        return res.status(400).json({
+          ok: false,
+          msg: "Falta subscriber_id o telefono o email para WhatsApp",
+        });
+      }
     }
 
-    // 🔎 filtro principal para upsert
-    const filter = telefono ? { telefono } : { email };
+    // ✅ Filtro de upsert
+    let filter = null;
 
-    // ✅ payload base
+    if (subscriberId) {
+      filter = { manychatSubscriberId: subscriberId };
+    } else if (canal === "instagram" && igUsername) {
+      filter = { igUsername };
+    } else if (telefono) {
+      filter = { telefono };
+    } else if (email) {
+      filter = { email };
+    }
+
+    const rawBucket = canal === "instagram" ? "instagram" : "whatsapp";
+
     const update = {
       $set: {
         ...(nombre ? { nombre } : {}),
@@ -399,16 +542,27 @@ export async function crearLeadWhatsapp(req, res) {
         ...(telefono ? { telefono } : {}),
         ...(ciudad ? { ciudad } : {}),
         ...(tiempoCompra ? { tiempoCompra } : {}),
-        origen: "WhatsApp (ManyChat)",
-        // Guarda todo lo recibido sin pelearte con schema
+
+        // ✅ canónico
+        canal,
+        fuente: "manychat",
+        ...(subscriberId ? { manychatSubscriberId: subscriberId } : {}),
+        ...(igUsername ? { igUsername } : {}),
+
+        origen: canal === "instagram" ? "Instagram (ManyChat)" : "WhatsApp (ManyChat)",
+        resultadoUpdatedAt: new Date(),
+
         metadata: {
-          canal: "WhatsApp",
-          whatsapp: {
-            ...body, // 👈 así nunca pierdes data
+          canal: canal === "instagram" ? "Instagram" : "WhatsApp",
+          [rawBucket]: {
+            ...body,
+            afiliado_iess: afiliadoIess,
+            ingreso_mensual: ingresoMensual,
+            anios_estabilidad: aniosEstabilidad,
+            tipo_compra: body.tipo_compra ?? null,
             tipo_compra_texto: tipoCompraTexto,
           },
         },
-        resultadoUpdatedAt: new Date(), // útil para ordenar “último update”
       },
       $setOnInsert: {
         aceptaTerminos: null,
@@ -416,27 +570,41 @@ export async function crearLeadWhatsapp(req, res) {
       },
     };
 
-    // ✅ Upsert
     let lead = await Lead.findOneAndUpdate(filter, update, {
       new: true,
       upsert: true,
     });
 
-    // ✅ Si es nuevo y no tiene codigoHL, generarlo una sola vez
     if (!lead.codigoHL) {
-      const codigoHL = generarCodigoHLDesdeObjectId(lead._id);
-      lead.codigoHL = codigoHL;
+      lead.codigoHL = generarCodigoHLDesdeObjectId(lead._id);
       await lead.save();
     }
 
-    return res.status(200).json({
-      ok: true,
-      msg: "Lead WhatsApp guardado",
-      leadId: lead._id,
-      codigoHL: lead.codigoHL,
-    });
+    return res.json({ ok: true, leadId: lead._id, codigoHL: lead.codigoHL });
   } catch (err) {
-    console.error("❌ Error en crearLeadWhatsapp:", err);
+    console.error("❌ crearLeadManychat:", err);
+    return res.status(500).json({ ok: false, msg: "Error interno" });
+  }
+}
+
+/* ===========================================================
+   Compat: POST /api/leads/whatsapp  (mantiene tu endpoint actual)
+   -> redirige internamente a crearLeadManychat
+=========================================================== */
+export async function crearLeadWhatsapp(req, res) {
+  // Mantiene compatibilidad; Manychat WA ya te funciona así
+  return crearLeadManychat(req, res);
+}
+
+/* ===========================================================
+   Opcional: POST /api/leads/instagram
+   -> usa el unificado ManyChat (IG + WhatsApp)
+=========================================================== */
+export async function crearLeadInstagram(req, res) {
+  try {
+    return await crearLeadManychat(req, res);
+  } catch (err) {
+    console.error("❌ crearLeadInstagram:", err);
     return res.status(500).json({ ok: false, msg: "Error interno" });
   }
 }
