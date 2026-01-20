@@ -5,6 +5,8 @@ import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
 import { generarCodigoHLDesdeObjectId } from "../utils/codigoHL.js";
 import { normalizeResultadoParaSalida } from "../utils/hlResultado.js";
 
+const LEADS_CONTROLLER_VERSION = "2026-01-20-manychat-flat-v1";
+
 /* ===========================================================
    Helpers para extraer datos del resultado
 =========================================================== */
@@ -55,7 +57,6 @@ function sanitizarResultadoCliente(resultado = {}) {
 /* ===========================================================
    Helpers Manychat
 =========================================================== */
-
 function getApiKeyOk(req) {
   const apiKey = String(req.headers["x-api-key"] || "");
   const expected = String(process.env.MANYCHAT_API_KEY || "");
@@ -205,7 +206,9 @@ export async function crearLead(req, res) {
     const emailEfectivo = tokenEmail || emailNorm;
 
     const resultadoSanitizado = sanitizarResultadoCliente(resultado);
-    const resultadoNormalizado = normalizeResultadoParaSalida(resultadoSanitizado);
+    const resultadoNormalizado = normalizeResultadoParaSalida(
+      resultadoSanitizado
+    );
 
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
@@ -266,7 +269,7 @@ export async function crearLead(req, res) {
       resultado: resultadoNormalizado,
       resultadoUpdatedAt: new Date(),
 
-      // ✅ NUEVO (canon)
+      // ✅ CANÓNICO
       canal: "web",
       fuente: "form",
 
@@ -367,7 +370,8 @@ export async function listarLeads(req, res) {
     const filter = {};
 
     if (email) filter.email = { $regex: String(email).trim(), $options: "i" };
-    if (telefono) filter.telefono = { $regex: String(telefono).trim(), $options: "i" };
+    if (telefono)
+      filter.telefono = { $regex: String(telefono).trim(), $options: "i" };
     if (ciudad) filter.ciudad = { $regex: String(ciudad).trim(), $options: "i" };
     if (tiempoCompra) filter.tiempoCompra = String(tiempoCompra).trim();
 
@@ -390,6 +394,7 @@ export async function listarLeads(req, res) {
 
     return res.json({
       ok: true,
+      version: LEADS_CONTROLLER_VERSION,
       pagina,
       totalPaginas,
       total,
@@ -451,6 +456,7 @@ export async function statsLeads(req, res) {
 
     return res.json({
       ok: true,
+      version: LEADS_CONTROLLER_VERSION,
       total,
       hoy,
       semana,
@@ -462,6 +468,7 @@ export async function statsLeads(req, res) {
     console.error("❌ Error en statsLeads:", err);
     return res.status(500).json({
       ok: false,
+      version: LEADS_CONTROLLER_VERSION,
       total: 0,
       hoy: 0,
       semana: 0,
@@ -590,16 +597,24 @@ export async function crearLeadManychat(req, res) {
       await lead.save();
     }
 
-    return res.json({ ok: true, leadId: lead._id, codigoHL: lead.codigoHL });
+    return res.json({
+      ok: true,
+      version: LEADS_CONTROLLER_VERSION,
+      leadId: lead._id,
+      codigoHL: lead.codigoHL,
+    });
   } catch (err) {
     console.error("❌ crearLeadManychat:", err);
-    return res.status(500).json({ ok: false, msg: "Error interno" });
+    return res.status(500).json({
+      ok: false,
+      version: LEADS_CONTROLLER_VERSION,
+      msg: "Error interno",
+    });
   }
 }
 
 /* ===========================================================
    Compat: POST /api/leads/whatsapp  (mantiene tu endpoint actual)
-   -> redirige internamente a crearLeadManychat
 =========================================================== */
 export async function crearLeadWhatsapp(req, res) {
   return crearLeadManychat(req, res);
@@ -607,7 +622,6 @@ export async function crearLeadWhatsapp(req, res) {
 
 /* ===========================================================
    Opcional: POST /api/leads/instagram
-   -> usa el unificado ManyChat (IG + WhatsApp)
 =========================================================== */
 export async function crearLeadInstagram(req, res) {
   return crearLeadManychat(req, res);
