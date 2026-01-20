@@ -55,7 +55,6 @@ function sanitizarResultadoCliente(resultado = {}) {
 /* ===========================================================
    Helpers Manychat
 =========================================================== */
-
 function getApiKeyOk(req) {
   const apiKey = String(req.headers["x-api-key"] || "");
   const expected = String(process.env.MANYCHAT_API_KEY || "");
@@ -72,8 +71,9 @@ function toBoolSiNo(v) {
 
 function toNumberOrNull(v) {
   if (v == null) return null;
-  if (v === "") return null;
-  const n = Number(v);
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -253,7 +253,7 @@ export async function crearLead(req, res) {
       resultado: resultadoNormalizado,
       resultadoUpdatedAt: new Date(),
 
-      // ✅ NUEVO (canon)
+      // ✅ CANÓNICO
       canal: "web",
       fuente: "form",
 
@@ -332,6 +332,7 @@ export async function crearLead(req, res) {
 /* ===========================================================
    GET /api/leads   (listado paginado + filtros)
    ✅ agrega sustentoIndependiente + canal + fuente
+   ✅ ordena por resultadoUpdatedAt para que ManyChat suba arriba
 =========================================================== */
 export async function listarLeads(req, res) {
   try {
@@ -358,12 +359,10 @@ export async function listarLeads(req, res) {
     if (ciudad) filter.ciudad = { $regex: String(ciudad).trim(), $options: "i" };
     if (tiempoCompra) filter.tiempoCompra = String(tiempoCompra).trim();
 
-    // ✅ antes tu front lo mandaba pero backend no lo filtraba
     if (sustentoIndependiente) {
       filter.sustentoIndependiente = String(sustentoIndependiente).trim();
     }
 
-    // ✅ nuevos filtros canónicos
     if (canal) filter.canal = String(canal).trim().toLowerCase();
     if (fuente) filter.fuente = String(fuente).trim().toLowerCase();
 
@@ -372,7 +371,7 @@ export async function listarLeads(req, res) {
     const skip = (pagina - 1) * limit;
 
     const leads = await Lead.find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ resultadoUpdatedAt: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
@@ -428,7 +427,6 @@ export async function statsLeads(req, res) {
       createdAt: { $gte: inicioSemanaAnterior, $lt: inicioSemana },
     });
 
-    // breakdown histórico (para tu dashboard)
     const byCanal = await Lead.aggregate([
       { $group: { _id: "$canal", total: { $sum: 1 } } },
       { $sort: { total: -1 } },
@@ -467,7 +465,8 @@ export async function statsLeads(req, res) {
    - Seguridad por API KEY
    - Upsert por manychatSubscriberId si viene
    - Fallback: telefono o email (whatsapp)
-   ✅ AJUSTE: guardar campos “rápidos” en TOP-LEVEL (Lead.js)
+   ✅ Guarda campos top-level del flow (Lead.js)
+   ✅ timestamps: true para que updatedAt cambie en updates
 =========================================================== */
 export async function crearLeadManychat(req, res) {
   try {
@@ -486,29 +485,26 @@ export async function crearLeadManychat(req, res) {
     const email = pickEmail(body);
     const telefono = pickTelefono(body);
 
-    const ciudad = pickCiudad(body); // también sirve como ciudad_compra si viene de ManyChat
+    const ciudad = pickCiudad(body);
     const tiempoCompra = pickTiempoCompra(body);
 
-    // Campos custom ManyChat (los queremos TOP-LEVEL)
-    const afiliadoIess = toBoolSiNo(body.afiliado_iess);
-    const ingresoMensual = toNumberOrNull(body.ingreso_mensual);
-    const aniosEstabilidad = toNumberOrNull(body.anios_estabilidad);
-    const deudaMensualAprox = toNumberOrNull(body.deuda_mensual_aprox);
+    // Campos del flow (normalizados)
+    const afiliadoIess = toBoolSiNo(body.afiliado_iess ?? body.afiliadoIess);
+    const ingresoMensual = toNumberOrNull(body.ingreso_mensual ?? body.ingresoMensual);
+    const aniosEstabilidad = toNumberOrNull(body.anios_estabilidad ?? body.aniosEstabilidad);
+    const deudaMensualAprox = toNumberOrNull(body.deuda_mensual_aprox ?? body.deudaMensualAprox);
 
-    const tipoCompra = body.tipo_compra != null ? String(body.tipo_compra).trim() : null;
-    const tipoCompraNumero = toNumberOrNull(body.tipo_compra_numero);
+    const ciudadCompra =
+      String(body.ciudad_compra || body.ciudadCompra || "").trim() || null;
 
-    const tipoCompraRaw = String(tipoCompra || "").trim().toLowerCase();
-    const tipoCompraTexto =
-      tipoCompraRaw === "solo"
-        ? "SOLO"
-        : tipoCompraRaw === "pareja"
-        ? "EN_PAREJA"
-        : null;
+    const tipoCompra =
+      String(body.tipo_compra || body.tipoCompra || "").trim().toLowerCase() || null;
 
-    // ✅ Regla de identificación (NO asumir)
-    // - Instagram: requiere subscriberId o username
-    // - WhatsApp: requiere telefono o email (o subscriberId)
+    const tipoCompraNumero = toNumberOrNull(
+      body.tipo_compra_numero ?? body.tipoCompraNumero
+    );
+
+    // Reglas de identificación
     if (canal === "instagram") {
       if (!subscriberId && !igUsername) {
         return res.status(400).json({
@@ -525,7 +521,7 @@ export async function crearLeadManychat(req, res) {
       }
     }
 
-    // ✅ Filtro de upsert
+    // Filtro de upsert
     let filter = null;
 
     if (subscriberId) {
@@ -554,22 +550,20 @@ export async function crearLeadManychat(req, res) {
         ...(subscriberId ? { manychatSubscriberId: subscriberId } : {}),
         ...(igUsername ? { igUsername } : {}),
 
-        // ✅ TOP-LEVEL: campos “rápidos” del flow (para dashboard)
+        origen:
+          canal === "instagram" ? "Instagram (ManyChat)" : "WhatsApp (ManyChat)",
+
+        // ✅ campos top-level (Lead.js) — para dashboard/filtros
         afiliado_iess: afiliadoIess,
         ingreso_mensual: ingresoMensual,
         anios_estabilidad: aniosEstabilidad,
         deuda_mensual_aprox: deudaMensualAprox,
-
-        ciudad_compra: ciudad || null,
-
+        ciudad_compra: ciudadCompra,
         tipo_compra: tipoCompra,
         tipo_compra_numero: tipoCompraNumero,
 
-        origen:
-          canal === "instagram" ? "Instagram (ManyChat)" : "WhatsApp (ManyChat)",
         resultadoUpdatedAt: new Date(),
 
-        // (seguimos guardando el payload completo en metadata por trazabilidad)
         metadata: {
           canal: canal === "instagram" ? "Instagram" : "WhatsApp",
           [rawBucket]: {
@@ -578,9 +572,9 @@ export async function crearLeadManychat(req, res) {
             ingreso_mensual: ingresoMensual,
             anios_estabilidad: aniosEstabilidad,
             deuda_mensual_aprox: deudaMensualAprox,
-            tipo_compra: tipoCompra ?? null,
+            ciudad_compra: ciudadCompra,
+            tipo_compra: tipoCompra,
             tipo_compra_numero: tipoCompraNumero,
-            tipo_compra_texto: tipoCompraTexto, // solo en metadata (no requiere schema)
           },
         },
       },
@@ -593,6 +587,7 @@ export async function crearLeadManychat(req, res) {
     let lead = await Lead.findOneAndUpdate(filter, update, {
       new: true,
       upsert: true,
+      timestamps: true,
     });
 
     if (!lead.codigoHL) {
@@ -608,22 +603,15 @@ export async function crearLeadManychat(req, res) {
 }
 
 /* ===========================================================
-   Compat: POST /api/leads/whatsapp  (mantiene tu endpoint actual)
-   -> redirige internamente a crearLeadManychat
+   Compat: POST /api/leads/whatsapp
 =========================================================== */
 export async function crearLeadWhatsapp(req, res) {
   return crearLeadManychat(req, res);
 }
 
 /* ===========================================================
-   Opcional: POST /api/leads/instagram
-   -> usa el unificado ManyChat (IG + WhatsApp)
+   Compat: POST /api/leads/instagram
 =========================================================== */
 export async function crearLeadInstagram(req, res) {
-  try {
-    return await crearLeadManychat(req, res);
-  } catch (err) {
-    console.error("❌ crearLeadInstagram:", err);
-    return res.status(500).json({ ok: false, msg: "Error interno" });
-  }
+  return crearLeadManychat(req, res);
 }
