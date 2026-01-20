@@ -70,6 +70,13 @@ function toBoolSiNo(v) {
   return null;
 }
 
+function toNumberOrNull(v) {
+  if (v == null) return null;
+  if (v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function pickNombreManychat(body = {}) {
   const first = String(body.first_name || body.firstName || "").trim();
   const last = String(body.last_name || body.lastName || "").trim();
@@ -460,6 +467,7 @@ export async function statsLeads(req, res) {
    - Seguridad por API KEY
    - Upsert por manychatSubscriberId si viene
    - Fallback: telefono o email (whatsapp)
+   ✅ AJUSTE: guardar campos “rápidos” en TOP-LEVEL (Lead.js)
 =========================================================== */
 export async function crearLeadManychat(req, res) {
   try {
@@ -478,22 +486,19 @@ export async function crearLeadManychat(req, res) {
     const email = pickEmail(body);
     const telefono = pickTelefono(body);
 
-    const ciudad = pickCiudad(body);
+    const ciudad = pickCiudad(body); // también sirve como ciudad_compra si viene de ManyChat
     const tiempoCompra = pickTiempoCompra(body);
 
-    // Campos custom vistos en tu screenshot
+    // Campos custom ManyChat (los queremos TOP-LEVEL)
     const afiliadoIess = toBoolSiNo(body.afiliado_iess);
-    const ingresoMensual =
-      body.ingreso_mensual != null && body.ingreso_mensual !== ""
-        ? Number(body.ingreso_mensual)
-        : null;
+    const ingresoMensual = toNumberOrNull(body.ingreso_mensual);
+    const aniosEstabilidad = toNumberOrNull(body.anios_estabilidad);
+    const deudaMensualAprox = toNumberOrNull(body.deuda_mensual_aprox);
 
-    const aniosEstabilidad =
-      body.anios_estabilidad != null && body.anios_estabilidad !== ""
-        ? Number(body.anios_estabilidad)
-        : null;
+    const tipoCompra = body.tipo_compra != null ? String(body.tipo_compra).trim() : null;
+    const tipoCompraNumero = toNumberOrNull(body.tipo_compra_numero);
 
-    const tipoCompraRaw = String(body.tipo_compra || "").trim().toLowerCase();
+    const tipoCompraRaw = String(tipoCompra || "").trim().toLowerCase();
     const tipoCompraTexto =
       tipoCompraRaw === "solo"
         ? "SOLO"
@@ -549,9 +554,22 @@ export async function crearLeadManychat(req, res) {
         ...(subscriberId ? { manychatSubscriberId: subscriberId } : {}),
         ...(igUsername ? { igUsername } : {}),
 
-        origen: canal === "instagram" ? "Instagram (ManyChat)" : "WhatsApp (ManyChat)",
+        // ✅ TOP-LEVEL: campos “rápidos” del flow (para dashboard)
+        afiliado_iess: afiliadoIess,
+        ingreso_mensual: ingresoMensual,
+        anios_estabilidad: aniosEstabilidad,
+        deuda_mensual_aprox: deudaMensualAprox,
+
+        ciudad_compra: ciudad || null,
+
+        tipo_compra: tipoCompra,
+        tipo_compra_numero: tipoCompraNumero,
+
+        origen:
+          canal === "instagram" ? "Instagram (ManyChat)" : "WhatsApp (ManyChat)",
         resultadoUpdatedAt: new Date(),
 
+        // (seguimos guardando el payload completo en metadata por trazabilidad)
         metadata: {
           canal: canal === "instagram" ? "Instagram" : "WhatsApp",
           [rawBucket]: {
@@ -559,8 +577,10 @@ export async function crearLeadManychat(req, res) {
             afiliado_iess: afiliadoIess,
             ingreso_mensual: ingresoMensual,
             anios_estabilidad: aniosEstabilidad,
-            tipo_compra: body.tipo_compra ?? null,
-            tipo_compra_texto: tipoCompraTexto,
+            deuda_mensual_aprox: deudaMensualAprox,
+            tipo_compra: tipoCompra ?? null,
+            tipo_compra_numero: tipoCompraNumero,
+            tipo_compra_texto: tipoCompraTexto, // solo en metadata (no requiere schema)
           },
         },
       },
@@ -592,7 +612,6 @@ export async function crearLeadManychat(req, res) {
    -> redirige internamente a crearLeadManychat
 =========================================================== */
 export async function crearLeadWhatsapp(req, res) {
-  // Mantiene compatibilidad; Manychat WA ya te funciona así
   return crearLeadManychat(req, res);
 }
 
@@ -608,4 +627,3 @@ export async function crearLeadInstagram(req, res) {
     return res.status(500).json({ ok: false, msg: "Error interno" });
   }
 }
-

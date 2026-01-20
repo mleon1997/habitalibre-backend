@@ -3,22 +3,17 @@ import mongoose from "mongoose";
 
 const LeadSchema = new mongoose.Schema(
   {
-    // -----------------------
-    // Datos base
-    // -----------------------
     nombre: String,
     email: { type: String, index: true },
     telefono: { type: String, index: true },
-    ciudad: { type: String, index: true }, // ciudad general (web o manychat si quieres mapear)
+    ciudad: { type: String, index: true },
 
     // vínculo con customer/user
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
 
-    // -----------------------
-    // Datos simulador web
-    // -----------------------
     producto: { type: String },
     scoreHL: { type: Number },
+
     tiempoCompra: { type: String, index: true },
 
     sustentoIndependiente: {
@@ -28,50 +23,46 @@ const LeadSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ✅ resultado simulador (web)
+    // ==========================
+    // ✅ CANALES / FUENTE (ManyChat)
+    // ==========================
+    canal: {
+      type: String,
+      enum: ["web", "whatsapp", "instagram", null],
+      default: "web",
+      index: true,
+    },
+    fuente: {
+      type: String,
+      enum: ["form", "manychat", "manual", null],
+      default: "form",
+      index: true,
+    },
+
+    manychatSubscriberId: { type: String, index: true },
+    igUsername: { type: String, index: true },
+
+    // ==========================
+    // ✅ CAMPOS “RÁPIDOS” DEL FLOW (para verlos en dashboard)
+    // ==========================
+    afiliado_iess: { type: Boolean, default: null, index: true },
+    anios_estabilidad: { type: Number, default: null, index: true },
+    ingreso_mensual: { type: Number, default: null, index: true },
+    deuda_mensual_aprox: { type: Number, default: null, index: true },
+
+    ciudad_compra: { type: String, default: null, index: true },
+
+    tipo_compra: { type: String, default: null, index: true }, // "solo" | "pareja" | etc.
+    tipo_compra_numero: { type: Number, default: null, index: true }, // 1 | 2
+
+    // ✅ CANÓNICO: aquí debe quedar el resultado del simulador
     resultado: { type: Object },
+
+    // ✅ timestamps explícitos
     resultadoUpdatedAt: { type: Date, index: true },
 
     aceptaTerminos: Boolean,
     aceptaCompartir: Boolean,
-
-    // -----------------------
-    // ✅ NUEVO: origen/canal canónico (para distinguir Web vs ManyChat)
-    // -----------------------
-    canal: {
-      type: String,
-      enum: ["web", "whatsapp", "instagram", "otro", null],
-      default: null,
-      index: true,
-    },
-
-    fuente: {
-      type: String,
-      enum: ["habitalibre_web", "manychat", "otro", null],
-      default: null,
-      index: true,
-    },
-
-    // -----------------------
-    // ✅ NUEVO: campos canónicos capturados por ManyChat
-    // (para que el dashboard los muestre sin leer metadata)
-    // -----------------------
-    afiliadoIess: { type: Boolean, default: null, index: true },
-    aniosEstabilidad: { type: Number, default: null, index: true },
-    ingresoMensual: { type: Number, default: null, index: true },
-    deudaMensualAprox: { type: Number, default: null, index: true },
-
-    ciudadCompra: { type: String, default: null, index: true },
-
-    tipoCompra: { type: String, default: null, index: true }, // "solo" / "pareja"
-    tipoCompraNumero: { type: Number, default: null, index: true }, // 1 / 2
-
-    manychatSubscriberId: { type: String, default: null, index: true },
-    igUsername: { type: String, default: null, index: true },
-
-    // -----------------------
-    // Mantén tu metadata flexible
-    // -----------------------
     origen: String,
     metadata: Object,
 
