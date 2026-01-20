@@ -55,6 +55,7 @@ function sanitizarResultadoCliente(resultado = {}) {
 /* ===========================================================
    Helpers Manychat
 =========================================================== */
+
 function getApiKeyOk(req) {
   const apiKey = String(req.headers["x-api-key"] || "");
   const expected = String(process.env.MANYCHAT_API_KEY || "");
@@ -67,14 +68,6 @@ function toBoolSiNo(v) {
   if (s === "si" || s === "sí") return true;
   if (s === "no") return false;
   return null;
-}
-
-function toNumberOrNull(v) {
-  if (v == null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
 }
 
 function pickNombreManychat(body = {}) {
@@ -161,6 +154,26 @@ function pickSubscriberId(body = {}) {
     null;
 
   return id != null ? String(id).trim() : null;
+}
+
+function toNumberOrNull(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toLowerOrNull(v) {
+  const s = String(v ?? "").trim();
+  return s ? s.toLowerCase() : null;
+}
+
+function mapTipoCompraNumero(tipoCompraRawLower) {
+  if (tipoCompraRawLower === "solo") return 1;
+  if (tipoCompraRawLower === "pareja" || tipoCompraRawLower === "en_pareja")
+    return 2;
+  return null;
 }
 
 /* ===========================================================
@@ -253,7 +266,7 @@ export async function crearLead(req, res) {
       resultado: resultadoNormalizado,
       resultadoUpdatedAt: new Date(),
 
-      // ✅ CANÓNICO
+      // ✅ NUEVO (canon)
       canal: "web",
       fuente: "form",
 
@@ -332,7 +345,6 @@ export async function crearLead(req, res) {
 /* ===========================================================
    GET /api/leads   (listado paginado + filtros)
    ✅ agrega sustentoIndependiente + canal + fuente
-   ✅ ordena por resultadoUpdatedAt para que ManyChat suba arriba
 =========================================================== */
 export async function listarLeads(req, res) {
   try {
@@ -371,7 +383,7 @@ export async function listarLeads(req, res) {
     const skip = (pagina - 1) * limit;
 
     const leads = await Lead.find(filter)
-      .sort({ resultadoUpdatedAt: -1, createdAt: -1 })
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
@@ -465,8 +477,7 @@ export async function statsLeads(req, res) {
    - Seguridad por API KEY
    - Upsert por manychatSubscriberId si viene
    - Fallback: telefono o email (whatsapp)
-   ✅ Guarda campos top-level del flow (Lead.js)
-   ✅ timestamps: true para que updatedAt cambie en updates
+   ✅ AHORA: persiste campos "planos" para que el dashboard los vea
 =========================================================== */
 export async function crearLeadManychat(req, res) {
   try {
@@ -481,30 +492,22 @@ export async function crearLeadManychat(req, res) {
     const igUsername = canal === "instagram" ? pickIgUsername(body) : null;
 
     const nombre = pickNombreManychat(body);
-
     const email = pickEmail(body);
     const telefono = pickTelefono(body);
 
     const ciudad = pickCiudad(body);
     const tiempoCompra = pickTiempoCompra(body);
 
-    // Campos del flow (normalizados)
-    const afiliadoIess = toBoolSiNo(body.afiliado_iess ?? body.afiliadoIess);
-    const ingresoMensual = toNumberOrNull(body.ingreso_mensual ?? body.ingresoMensual);
-    const aniosEstabilidad = toNumberOrNull(body.anios_estabilidad ?? body.aniosEstabilidad);
-    const deudaMensualAprox = toNumberOrNull(body.deuda_mensual_aprox ?? body.deudaMensualAprox);
+    // Campos del flow (rápidos)
+    const afiliadoIess = toBoolSiNo(body.afiliado_iess);
+    const ingresoMensual = toNumberOrNull(body.ingreso_mensual);
+    const aniosEstabilidad = toNumberOrNull(body.anios_estabilidad);
+    const deudaMensualAprox = toNumberOrNull(body.deuda_mensual_aprox);
 
-    const ciudadCompra =
-      String(body.ciudad_compra || body.ciudadCompra || "").trim() || null;
+    const tipoCompraLower = toLowerOrNull(body.tipo_compra); // "solo" | "pareja" | ...
+    const tipoCompraNumero = mapTipoCompraNumero(tipoCompraLower);
 
-    const tipoCompra =
-      String(body.tipo_compra || body.tipoCompra || "").trim().toLowerCase() || null;
-
-    const tipoCompraNumero = toNumberOrNull(
-      body.tipo_compra_numero ?? body.tipoCompraNumero
-    );
-
-    // Reglas de identificación
+    // ✅ Regla de identificación (NO asumir)
     if (canal === "instagram") {
       if (!subscriberId && !igUsername) {
         return res.status(400).json({
@@ -521,7 +524,7 @@ export async function crearLeadManychat(req, res) {
       }
     }
 
-    // Filtro de upsert
+    // ✅ Filtro de upsert
     let filter = null;
 
     if (subscriberId) {
@@ -534,10 +537,9 @@ export async function crearLeadManychat(req, res) {
       filter = { email };
     }
 
-    const rawBucket = canal === "instagram" ? "instagram" : "whatsapp";
-
     const update = {
       $set: {
+        // identidad base
         ...(nombre ? { nombre } : {}),
         ...(email ? { email } : {}),
         ...(telefono ? { telefono } : {}),
@@ -549,33 +551,27 @@ export async function crearLeadManychat(req, res) {
         fuente: "manychat",
         ...(subscriberId ? { manychatSubscriberId: subscriberId } : {}),
         ...(igUsername ? { igUsername } : {}),
-
         origen:
-          canal === "instagram" ? "Instagram (ManyChat)" : "WhatsApp (ManyChat)",
+          canal === "instagram"
+            ? "Instagram (ManyChat)"
+            : "WhatsApp (ManyChat)",
+        resultadoUpdatedAt: new Date(),
 
-        // ✅ campos top-level (Lead.js) — para dashboard/filtros
+        // ✅ CAMPOS PLANOS (para dashboard + filtros)
         afiliado_iess: afiliadoIess,
         ingreso_mensual: ingresoMensual,
         anios_estabilidad: aniosEstabilidad,
         deuda_mensual_aprox: deudaMensualAprox,
-        ciudad_compra: ciudadCompra,
-        tipo_compra: tipoCompra,
+
+        ciudad_compra: ciudad || null,
+
+        tipo_compra: tipoCompraLower || null,
         tipo_compra_numero: tipoCompraNumero,
 
-        resultadoUpdatedAt: new Date(),
-
+        // metadata completo (auditoría)
         metadata: {
           canal: canal === "instagram" ? "Instagram" : "WhatsApp",
-          [rawBucket]: {
-            ...body,
-            afiliado_iess: afiliadoIess,
-            ingreso_mensual: ingresoMensual,
-            anios_estabilidad: aniosEstabilidad,
-            deuda_mensual_aprox: deudaMensualAprox,
-            ciudad_compra: ciudadCompra,
-            tipo_compra: tipoCompra,
-            tipo_compra_numero: tipoCompraNumero,
-          },
+          raw: body,
         },
       },
       $setOnInsert: {
@@ -584,10 +580,9 @@ export async function crearLeadManychat(req, res) {
       },
     };
 
-    let lead = await Lead.findOneAndUpdate(filter, update, {
+    const lead = await Lead.findOneAndUpdate(filter, update, {
       new: true,
       upsert: true,
-      timestamps: true,
     });
 
     if (!lead.codigoHL) {
@@ -603,14 +598,16 @@ export async function crearLeadManychat(req, res) {
 }
 
 /* ===========================================================
-   Compat: POST /api/leads/whatsapp
+   Compat: POST /api/leads/whatsapp  (mantiene tu endpoint actual)
+   -> redirige internamente a crearLeadManychat
 =========================================================== */
 export async function crearLeadWhatsapp(req, res) {
   return crearLeadManychat(req, res);
 }
 
 /* ===========================================================
-   Compat: POST /api/leads/instagram
+   Opcional: POST /api/leads/instagram
+   -> usa el unificado ManyChat (IG + WhatsApp)
 =========================================================== */
 export async function crearLeadInstagram(req, res) {
   return crearLeadManychat(req, res);
