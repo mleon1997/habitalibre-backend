@@ -22,11 +22,17 @@ export async function adminLogin(req, res) {
       return res.status(401).json({ ok: false, message: "Credenciales inválidas" });
     }
 
-    const secret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || "dev_admin_secret";
+    // ✅ UNIFICADO: mismo secret que authMiddleware y adminAuth
+    const secret = process.env.JWT_SECRET || "dev_jwt_secret_change_me";
     const expiresIn = process.env.ADMIN_JWT_EXPIRES || "12h";
 
     const token = jwt.sign(
-      { type: "admin", email: ADMIN_EMAIL },
+      {
+        typ: "admin",
+        type: "admin",
+        email: ADMIN_EMAIL,
+        rolGeneral: "admin", // ✅ clave
+      },
       secret,
       { expiresIn }
     );
@@ -37,3 +43,4 @@ export async function adminLogin(req, res) {
     return res.status(500).json({ ok: false, message: "Error login admin" });
   }
 }
+
