@@ -507,10 +507,10 @@ export async function listarLeads(req, res) {
     const skip = (pagina - 1) * limit;
 
     const leads = await Lead.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
+  .sort({ updatedAt: -1, createdAt: -1 })
+  .skip(skip)
+  .limit(limit)
+  .lean();
 
     return res.json({
       ok: true,
