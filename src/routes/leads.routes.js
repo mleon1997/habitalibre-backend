@@ -13,16 +13,14 @@ import {
   crearLeadInstagram,
 } from "../controllers/leads.controller.js";
 
-import { authMiddleware, requireAdmin } from "../middlewares/auth.js";
 import { verificarCustomer } from "../middlewares/customerAuth.js";
+import adminAuth from "../middlewares/adminAuth.js"; // ✅ ÚNICO middleware admin
 
 const router = Router();
 
-/**
- * Middleware opcional:
- * Si viene Bearer token customer válido, setea req.customer = { userId, email }.
- * Si no viene o es inválido, continúa normal (NO bloquea).
- */
+/* ===============================
+   Customer optional
+================================ */
 function customerOptional(req, _res, next) {
   try {
     const header = req.headers.authorization || "";
@@ -33,11 +31,9 @@ function customerOptional(req, _res, next) {
     if (!secret) return next();
 
     const payload = jwt.verify(token, secret);
-
-    // si viene typ y no es customer -> ignoramos (no bloqueamos)
     if (payload?.typ && payload.typ !== "customer") return next();
 
-    const userId = payload?.sub || payload?.userId || payload?.id || null;
+    const userId = payload?.sub || payload?.userId || payload?.id;
     if (!userId) return next();
 
     req.customer = { userId: String(userId), email: payload?.email || "" };
@@ -47,64 +43,49 @@ function customerOptional(req, _res, next) {
   }
 }
 
-/* ===========================================================
-   ✅ Webhook ManyChat (unificado)
-   POST /api/leads/manychat  (API KEY)
-   =========================================================== */
+/* ===============================
+   Webhooks públicos
+================================ */
 router.post("/manychat", crearLeadManychat);
-
-// ✅ Opcional: endpoint dedicado IG (API KEY)
 router.post("/instagram", crearLeadInstagram);
-
-// ✅ Compat: WhatsApp legacy (API KEY)
 router.post("/whatsapp", crearLeadWhatsapp);
 
-// (Opcional) ping de salud del webhook
-router.get("/whatsapp/ping", (_req, res) => res.json({ ok: true, pong: true }));
-router.get("/manychat/ping", (_req, res) => res.json({ ok: true, pong: true }));
+router.get("/whatsapp/ping", (_req, res) => res.json({ ok: true }));
+router.get("/manychat/ping", (_req, res) => res.json({ ok: true }));
 
-/* ===========================================================
-   ✅ Lead del customer logueado
-   GET /api/leads/mine  (PROTEGIDO CUSTOMER)
-   =========================================================== */
+/* ===============================
+   Customer
+================================ */
 router.get("/mine", verificarCustomer, async (req, res) => {
   try {
     const userId = req.customer?.userId;
     if (!userId) return res.status(401).json({ error: "Token inválido" });
 
-    const user = await User.findById(userId).select("_id currentLeadId").lean();
-
-    let lead = null;
-
-    if (user?.currentLeadId) {
-      lead = await Lead.findById(user.currentLeadId).lean();
-    }
+    const user = await User.findById(userId).lean();
+    const lead =
+      (user?.currentLeadId && await Lead.findById(user.currentLeadId)) ||
+      (await Lead.findOne({ userId }).sort({ createdAt: -1 }));
 
     if (!lead) {
-      lead = await Lead.findOne({ userId }).sort({ createdAt: -1 }).lean();
+      return res.status(404).json({ error: "No hay lead asociado" });
     }
 
-    if (!lead) {
-      return res.status(404).json({ error: "No hay lead asociado a este usuario" });
-    }
-
-    return res.json({ lead });
+    res.json({ lead });
   } catch (err) {
-    console.error("GET /api/leads/mine error:", err);
-    return res.status(500).json({ error: "Error cargando lead" });
+    console.error(err);
+    res.status(500).json({ error: "Error cargando lead" });
   }
 });
 
-/* ===========================================================
-   Crear nuevo lead desde el simulador (PÚBLICO)
-   POST /api/leads
-   =========================================================== */
+/* ===============================
+   Público
+================================ */
 router.post("/", customerOptional, crearLead);
 
-/* ===========================================================
-   Admin (PROTEGIDO)
-   =========================================================== */
-router.get("/stats", authMiddleware, requireAdmin, statsLeads);
-router.get("/", authMiddleware, requireAdmin, listarLeads);
+/* ===============================
+   🔐 ADMIN (ÚNICO LUGAR PROTEGIDO)
+================================ */
+router.get("/stats", adminAuth, statsLeads);
+router.get("/", adminAuth, listarLeads);
 
 export default router;
