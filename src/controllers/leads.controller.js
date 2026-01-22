@@ -58,6 +58,74 @@ function sanitizarResultadoCliente(resultado = {}) {
 }
 
 /* ===========================================================
+   ✅ Helpers parsing (WEB + Manychat)
+=========================================================== */
+function toNumberOrNull(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toLowerOrNull(v) {
+  const s = String(v ?? "").trim();
+  return s ? s.toLowerCase() : null;
+}
+
+function mapTipoCompraNumero(tipoCompraRawLower) {
+  if (tipoCompraRawLower === "solo") return 1;
+  if (tipoCompraRawLower === "pareja" || tipoCompraRawLower === "en_pareja")
+    return 2;
+  return null;
+}
+
+function toBoolOrNull(v) {
+  if (v === true) return true;
+  if (v === false) return false;
+  if (v == null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (s === "true" || s === "1" || s === "si" || s === "sí") return true;
+  if (s === "false" || s === "0" || s === "no") return false;
+  return null;
+}
+
+/**
+ * ✅ Extrae “campos rápidos” desde resultadoNormalizado.perfil (si existe)
+ * para que WEB también tenga ingreso/estabilidad/deudas/etc.
+ */
+function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
+  const perfil = resultadoNormalizado?.perfil || null;
+
+  const afiliadoIess =
+    perfil?.afiliadoIess != null ? toBoolOrNull(perfil.afiliadoIess) : null;
+
+  const aniosEstabilidad =
+    perfil?.aniosEstabilidad != null ? toNumberOrNull(perfil.aniosEstabilidad) : null;
+
+  // perfil.ingresoTotal suele ser suma (individual + pareja)
+  const ingresoMensual =
+    perfil?.ingresoTotal != null ? toNumberOrNull(perfil.ingresoTotal) : null;
+
+  const deudaMensualAprox =
+    perfil?.otrasDeudasMensuales != null
+      ? toNumberOrNull(perfil.otrasDeudasMensuales)
+      : null;
+
+  const ciudadCompra =
+    perfil?.ciudadCompra != null ? String(perfil.ciudadCompra).trim() : null;
+
+  // tipo_compra no suele venir en perfil; lo dejamos null
+  return {
+    afiliadoIess,
+    aniosEstabilidad,
+    ingresoMensual,
+    deudaMensualAprox,
+    ciudadCompra,
+  };
+}
+
+/* ===========================================================
    Helpers Manychat
 =========================================================== */
 function getApiKeyOk(req) {
@@ -160,29 +228,10 @@ function pickSubscriberId(body = {}) {
   return id != null ? String(id).trim() : null;
 }
 
-function toNumberOrNull(v) {
-  if (v == null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
-
-function toLowerOrNull(v) {
-  const s = String(v ?? "").trim();
-  return s ? s.toLowerCase() : null;
-}
-
-function mapTipoCompraNumero(tipoCompraRawLower) {
-  if (tipoCompraRawLower === "solo") return 1;
-  if (tipoCompraRawLower === "pareja" || tipoCompraRawLower === "en_pareja")
-    return 2;
-  return null;
-}
-
 /* ===========================================================
    POST /api/leads   (crear lead desde el simulador)
    ✅ AHORA: MERGE con leads de ManyChat (email/telefono/ig/subscriber)
+   ✅ AHORA: guarda campos “rápidos” (ingreso/estabilidad/deudas/...)
 =========================================================== */
 export async function crearLead(req, res) {
   try {
@@ -196,6 +245,15 @@ export async function crearLead(req, res) {
       resultado,
       tiempoCompra,
       sustentoIndependiente,
+
+      // ✅ OPCIONAL (desde el FRONT)
+      afiliadoIess,
+      aniosEstabilidad,
+      ingresoNetoMensual,
+      otrasDeudasMensuales,
+      ciudadCompra,
+      tipoCompra,
+      tipoCompraNumero,
     } = req.body || {};
 
     if (!nombre || !email || !resultado) {
@@ -216,6 +274,40 @@ export async function crearLead(req, res) {
     const producto = extraerProducto(resultadoNormalizado);
     const sinOferta = resultadoNormalizado?.flags?.sinOferta === true;
 
+    // ✅ Derivar campos rápidos desde resultado.perfil (fallback si no vienen del FRONT)
+    const derivados = extraerCamposRapidosDesdeResultado(resultadoNormalizado);
+
+    // ✅ Normalizar inputs del FRONT (si vienen)
+    const afiliadoIessNorm =
+      afiliadoIess != null ? toBoolOrNull(afiliadoIess) : derivados.afiliadoIess;
+
+    const aniosEstabilidadNorm =
+      aniosEstabilidad != null ? toNumberOrNull(aniosEstabilidad) : derivados.aniosEstabilidad;
+
+    const ingresoMensualNorm =
+      ingresoNetoMensual != null
+        ? toNumberOrNull(ingresoNetoMensual)
+        : derivados.ingresoMensual;
+
+    const deudaMensualNorm =
+      otrasDeudasMensuales != null
+        ? toNumberOrNull(otrasDeudasMensuales)
+        : derivados.deudaMensualAprox;
+
+    const ciudadCompraNorm =
+      (ciudadCompra != null ? String(ciudadCompra).trim() : null) ||
+      derivados.ciudadCompra ||
+      (ciudad ? String(ciudad).trim() : null) ||
+      null;
+
+    const tipoCompraLower =
+      tipoCompra != null ? toLowerOrNull(tipoCompra) : null;
+
+    const tipoCompraNumeroNorm =
+      tipoCompraNumero != null
+        ? toNumberOrNull(tipoCompraNumero)
+        : mapTipoCompraNumero(tipoCompraLower);
+
     console.info("✅ Nuevo lead recibido (WEB):", {
       nombre,
       email: emailEfectivo,
@@ -228,6 +320,15 @@ export async function crearLead(req, res) {
       productoElegido: producto,
       sinOferta,
       customerLeadIdFromToken: req.customer?.leadId || null,
+
+      // campos rápidos
+      afiliado_iess: afiliadoIessNorm,
+      anios_estabilidad: aniosEstabilidadNorm,
+      ingreso_mensual: ingresoMensualNorm,
+      deuda_mensual_aprox: deudaMensualNorm,
+      ciudad_compra: ciudadCompraNorm,
+      tipo_compra: tipoCompraLower,
+      tipo_compra_numero: tipoCompraNumeroNorm,
     });
 
     let userIdFinal = null;
@@ -272,7 +373,17 @@ export async function crearLead(req, res) {
         producto: producto || null,
         scoreHL: typeof scoreHL === "number" ? scoreHL : null,
 
+        // ✅ CANÓNICO
         resultado: resultadoNormalizado,
+
+        // ✅ CAMPOS PLANOS (para dashboard + filtros)
+        afiliado_iess: afiliadoIessNorm,
+        ingreso_mensual: ingresoMensualNorm,
+        anios_estabilidad: aniosEstabilidadNorm,
+        deuda_mensual_aprox: deudaMensualNorm,
+        ciudad_compra: ciudadCompraNorm,
+        tipo_compra: tipoCompraLower || null,
+        tipo_compra_numero: tipoCompraNumeroNorm,
 
         origen: "Simulador Hipoteca Exprés",
         metadata: {
