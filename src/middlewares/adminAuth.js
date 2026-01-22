@@ -11,12 +11,19 @@ export default function adminAuth(req, res, next) {
       return res.status(401).json({ ok: false, message: "Token admin requerido" });
     }
 
-    // ✅ UNIFICADO: mismo secret que authMiddleware
-    const secret = process.env.JWT_SECRET || "dev_jwt_secret_change_me";
+    const secret = String(process.env.ADMIN_JWT_SECRET || "");
+    if (!secret) {
+      return res.status(500).json({ ok: false, message: "ADMIN_JWT_SECRET no configurado" });
+    }
 
     const payload = jwt.verify(token, secret);
-    req.admin = payload;
 
+    // hard-check: solo tokens admin
+    if (payload?.typ !== "admin" && payload?.rolGeneral !== "admin") {
+      return res.status(403).json({ ok: false, message: "Token no es admin" });
+    }
+
+    req.admin = payload;
     return next();
   } catch (err) {
     const isExpired = err?.name === "TokenExpiredError";
