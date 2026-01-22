@@ -469,6 +469,7 @@ export async function crearLead(req, res) {
    GET /api/leads   (listado paginado + filtros)
    ✅ agrega sustentoIndependiente + canal + fuente
 =========================================================== */
+
 export async function listarLeads(req, res) {
   try {
     const pagina = Math.max(parseInt(req.query.pagina || "1", 10), 1);
@@ -506,11 +507,22 @@ export async function listarLeads(req, res) {
     const totalPaginas = Math.max(1, Math.ceil(total / limit));
     const skip = (pagina - 1) * limit;
 
-    const leads = await Lead.find(filter)
+    const leadsDocs = await Lead.find(filter)
   .sort({ updatedAt: -1, createdAt: -1 })
   .skip(skip)
-  .limit(limit)
-  .lean();
+  .limit(limit);
+
+const leads = leadsDocs.map((d) => d.toJSON()); // aquí sí entran virtuals
+
+return res.json({
+  ok: true,
+  version: LEADS_CONTROLLER_VERSION,
+  pagina,
+  totalPaginas,
+  total,
+  leads,
+});
+
 
     return res.json({
       ok: true,
