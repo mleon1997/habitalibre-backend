@@ -5,7 +5,10 @@ import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
 import { generarCodigoHLDesdeObjectId } from "../utils/codigoHL.js";
 import { normalizeResultadoParaSalida } from "../utils/hlResultado.js";
 
-const LEADS_CONTROLLER_VERSION = "2026-01-20-manychat-flat-v1";
+// ✅ NUEVO: Merge Web + ManyChat (un solo lead por persona)
+import { upsertLeadMerged } from "../services/leadMerge.js";
+
+const LEADS_CONTROLLER_VERSION = "2026-01-22-merge-web-manychat-v1";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
@@ -179,6 +182,7 @@ function mapTipoCompraNumero(tipoCompraRawLower) {
 
 /* ===========================================================
    POST /api/leads   (crear lead desde el simulador)
+   ✅ AHORA: MERGE con leads de ManyChat (email/telefono/ig/subscriber)
 =========================================================== */
 export async function crearLead(req, res) {
   try {
@@ -206,15 +210,13 @@ export async function crearLead(req, res) {
     const emailEfectivo = tokenEmail || emailNorm;
 
     const resultadoSanitizado = sanitizarResultadoCliente(resultado);
-    const resultadoNormalizado = normalizeResultadoParaSalida(
-      resultadoSanitizado
-    );
+    const resultadoNormalizado = normalizeResultadoParaSalida(resultadoSanitizado);
 
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
     const sinOferta = resultadoNormalizado?.flags?.sinOferta === true;
 
-    console.info("✅ Nuevo lead recibido:", {
+    console.info("✅ Nuevo lead recibido (WEB):", {
       nombre,
       email: emailEfectivo,
       telefono,
@@ -250,49 +252,52 @@ export async function crearLead(req, res) {
       }
     }
 
-    // Crear lead
-    let lead = await Lead.create({
-      nombre,
-      email: emailEfectivo,
-      telefono,
-      ciudad,
-
-      aceptaTerminos: !!aceptaTerminos,
-      aceptaCompartir: !!aceptaCompartir,
-
-      producto: producto || null,
-      scoreHL: typeof scoreHL === "number" ? scoreHL : null,
-
-      tiempoCompra: tiempoCompra || null,
-      sustentoIndependiente: sustentoIndependiente || null,
-
-      resultado: resultadoNormalizado,
-      resultadoUpdatedAt: new Date(),
-
-      // ✅ CANÓNICO
+    // ✅ Upsert + MERGE (Web)
+    const { lead, isNew } = await upsertLeadMerged({
+      source: "web",
       canal: "web",
       fuente: "form",
+      payload: {
+        nombre,
+        email: emailEfectivo,
+        telefono,
+        ciudad,
 
-      origen: "Simulador Hipoteca Exprés",
-      metadata: {
-        canal: "Web",
-        customerLeadIdFromToken: req.customer?.leadId || null,
+        aceptaTerminos: !!aceptaTerminos,
+        aceptaCompartir: !!aceptaCompartir,
+
+        tiempoCompra: tiempoCompra || null,
+        sustentoIndependiente: sustentoIndependiente || null,
+
+        producto: producto || null,
+        scoreHL: typeof scoreHL === "number" ? scoreHL : null,
+
+        resultado: resultadoNormalizado,
+
+        origen: "Simulador Hipoteca Exprés",
+        metadata: {
+          canal: "Web",
+          customerLeadIdFromToken: req.customer?.leadId || null,
+        },
       },
-
-      userId: userIdFinal || null,
     });
 
-    // Código HL
-    const codigoHL = generarCodigoHLDesdeObjectId(lead._id);
-    lead.codigoHL = codigoHL;
-    await lead.save();
-
+    // ✅ link a user (no depende del merge)
     if (userIdFinal) {
+      lead.userId = userIdFinal;
+      await lead.save();
       await User.updateOne(
         { _id: userIdFinal },
         { $set: { currentLeadId: lead._id } }
       );
     }
+
+    // ✅ Código HL (solo si no existe)
+    if (!lead.codigoHL) {
+      lead.codigoHL = generarCodigoHLDesdeObjectId(lead._id);
+      await lead.save();
+    }
+    const codigoHL = lead.codigoHL;
 
     const leadPlano = lead.toObject();
 
@@ -318,7 +323,7 @@ export async function crearLead(req, res) {
       productoSugerido: resultadoNormalizado.productoSugerido || null,
     };
 
-    // Enviar correos
+    // Enviar correos SOLO si el lead viene del web (aunque haya merge)
     try {
       await Promise.all([
         enviarCorreoCliente(leadPlano, resultadoConCodigo),
@@ -328,9 +333,13 @@ export async function crearLead(req, res) {
       console.error("❌ Error enviando correos de lead:", errMail);
     }
 
-    return res.status(201).json({
+    const status = isNew ? 201 : 200;
+
+    return res.status(status).json({
       ok: true,
-      msg: "Lead creado correctamente",
+      msg: isNew
+        ? "Lead creado correctamente"
+        : "Lead actualizado (merge) correctamente",
       leadId: lead._id,
       codigoHL,
       linkedToUser,
@@ -481,10 +490,7 @@ export async function statsLeads(req, res) {
 
 /* ===========================================================
    POST /api/leads/manychat  (unificado IG + WhatsApp)
-   - Seguridad por API KEY
-   - Upsert por manychatSubscriberId si viene
-   - Fallback: telefono o email (whatsapp)
-   ✅ AHORA: persiste campos "planos" para que el dashboard los vea
+   ✅ AHORA: MERGE con leads Web (email/telefono/ig/subscriber)
 =========================================================== */
 export async function crearLeadManychat(req, res) {
   try {
@@ -531,21 +537,11 @@ export async function crearLeadManychat(req, res) {
       }
     }
 
-    // ✅ Filtro de upsert
-    let filter = null;
-
-    if (subscriberId) {
-      filter = { manychatSubscriberId: subscriberId };
-    } else if (canal === "instagram" && igUsername) {
-      filter = { igUsername };
-    } else if (telefono) {
-      filter = { telefono };
-    } else if (email) {
-      filter = { email };
-    }
-
-    const update = {
-      $set: {
+    const { lead } = await upsertLeadMerged({
+      source: "manychat",
+      canal,
+      fuente: "manychat",
+      payload: {
         // identidad base
         ...(nombre ? { nombre } : {}),
         ...(email ? { email } : {}),
@@ -553,16 +549,14 @@ export async function crearLeadManychat(req, res) {
         ...(ciudad ? { ciudad } : {}),
         ...(tiempoCompra ? { tiempoCompra } : {}),
 
-        // ✅ canónico
-        canal,
-        fuente: "manychat",
+        // IDs manychat / IG
         ...(subscriberId ? { manychatSubscriberId: subscriberId } : {}),
         ...(igUsername ? { igUsername } : {}),
+
         origen:
           canal === "instagram"
             ? "Instagram (ManyChat)"
             : "WhatsApp (ManyChat)",
-        resultadoUpdatedAt: new Date(),
 
         // ✅ CAMPOS PLANOS (para dashboard + filtros)
         afiliado_iess: afiliadoIess,
@@ -581,15 +575,6 @@ export async function crearLeadManychat(req, res) {
           raw: body,
         },
       },
-      $setOnInsert: {
-        aceptaTerminos: null,
-        aceptaCompartir: null,
-      },
-    };
-
-    const lead = await Lead.findOneAndUpdate(filter, update, {
-      new: true,
-      upsert: true,
     });
 
     if (!lead.codigoHL) {
