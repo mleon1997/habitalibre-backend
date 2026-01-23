@@ -23,24 +23,77 @@ function pickFlags(res) {
 function pickBancosTop3(res) {
   const list = res?.bancosProbabilidad || res?.bancos || res?.bancosTop3 || null;
   if (!Array.isArray(list)) return [];
-  return list.slice(0, 3).map((b) => {
-    if (typeof b === "string") return { nombre: b };
-    return {
-      nombre: b.nombre || b.banco || b.name || null,
-      prob: num(b.prob || b.p || b.probabilidad),
-      producto: b.producto || b.tipo || null,
-    };
-  }).filter(Boolean);
+
+  return list
+    .slice(0, 3)
+    .map((b) => {
+      // Caso string simple
+      if (typeof b === "string") {
+        return {
+          banco: b,
+          probLabel: "",
+          probScore: null,
+          tipoProducto: res?.productoSugerido || res?.productoElegido || null,
+          dtiBanco: null,
+        };
+      }
+
+      const banco = b?.banco || b?.nombre || b?.name || null;
+
+      // Probabilidad / score
+      const probScore = num(
+        b?.probScore ?? b?.score ?? b?.prob ?? b?.p ?? b?.probabilidad ?? null
+      );
+
+      // Label (si tu scoring ya lo trae)
+      const probLabel =
+        String(b?.probLabel || b?.label || "").trim() ||
+        (probScore == null
+          ? ""
+          : probScore >= 80
+          ? "Alta"
+          : probScore >= 60
+          ? "Media"
+          : probScore >= 40
+          ? "Baja"
+          : "Muy baja");
+
+      const tipoProducto =
+        b?.tipoProducto || b?.producto || b?.tipo || res?.productoSugerido || null;
+
+      const dtiBanco = num(b?.dtiBanco ?? b?.dti ?? null);
+
+      return banco
+        ? { banco, probLabel, probScore, tipoProducto, dtiBanco }
+        : null;
+    })
+    .filter(Boolean);
 }
 
+
 function buildRuta(res) {
-  // Ruta recomendada “simple” para tu UI
+  const producto =
+    res?.productoSugerido ||
+    res?.productoElegido ||
+    res?.tipoCreditoElegido ||
+    res?.producto ||
+    null;
+
+  const banco = res?.bancoSugerido || null;
+  const tasaAnual = num(res?.tasaAnual);
+  const plazoMeses = num(res?.plazoMeses);
+  const cuota = num(res?.cuotaEstimada);
+
   return {
-    producto: res?.productoSugerido || res?.productoElegido || res?.tipoCreditoElegido || res?.producto || null,
-    banco: res?.bancoSugerido || null,
-    tasaAnual: num(res?.tasaAnual),
-    plazoMeses: num(res?.plazoMeses),
-    cuota: num(res?.cuotaEstimada),
+    // ✅ para tu Drawer actual (usa ruta.tipo)
+    tipo: producto,
+
+    // ✅ también dejamos campos semánticos
+    producto,
+    banco,
+    tasaAnual,
+    plazoMeses,
+    cuota,
   };
 }
 
