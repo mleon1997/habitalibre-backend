@@ -12,7 +12,14 @@ const LeadSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
 
     producto: { type: String },
-    scoreHL: { type: Number },
+
+    // ✅ Top-level score para tabla/dashboard
+    // (lo ideal es setearlo desde controller: scoreHL = resultado?.puntajeHabitaLibre?.score || resultado?.scoreHL?.total)
+    scoreHL: { type: Number, default: null, index: true },
+
+    // ✅ (Recomendado) guarda el objeto completo del score por fuera de resultado
+    // para debug y UI admin (sin depender de resultado.*)
+    scoreHLDetalle: { type: mongoose.Schema.Types.Mixed, default: null },
 
     tiempoCompra: { type: String, index: true },
 
@@ -49,13 +56,15 @@ const LeadSchema = new mongoose.Schema(
     tipo_compra: { type: String, default: null, index: true },
     tipo_compra_numero: { type: Number, default: null, index: true },
 
-    resultado: { type: Object },
+    // ✅ Mixed para que Mongoose no te elimine/transforme campos anidados
+    // (incluye puntajeHabitaLibre, scoreHL, escenarios, etc.)
+    resultado: { type: mongoose.Schema.Types.Mixed, default: null },
     resultadoUpdatedAt: { type: Date, index: true },
 
     aceptaTerminos: Boolean,
     aceptaCompartir: Boolean,
     origen: String,
-    metadata: Object,
+    metadata: { type: mongoose.Schema.Types.Mixed, default: null },
 
     identidades: {
       emailNorm: { type: String, index: true },

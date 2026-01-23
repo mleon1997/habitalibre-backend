@@ -19,13 +19,15 @@ const LEADS_CONTROLLER_VERSION = "2026-01-22-merge-web-manychat-v1";
 function extraerScoreHL(resultado) {
   if (!resultado) return null;
 
-  if (
-    resultado.puntajeHabitaLibre &&
-    typeof resultado.puntajeHabitaLibre.score === "number"
-  ) {
-    return resultado.puntajeHabitaLibre.score;
-  }
+  // ✅ nuevo score principal
+  const s1 = resultado?.puntajeHabitaLibre?.score;
+  if (typeof s1 === "number") return s1;
 
+  // ✅ legacy: scoreHL es objeto { total, bandas }
+  const s2 = resultado?.scoreHL?.total;
+  if (typeof s2 === "number") return s2;
+
+  // compat muy viejo: scoreHL number
   if (typeof resultado.scoreHL === "number") return resultado.scoreHL;
 
   return null;
