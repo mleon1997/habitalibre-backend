@@ -11,7 +11,6 @@ import { verifySmtp } from "./utils/mailer.js";
 // ================================
 // Rutas
 // ================================
-import authRoutes from "./routes/auth.routes.js"; // (si lo usas aún)
 import adminAuthRoutes from "./routes/adminAuth.routes.js"; // POST /api/admin/login
 import adminUsersRoutes from "./routes/adminUsers.routes.js"; // /api/admin/users/...
 
@@ -107,8 +106,7 @@ app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 app.use("/api/admin", adminAuthRoutes); // POST /api/admin/login
 app.use("/api/admin/users", adminUsersRoutes); // GET /, /kpis, /export/csv
 
-// (si aún usas auth viejo en /api/auth)
-app.use("/api/auth", authRoutes);
+
 
 // 👤 Customer Journey
 app.use("/api/customer-auth", customerAuthRoutes);
