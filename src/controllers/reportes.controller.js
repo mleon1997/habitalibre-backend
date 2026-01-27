@@ -2,8 +2,7 @@
 import Lead from "../models/Lead.js";
 import { generarFichaComercialPDF } from "../utils/fichaComercialPdf.js";
 
-
-const REPORTES_VERSION = "2026-01-27-ficha-v1.2-real";
+const REPORTES_VERSION = "2026-01-27-ficha-v1.3-find-or";
 
 function hoyEC() {
   return new Date().toLocaleDateString("es-EC", {
@@ -27,34 +26,53 @@ function pctFrom(a, b, digits = 0) {
 
 /**
  * GET /api/reportes/ficha/:codigo
- * Busca por Lead.codigo (tu campo real) y genera PDF bajo pedido.
+ * Busca el lead por múltiples campos de código (codigo, codigoHL, etc.)
  */
 export async function descargarFichaComercial(req, res) {
   try {
     const { codigo } = req.params;
+    const code = String(codigo || "").trim();
 
-    const lead = await Lead.findOne({ codigo: String(codigo) });
-    if (!lead) {
-      return res.status(404).json({
+    if (!code) {
+      return res.status(400).json({
         ok: false,
-        message: "Lead no encontrado para el código proporcionado",
+        message: "Código requerido",
         version: REPORTES_VERSION,
       });
     }
 
-    // --- Fuentes reales de tu doc ---
+    // ✅ Buscar por todos los campos típicos
+    const lead = await Lead.findOne({
+      $or: [
+        { codigo: code },
+        { codigoHL: code },
+        { codigoUnico: code },
+        { codigoLead: code },
+        { codigo_lead: code },
+      ],
+    });
+
+    if (!lead) {
+      return res.status(404).json({
+        ok: false,
+        message: "Lead no encontrado para el código proporcionado",
+        codigoBuscado: code,
+        buscadoEn: ["codigo", "codigoHL", "codigoUnico", "codigoLead", "codigo_lead"],
+        version: REPORTES_VERSION,
+      });
+    }
+
     const resultadoObj = lead.resultado || {};
     const scoreObj = lead.score || {};
     const perfil = lead.perfil || {};
     const costos = lead.costos || {};
 
-    // Score: preferimos score.total (0-100). Fallback a scoreHL si existiera.
     const score =
       (num(scoreObj.total) != null ? num(scoreObj.total) : null) ??
       (num(lead.scoreHL) != null ? num(lead.scoreHL) : null) ??
+      (num(resultadoObj?.puntajeHabitaLibre?.score) != null ? num(resultadoObj?.puntajeHabitaLibre?.score) : null) ??
       "-";
 
-    // Números clave (todos del doc real)
     const ingresoMensual = perfil.ingresoTotal ?? lead.ingresoTotal ?? null;
     const tipoIngreso = perfil.tipoIngreso ?? lead.tipoIngreso ?? "-";
     const antiguedadAnios = perfil.antiguedadLaboral ?? lead.antiguedadLaboral ?? "-";
@@ -64,7 +82,9 @@ export async function descargarFichaComercial(req, res) {
 
     const cuotaEstimada =
       lead.cuotaEstimada ??
-      (typeof lead.cuotaEstimadaStr === "string" ? num(lead.cuotaEstimadaStr.replace(/[^\d.]/g, "")) : null) ??
+      (typeof lead.cuotaEstimadaStr === "string"
+        ? num(lead.cuotaEstimadaStr.replace(/[^\d.]/g, ""))
+        : null) ??
       null;
 
     const montoMaxVivienda =
@@ -72,30 +92,29 @@ export async function descargarFichaComercial(req, res) {
       lead.montoMaxViviendaSugerido ??
       null;
 
-    // Costos
     const entradaUSD = costos.entrada ?? null;
     const costoInicialUSD = costos.costoInicial ?? null;
     const avaluoUSD = costos.avaluo ?? null;
 
-    // Entrada %
     const entradaPct = pctFrom(entradaUSD, montoMaxVivienda, 0);
 
-    // Otros
     const plaza = lead.ciudad ?? "-";
     const preclasif = lead.preclasif ?? "-";
-    const productoElegido = lead.productoElegido ?? "-";
+    const productoElegido = lead.productoElegido ?? lead.producto ?? "-";
     const resultadoOk = resultadoObj.ok === true ? "ok=true" : `ok=${String(resultadoObj.ok ?? "-")}`;
 
-    // “Prioridad” solo tiempos (sin juicio)
     const ventanaCierre = lead.tiempoCompra ?? "-";
-    const tiempoOptimoContacto = "≤ 48h"; // si luego lo guardas en el lead, lo reemplazamos por lead.tiempoOptimoContacto
+    const tiempoOptimoContacto = "≤ 48h";
 
-    // Observaciones operativas (factual)
     const docsCount = Array.isArray(lead.documentos) ? lead.documentos.length : 0;
     const accionesCount = Array.isArray(lead.acciones) ? lead.acciones.length : 0;
 
+    // ✅ Usa el “mejor” código disponible para imprimir
+    const codigoFinal =
+      lead.codigo || lead.codigoHL || lead.codigoUnico || lead.codigoLead || lead.codigo_lead || code;
+
     const dataPDF = {
-      codigo: lead.codigo,
+      codigo: codigoFinal,
       fecha: hoyEC(),
       plaza,
 
