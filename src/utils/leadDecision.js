@@ -1,357 +1,140 @@
-// src/utils/leadDecision.js
+// src/lib/leadDecision.js
+const n = (v, def = null) => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : def;
+};
 
-const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
-
-const hasText = (v) => v !== null && v !== undefined && String(v).trim() !== "";
-const hasNum = (v) => typeof v === "number" && Number.isFinite(v);
-
-function getResultado(lead) {
-  return lead?.resultado || null;
+function normalizeHorizonte(h) {
+  const t = String(h || "").toLowerCase().trim();
+  if (t.includes("0") || t.includes("0-3")) return "0-3";
+  if (t.includes("3") && t.includes("12")) return "3-12";
+  if (t.includes("12") && t.includes("24")) return "12-24";
+  if (t.includes("expl")) return "explorando";
+  return null;
 }
 
-// ---- Scores desde TU scoring.js (estructura real) ----
-function getScoreHLTotal(lead) {
-  const r = getResultado(lead);
-  const t = r?.scoreHL?.total;
-  return hasNum(t) ? t : null; // 0..100
+function completeness(lead) {
+  // “datos duros” mínimos para scoring real
+  const hasIngreso = n(lead.ingreso_mensual) != null;
+  const hasDeudas = n(lead.deuda_mensual_aprox) != null;
+  const hasEstab = n(lead.anios_estabilidad) != null;
+  const hasIess = lead.afiliado_iess !== null && lead.afiliado_iess !== undefined;
+
+  const hardCount = [hasIngreso, hasDeudas, hasEstab, hasIess].filter(Boolean).length;
+
+  // datos de compra
+  const hasValor = n(lead.valor_vivienda) != null;
+  const hasEntrada = n(lead.entrada_disponible) != null;
+
+  const buyCount = [hasValor, hasEntrada].filter(Boolean).length;
+
+  return {
+    hasIngreso, hasDeudas, hasEstab, hasIess, hasValor, hasEntrada,
+    hardCount,
+    buyCount,
+    score: Math.round(((hardCount + buyCount) / 6) * 100),
+  };
 }
 
-function getScoreHabitaLibre(lead) {
-  const r = getResultado(lead);
-  const s = r?.puntajeHabitaLibre?.score;
-  return hasNum(s) ? s : null; // 0..100
-}
+export function leadDecision(lead) {
+  const horizonte = normalizeHorizonte(lead.tiempoCompra);
+  const canal = String(lead.canal || lead?.metadata?.canal || "web").toLowerCase();
 
-function getSinOferta(lead) {
-  const r = getResultado(lead);
-  return r?.flags?.sinOferta === true;
-}
+  const r = lead.resultado || {};
+  const scoreHL = lead.scoreHL ?? r?.scoreHL?.total ?? null; // por si luego guardas scoreHL.total
+  const sinOferta = !!(r?.flags?.sinOferta);
 
-function getSinSustento(lead) {
-  const r = getResultado(lead);
-  return r?.flags?.sinSustento === true;
-}
+  const dti = n(r?.dtiConHipoteca);
+  const ltv = n(r?.ltv);
 
-function getRutaRecomendada(lead) {
-  const r = getResultado(lead);
-  return r?.rutaRecomendada || null; // { tipo, cuota, tasa, ... }
-}
+  const comp = completeness(lead);
 
-function getBancosTop3(lead) {
-  const r = getResultado(lead);
-  return Array.isArray(r?.bancosTop3) ? r.bancosTop3 : [];
-}
+  const missing = [];
+  if (!comp.hasIngreso) missing.push("Ingreso mensual");
+  if (!comp.hasDeudas) missing.push("Deudas mensuales");
+  if (!comp.hasEstab) missing.push("Años de estabilidad");
+  if (!comp.hasIess) missing.push("¿Afiliado al IESS?");
+  if (!comp.hasValor) missing.push("Valor de vivienda");
+  if (!comp.hasEntrada) missing.push("Entrada disponible");
 
-function getProducto(lead) {
-  const r = getResultado(lead);
-  return (
-    r?.productoElegido ||
-    r?.tipoCreditoElegido ||
-    r?.productoSugerido ||
-    lead?.producto ||
-    null
-  );
-}
+  // -------------------------
+  // Heat (0–100)
+  // -------------------------
+  let heat = 30;
+  if (horizonte === "0-3") heat += 40;
+  else if (horizonte === "3-12") heat += 25;
+  else if (horizonte === "12-24") heat += 10;
+  else if (horizonte === "explorando") heat -= 10;
 
-function getDTI(lead) {
-  const r = getResultado(lead);
-  return hasNum(r?.dtiConHipoteca) ? r.dtiConHipoteca : null; // 0..1
-}
+  // canal
+  if (canal === "whatsapp") heat += 10;
+  if (canal === "instagram") heat += 5;
 
-function getLTV(lead) {
-  const r = getResultado(lead);
-  return hasNum(r?.ltv) ? r.ltv : null; // 0..1
-}
+  // si ya tenemos score o resultado, sube
+  if (scoreHL != null) heat += 10;
 
-function getPerfil(lead) {
-  const r = getResultado(lead);
-  return r?.perfil || {};
-}
+  // baja si falta demasiada data
+  if (comp.score < 50) heat -= 15;
 
-// ======================================================
-// ETAPA: raw | captured | scored
-// ======================================================
-function getEtapa(lead) {
-  const r = getResultado(lead);
-  const hasResult = !!r;
-  const hasAnyScore =
-    getScoreHLTotal(lead) != null || getScoreHabitaLibre(lead) != null;
+  heat = Math.max(0, Math.min(100, heat));
 
-  if (hasResult && hasAnyScore) return "scored";
+  // -------------------------
+  // Clasificación Bancable / Rescatable / Descartable
+  // -------------------------
+  let stage = "captura_incompleta";
+  let bucket = "rescatable";
+  const reasons = [];
 
-  const hasContact = hasText(lead?.telefono) || hasText(lead?.email);
-  if (hasContact) return "captured";
-
-  return "raw";
-}
-
-// ======================================================
-// FUENTES: web / instagram / whatsapp (multi-fuente posible)
-// ======================================================
-function fuentesFromLead(lead) {
-  const fuentes = [];
-
-  const canal = String(lead?.canal || "").toLowerCase();
-  const fuente = String(lead?.fuente || "").toLowerCase();
-
-  // Web
-  if (canal === "web" || fuente === "form") fuentes.push("web");
-
-  // ManyChat
-  if (fuente === "manychat") {
-    if (canal === "instagram" || hasText(lead?.igUsername)) fuentes.push("instagram");
-    else fuentes.push("whatsapp");
-  }
-
-  // fallback canal si existe
-  if (!fuentes.length && canal) fuentes.push(canal);
-
-  return uniq(fuentes);
-}
-
-// ======================================================
-// HEAT 0..3 (qué tan “caliente”)
-// ======================================================
-function heatScore(lead) {
-  const etapa = getEtapa(lead);
-  const fuentes = fuentesFromLead(lead);
-
-  let heat = 0;
-
-  // Llegó por algún canal
-  if (fuentes.length) heat = 1;
-
-  // Captured: dejó contacto
-  if (etapa === "captured") heat = 2;
-
-  // Scored: completó simulación
-  if (etapa === "scored") heat = 3;
-
-  // Horizonte corto sube heat (si existe)
-  const h = String(lead?.tiempoCompra || "").toLowerCase();
-  const corto =
-    h.includes("0-3") || h.includes("0–3") || h.includes("0 a 3") || h.includes("0- 3");
-  if (corto) heat = Math.max(heat, 3);
-
-  return clamp(heat, 0, 3);
-}
-
-// ======================================================
-// FALTANTES (qué le falta para avanzar)
-// ======================================================
-function faltantesParaAvanzar(lead) {
-  const etapa = getEtapa(lead);
-  const faltan = [];
-
-  if (!hasText(lead?.telefono) && !hasText(lead?.email)) {
-    faltan.push("Contacto (teléfono o email)");
-  }
-
-  // Si no hay scoring todavía
-  if (etapa !== "scored") {
-    faltan.push("Completar simulación (Hipoteca Exprés)");
-    // Puedes pedir 2-3 datos mínimos
-    if (!hasNum(lead?.ingreso_mensual)) faltan.push("Ingreso mensual aprox");
-    if (!hasNum(lead?.deuda_mensual_aprox)) faltan.push("Deudas mensuales aprox");
-    return uniq(faltan);
-  }
-
-  // Scored: faltantes críticos según resultado
-  const r = getResultado(lead);
-  const perfil = getPerfil(lead);
-  const ruta = getRutaRecomendada(lead);
-  const tipoIngreso = String(perfil?.tipoIngreso || "").toLowerCase();
-
-  // Independiente/Mixto: sustento
-  if (
-    (tipoIngreso === "independiente" || tipoIngreso === "mixto") &&
-    perfil?.sustentoOKGlobal === false
-  ) {
-    faltan.push("Sustento de ingresos (RUC / declaraciones / facturación / roles)");
-  }
-
-  // BIESS: aportes
-  const rutaTipo = String(ruta?.tipo || "").toLowerCase();
-  if (rutaTipo.includes("biess")) {
-    const apTot = Number(perfil?.iessAportesTotales || 0);
-    const apCon = Number(perfil?.iessAportesConsecutivos || 0);
-    if (apTot < 36) faltan.push("Aportes IESS totales (mín. 36 meses)");
-    if (apCon < 13) faltan.push("Aportes IESS consecutivos (mín. 13 meses)");
-  }
-
-  // Sin oferta: requiere ajuste
-  if (r?.flags?.sinOferta) {
-    faltan.push("Ajustar entrada / deudas / valor de vivienda para volverlo viable");
-  }
-
-  return uniq(faltan);
-}
-
-// ======================================================
-// Decisión principal (estado + llamar hoy + copy)
-// ======================================================
-function decidir(lead) {
-  const etapa = getEtapa(lead);
-  const fuentes = fuentesFromLead(lead);
-  const heat = heatScore(lead);
-  const faltantes = faltantesParaAvanzar(lead);
-
-  const porQue = [];
-  const nextActions = [];
-
-  const tieneTelefono = hasText(lead?.telefono);
-  const horizonte = String(lead?.tiempoCompra || "").toLowerCase();
-  const horizonteCorto =
-    horizonte.includes("0-3") || horizonte.includes("0–3") || horizonte.includes("0 a 3");
-
-  // ==============================
-  // 1) ETAPA NO SCORED (ManyChat)
-  // ==============================
-  if (etapa !== "scored") {
-    const estado = "por_calificar";
-
-    // ¿vale llamada hoy?
-    // - si hay teléfono y (heat>=2) y (horizonte corto o viene de whatsapp)
-    const vieneWhatsapp = fuentes.includes("whatsapp");
-    const llamarHoy = !!(tieneTelefono && heat >= 2 && (horizonteCorto || vieneWhatsapp));
-
-    if (fuentes.length) porQue.push(`Llegó por: ${fuentes.join(" + ")}`);
-    if (horizonteCorto) porQue.push("Quiere comprar en 0–3 meses.");
-    if (!tieneTelefono) porQue.push("No hay teléfono todavía (difícil llamar).");
-
-    nextActions.push("Enviar link de Hipoteca Exprés (simulación completa).");
-    nextActions.push("Si responde, pedir 3 datos: ingreso, deudas, entrada.");
-    if (tieneTelefono) nextActions.push("WhatsApp: agendar mini-llamada 5 min.");
-
-    return {
-      etapa,
-      estado,
-      llamarHoy,
-      heat,
-      fuentes,
-      producto: getProducto(lead),
-      scoreHL: null,
-      scoreHabitaLibre: null,
-      bancosTop3: [],
-      ruta: null,
-      faltantes,
-      porQue,
-      nextActions,
-    };
-  }
-
-  // ==============================
-  // 2) ETAPA SCORED (Web completo)
-  // ==============================
-  const sinOferta = getSinOferta(lead);
-  const sinSustento = getSinSustento(lead);
-
-  const scoreHL = getScoreHLTotal(lead);
-  const scoreHB = getScoreHabitaLibre(lead);
-  const bancosTop3 = getBancosTop3(lead);
-  const ruta = getRutaRecomendada(lead);
-  const producto = getProducto(lead);
-
-  const dti = getDTI(lead);
-  const ltv = getLTV(lead);
-
-  // Señales “por qué”
-  if (ruta?.tipo) porQue.push(`Ruta recomendada: ${ruta.tipo}`);
-
-  const mejorBanco = bancosTop3?.[0] || null;
-  if (mejorBanco?.probLabel) {
-    porQue.push(
-      `Probabilidad: ${mejorBanco.probLabel}${
-        hasNum(mejorBanco.probScore) ? ` (${mejorBanco.probScore}/100)` : ""
-      }`
-    );
-  }
-
-  if (hasNum(dti)) porQue.push(`DTI con hipoteca: ${(dti * 100).toFixed(0)}%`);
-  if (hasNum(ltv)) porQue.push(`LTV estimado: ${(ltv * 100).toFixed(0)}%`);
-
-  if (sinSustento) porQue.push("Bloqueo: falta sustento claro de ingresos.");
-  if (sinOferta) porQue.push("El motor marcó: Sin oferta viable hoy.");
-
-  // Faltante crítico
-  const tieneFaltanteCritico = faltantes.some((f) => {
-    const s = String(f).toLowerCase();
-    return (
-      s.includes("sustento") ||
-      s.includes("aportes") ||
-      s.includes("ajustar")
-    );
-  });
-
-  // Estado por reglas
-  let estado = "rescatable";
-
-  // Si sinOferta → rara vez bancable
-  if (sinOferta) {
-    estado = heat >= 3 && tieneTelefono ? "rescatable" : "descartable";
+  if (missing.length >= 4) {
+    stage = "necesita_info";
+    bucket = "rescatable";
+    reasons.push("Falta información clave para evaluar bancabilidad.");
   } else {
-    const probScore = hasNum(mejorBanco?.probScore) ? mejorBanco.probScore : null;
-    const probLabel = mejorBanco?.probLabel || null;
+    // ya hay data suficiente o resultado
+    stage = "evaluado";
 
-    if (
-      (probLabel === "Alta" || (probScore != null && probScore >= 80) || (scoreHL != null && scoreHL >= 75)) &&
-      !tieneFaltanteCritico
-    ) {
-      estado = "bancable";
-    } else if (
-      probLabel === "Muy baja" ||
-      (probScore != null && probScore < 40) ||
-      (scoreHL != null && scoreHL < 45)
-    ) {
-      estado = "descartable";
+    if (sinOferta === true) {
+      bucket = "rescatable";
+      reasons.push("Sin oferta viable hoy según motor.");
     } else {
-      estado = "rescatable";
+      // reglas simples de bancabilidad operativa
+      const dtiBad = dti != null && dti > 0.45;
+      const ltvBad = ltv != null && ltv > 0.90;
+
+      if (!dtiBad && !ltvBad) {
+        bucket = "bancable";
+        reasons.push("DTI/LTV dentro de rangos razonables.");
+      } else {
+        bucket = "rescatable";
+        if (dtiBad) reasons.push("DTI alto: requiere bajar deudas o subir ingreso.");
+        if (ltvBad) reasons.push("LTV alto: requiere mayor entrada o menor inmueble.");
+      }
     }
   }
 
-  // ¿Llamar hoy?
-  // - bancable: siempre sí
-  // - rescatable: sí si hay teléfono
-  // - descartable: no
-  const llamarHoy =
-    estado === "bancable" ? true : estado === "rescatable" ? !!tieneTelefono : false;
+  // -------------------------
+  // ¿Llamada hoy?
+  // -------------------------
+  let callToday = false;
+  if (heat >= 65) callToday = true;
+  if (bucket === "bancable" && (horizonte === "0-3" || horizonte === "3-12")) callToday = true;
 
-  // Next actions por estado
-  if (estado === "bancable") {
-    nextActions.push("Llamar hoy y agendar asesoría (15 min).");
-    nextActions.push("Pedir documentos clave (roles/RUC + buró + entrada).");
-  } else if (estado === "rescatable") {
-    nextActions.push("Contactar hoy para completar faltantes críticos.");
-    nextActions.push("Enviar ejemplo de cómo mejorar entrada/deudas.");
-  } else {
-    nextActions.push("No priorizar llamada. Nutrir por WhatsApp con contenido educativo.");
+  // Si está incompleto, llamada solo si es caliente (para completar datos)
+  if (stage === "necesita_info" && heat >= 75) callToday = true;
+
+  // Descartable (muy raro en tu caso): horizonte explorando + incompleto + frío
+  if (horizonte === "explorando" && comp.score < 35 && heat < 30) {
+    bucket = "descartable";
+    reasons.push("Bajo interés + información insuficiente.");
+    callToday = false;
   }
 
   return {
-    etapa,
-    estado,
-    llamarHoy,
-    heat,
-    fuentes,
-    producto,
-    scoreHL,
-    scoreHabitaLibre: scoreHB,
-    bancosTop3,
-    ruta,
-    faltantes,
-    porQue,
-    nextActions,
+    callToday,
+    bucket,            // bancable | rescatable | descartable
+    stage,             // captura_incompleta | necesita_info | evaluado
+    heat,              // 0-100
+    missing,           // lista
+    reasons,           // por qué
   };
-}
-
-export function attachDecision(lead) {
-  return {
-    ...lead,
-    decision: decidir(lead),
-  };
-}
-
-export function buildDecisionOnly(lead) {
-  return decidir(lead);
 }

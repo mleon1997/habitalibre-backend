@@ -5,7 +5,7 @@ import cors from "cors";
 import mongoose from "mongoose";
 import compression from "compression";
 import helmet from "helmet";
-
+import { reportesRoutes } from "./routes/reportes.routes.js";
 import { verifySmtp } from "./utils/mailer.js";
 
 // ================================
@@ -86,7 +86,7 @@ const corsOptions = {
     return cb(new Error(`CORS bloqueado para origen: ${origin}`), false);
   },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
   credentials: false,
   optionsSuccessStatus: 204,
 };
@@ -103,7 +103,7 @@ app.get("/health", (req, res) => res.status(200).json({ ok: true }));
    Rutas API
 ================================ */
 
-// 🔐 Admin (NUEVO)
+// 🔐 Admin
 app.use("/api/admin", adminAuthRoutes); // POST /api/admin/login
 app.use("/api/admin/users", adminUsersRoutes); // GET /, /kpis, /export/csv
 
@@ -116,13 +116,16 @@ app.use("/api/customer", customerRoutes);
 app.use("/api/customer/leads", customerLeadsRoutes);
 
 // Diagnóstico / Precalificación
-app.use("/api/diag/mailer", diagMailerRoutes); // 👈 (mejor separado para no pisar /api/diag)
+app.use("/api/diag/mailer", diagMailerRoutes); // 👈 separado para no pisar /api/diag
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
 app.use("/api/health", healthRoutes);
 
 // 📩 Leads
 app.use("/api/leads", leadsRoutes);
+
+// 📄 Reportes (Ficha Comercial / PDFs)
+app.use("/api/reportes", reportesRoutes);
 
 /* ================================
    MongoDB
