@@ -1,4 +1,4 @@
-// src/utils/pdf/fichaComercialPdf.js
+// src/utils/fichaComercialPdf.js
 import PDFDocument from "pdfkit";
 
 const safe = (v, fallback = "-") => (v == null || v === "" ? fallback : v);
@@ -9,31 +9,59 @@ const money0 = (n) => {
   return `$${Math.round(x).toLocaleString("es-EC")}`;
 };
 
-const pctStr = (s) => safe(s, "-");
-
 const numOrDash = (n) => {
   const x = Number(n);
   return Number.isFinite(x) ? String(x) : "-";
 };
 
+const pct0 = (v) => {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "-";
+  // Si viene como 0.45 => 45%
+  if (x > 0 && x <= 1) return `${Math.round(x * 100)}%`;
+  // Si viene como 45 => 45%
+  return `${Math.round(x)}%`;
+};
+
+const pct2 = (v) => {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "-";
+  if (x > 0 && x <= 1) return `${(x * 100).toFixed(2)}%`;
+  return `${x.toFixed(2)}%`;
+};
+
+const ratePct2 = (v) => {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "-";
+  // tasa anual: 0.0499 => 4.99%
+  return `${(x * 100).toFixed(2)}%`;
+};
+
+function isArr(a) {
+  return Array.isArray(a) && a.length > 0;
+}
+
 /**
  * Genera y envía el PDF directamente al response (streaming).
  * Firma compatible con tu controller: generarFichaComercialPDF(res, dataPDF)
+ *
+ * 🎯 Objetivo: “banco-friendly”
+ * - SOLO números + contacto + origen
+ * - SIN juicios de valor
+ * - Top3 bancos como “estimado”
  */
 export function generarFichaComercialPDF(res, data) {
-  // ✅ Headers PDF
   const codigo = safe(data?.codigo, "HL");
   const filename = `HL_FICHA_${String(codigo).replace(/[^\w\-]/g, "_")}.pdf`;
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-  // ✅ PDFKit doc
   const doc = new PDFDocument({ size: "A4", margin: 42 });
   doc.pipe(res);
 
   // =========================
-  // Estilos simples (v1.2)
+  // Estilos simples
   // =========================
   const COLOR_TEXT = "#0F172A";
   const COLOR_MUTED = "#64748B";
@@ -41,7 +69,6 @@ export function generarFichaComercialPDF(res, data) {
 
   const h1 = (t) => doc.font("Helvetica-Bold").fontSize(16).fillColor(COLOR_TEXT).text(t);
   const h2 = (t) => doc.font("Helvetica-Bold").fontSize(11).fillColor(COLOR_TEXT).text(t);
-  const p = (t) => doc.font("Helvetica").fontSize(10).fillColor(COLOR_TEXT).text(t);
   const small = (t) => doc.font("Helvetica").fontSize(9).fillColor(COLOR_MUTED).text(t);
 
   const hr = () => {
@@ -76,61 +103,122 @@ export function generarFichaComercialPDF(res, data) {
   // =========================
   // Header
   // =========================
-  h1("FICHA COMERCIAL HABITALIBRE v1.2");
+  h1("FICHA COMERCIAL HABITALIBRE v1.4");
   doc.moveDown(0.3);
-  small(`Código HL: ${safe(data?.codigo)}   •   Fecha: ${safe(data?.fecha)}   •   Plaza: ${safe(data?.plaza)}`);
+
+  const headerLine1 = `Código HL: ${safe(data?.codigo)}   •   Fecha: ${safe(data?.fecha)}   •   Plaza: ${safe(
+    data?.plaza
+  )}`;
+  small(headerLine1);
+
+  // Contacto visible (banco-friendly)
+  const contacto = [];
+  if (data?.nombre) contacto.push(`Nombre: ${safe(data?.nombre)}`);
+  if (data?.telefono) contacto.push(`Tel: ${safe(data?.telefono)}`);
+  if (data?.email) contacto.push(`Email: ${safe(data?.email)}`);
+  if (contacto.length) small(contacto.join("   •   "));
+
   hr();
 
   // =========================
-  // Bloque 1: Métricas clave (sin juicios)
+  // Bloque 1: Métricas clave
   // =========================
   h2("1) Métricas clave (numéricas)");
   doc.moveDown(0.6);
 
-  row2("Score HL", numOrDash(data?.score), "Ingreso mensual", data?.ingresoMensual != null ? money0(data?.ingresoMensual) : "-");
-  row2("Tipo de ingreso", safe(data?.tipoIngreso), "Antigüedad (años)", safe(data?.antiguedadAnios));
-  row2("Tasa anual estimada", data?.tasaAnual != null ? `${(Number(data?.tasaAnual) * 100).toFixed(2)}%` : "-", "Plazo (meses)", data?.plazoMeses != null ? String(data?.plazoMeses) : "-");
-  row2("Cuota estimada", data?.cuotaEstimada != null ? money0(data?.cuotaEstimada) : "-", "Monto máx. vivienda", data?.montoMaxVivienda != null ? money0(data?.montoMaxVivienda) : "-");
+  row2("Score HL", numOrDash(data?.score), "Edad", data?.edad != null ? String(data.edad) : "-");
 
-  hr();
-
-  // =========================
-  // Bloque 2: Contexto de precalificación (factual)
-  // =========================
-  h2("2) Contexto de precalificación (factual)");
-  doc.moveDown(0.6);
-
-  row2("Precalificación", safe(data?.preclasif), "Producto elegido", safe(data?.productoElegido));
-  row2("Resultado motor", safe(data?.resultadoOk), "Índice hipoteca", safe(data?.indiceHipoteca));
-
-  hr();
-
-  // =========================
-  // Bloque 3: Costos y entrada
-  // =========================
-  h2("3) Costos y entrada (si aplica)");
-  doc.moveDown(0.6);
-
-  row2("Entrada (USD)", data?.entradaUSD != null ? money0(data?.entradaUSD) : "-", "Entrada (%)", pctStr(data?.entradaPct));
-  row2("Costo inicial (USD)", data?.costoInicialUSD != null ? money0(data?.costoInicialUSD) : "-", "Avalúo (USD)", data?.avaluoUSD != null ? money0(data?.avaluoUSD) : "-");
-  row2("Seguros (anuales)", data?.segurosAnuales != null ? money0(data?.segurosAnuales) : "-", "—", "—");
-
-  hr();
-
-  // =========================
-  // Bloque 4: Operación (solo conteos)
-  // =========================
-  h2("4) Señales operativas (conteos)");
-  doc.moveDown(0.6);
-
-  row2("Documentos adjuntos", data?.docsCount != null ? String(data?.docsCount) : "-", "Acciones registradas", data?.accionesCount != null ? String(data?.accionesCount) : "-");
-  row2("Ventana de cierre", safe(data?.ventanaCierre), "Tiempo óptimo contacto", safe(data?.tiempoOptimoContacto));
-
-  doc.moveDown(0.4);
-  small(
-    "Nota: Este reporte consolida información declarada y cálculos estimados. El banco realiza la validación y underwriting final."
+  row2(
+    "Ingreso mensual",
+    data?.ingresoMensual != null ? money0(data?.ingresoMensual) : "-",
+    "Deudas mensuales",
+    data?.deudaMensual != null ? money0(data?.deudaMensual) : "-"
   );
 
-  // Final
+  row2("DTI con hipoteca", pct0(data?.dtiConHipoteca), "LTV", pct2(data?.ltv));
+
+  row2("Producto elegido", safe(data?.productoElegido), "Tiempo compra", safe(data?.ventanaCierre));
+
+  row2(
+    "Tasa anual estimada",
+    data?.tasaAnual != null ? ratePct2(data?.tasaAnual) : "-",
+    "Plazo (meses)",
+    data?.plazoMeses != null ? String(data?.plazoMeses) : "-"
+  );
+
+  row2(
+    "Cuota estimada",
+    data?.cuotaEstimada != null ? money0(data?.cuotaEstimada) : "-",
+    "Precio máx. vivienda",
+    data?.precioMaxVivienda != null ? money0(data?.precioMaxVivienda) : "-"
+  );
+
+  // ✅ Monto máx (si viene adicional)
+  if (data?.montoMaxVivienda != null) {
+    row1("Monto máx. préstamo (si aplica)", money0(data?.montoMaxVivienda));
+  }
+
+  hr();
+
+  // =========================
+  // Bloque 2: Perfil / Reglas
+  // =========================
+  h2("2) Perfil (declarado / motor)");
+  doc.moveDown(0.6);
+
+  row2(
+    "Tipo de ingreso",
+    safe(data?.tipoIngreso),
+    "Años estabilidad",
+    data?.antiguedadAnios != null ? String(data?.antiguedadAnios) : "-"
+  );
+
+  // ✅ “Primera vivienda” debe venir como Sí/No (desde controller)
+  row2("IESS afiliado", safe(data?.afiliadoIess), "Primera vivienda", safe(data?.tieneVivienda));
+
+  hr();
+
+  // =========================
+  // Bloque 3: Top 3 bancos
+  // =========================
+  h2("3) Top 3 bancos (estimado)");
+  doc.moveDown(0.6);
+
+  const top3 = isArr(data?.bancosTop3) ? data.bancosTop3 : [];
+  if (!top3.length) {
+    row1("—", "No disponible");
+  } else {
+    top3.slice(0, 3).forEach((b, idx) => {
+      const nombre = safe(b?.banco || b?.nombre, `Banco ${idx + 1}`);
+      const tipo = safe(b?.tipoProducto);
+      const prob = safe(b?.probLabel);
+      const score = b?.probScore != null ? `${String(b.probScore)}/100` : "-";
+      const dtiBanco = b?.dtiBanco != null ? pct0(b.dtiBanco) : "-";
+
+      row2(`Banco #${idx + 1}`, `${nombre}`, "Tipo / Probabilidad", `${tipo} • ${prob} • ${score}`);
+      row2("DTI banco", dtiBanco, "—", "—");
+      doc.moveDown(0.2);
+    });
+  }
+
+  hr();
+
+  // =========================
+  // Bloque 4: Contexto / Operación
+  // =========================
+  h2("4) Contexto (factual)");
+  doc.moveDown(0.6);
+
+  row2("Origen", safe(data?.origen), "Canal", safe(data?.canal));
+  row2(
+    "Documentos adjuntos",
+    data?.docsCount != null ? String(data?.docsCount) : "-",
+    "Acciones registradas",
+    data?.accionesCount != null ? String(data?.accionesCount) : "-"
+  );
+
+  doc.moveDown(0.4);
+  small("Nota: Información declarada + cálculos estimados. El banco realiza la validación y underwriting final.");
+
   doc.end();
 }
