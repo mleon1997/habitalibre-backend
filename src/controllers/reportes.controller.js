@@ -12,22 +12,59 @@ function hoyEC() {
   });
 }
 
-function num(v) {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : null;
+function toNumOrNull(v) {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-function pctFrom(a, b, digits = 0) {
-  const A = num(a);
-  const B = num(b);
-  if (A == null || B == null || B === 0) return "-";
-  return `${((A / B) * 100).toFixed(digits)}%`;
+function safeStr(v, fallback = "-") {
+  const s = String(v ?? "").trim();
+  return s ? s : fallback;
+}
+
+// Busca primer número válido dentro de una lista de “paths” ya resueltos
+function firstNum(...vals) {
+  for (const v of vals) {
+    const n = toNumOrNull(v);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+// Devuelve primer string “usable”
+function firstStr(...vals) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "-";
+}
+
+// Intenta normalizar canal/origen para el PDF (solo informativo)
+function getCanal(lead) {
+  // 1) canal directo
+  const c = String(lead?.canal || "").trim();
+  if (c) return c;
+
+  // 2) metadata.canal
+  const mc = String(lead?.metadata?.canal || "").trim();
+  if (mc) return mc;
+
+  // 3) fallback: si no, Web
+  return "Web";
+}
+
+function getOrigen(lead) {
+  const o = String(lead?.origen || "").trim();
+  if (o) return o;
+  // si tu backend guarda fuente/origen de otra forma, ponlo aquí
+  return "Simulador Hipoteca Exprés";
 }
 
 /**
  * GET /api/reportes/ficha/:codigo
  * Busca el lead por múltiples campos de código (codigo, codigoHL, etc.)
- * y genera una ficha comercial (solo números y contacto, sin juicios).
  */
 export async function descargarFichaComercial(req, res) {
   try {
@@ -42,7 +79,6 @@ export async function descargarFichaComercial(req, res) {
       });
     }
 
-    // ✅ Buscar por todos los campos típicos
     const lead = await Lead.findOne({
       $or: [
         { codigo: code },
@@ -63,209 +99,171 @@ export async function descargarFichaComercial(req, res) {
       });
     }
 
-    // --- fuentes del doc ---
-    const resultadoObj = lead.resultado || {};
-    const scoreObj = lead.score || {}; // (si existiera)
-    const perfilLegacy = lead.perfil || {};
-    const costosLegacy = lead.costos || {};
+    // =========================
+    // Fuentes internas
+    // =========================
+    const r = lead?.resultado || {};
+    const echo = r?._echo || {};
+    const perfil = r?.perfil || {};
 
-    // ✅ WEB (motor): perfil + echo
-    const perfilMotor = resultadoObj?.perfil || {};
-    const echo = resultadoObj?._echo || {};
-
-    // -----------------------
-    // Campos clave (numéricos)
-    // -----------------------
-
-    // Score HL: prioriza lead.scoreHL → resultado.puntajeHabitaLibre.score → score.total
+    // =========================
+    // Score HL (NO debe caer en 0)
+    // =========================
     const score =
-      (num(lead?.scoreHL) != null ? num(lead?.scoreHL) : null) ??
-      (num(resultadoObj?.puntajeHabitaLibre?.score) != null ? num(resultadoObj?.puntajeHabitaLibre?.score) : null) ??
-      (num(scoreObj?.total) != null ? num(scoreObj?.total) : null) ??
-      "-";
+      firstNum(
+        lead?.scoreHL,
+        r?.puntajeHabitaLibre?.score,
+        r?.puntajeHabitaLibre?.puntaje,
+        r?.puntajeHabitaLibre
+      ) ?? null;
 
-    // Edad: perfil.edad → _echo.edad → lead.edad
-    const edad =
-      (num(perfilMotor?.edad) != null ? num(perfilMotor?.edad) : null) ??
-      (num(echo?.edad) != null ? num(echo?.edad) : null) ??
-      (num(lead?.edad) != null ? num(lead?.edad) : null) ??
-      null;
+    // =========================
+    // Contacto / básicos
+    // =========================
+    const nombre = firstStr(lead?.nombre, lead?.nombreCompleto);
+    const email = firstStr(lead?.email);
+    const telefono = firstStr(lead?.telefono);
 
-    // Ingreso mensual: perfil.ingresoTotal → _echo.ingresoNetoMensual → lead.ingresoTotal → perfilLegacy.ingresoTotal
-    const ingresoMensual =
-      (num(perfilMotor?.ingresoTotal) != null ? num(perfilMotor?.ingresoTotal) : null) ??
-      (num(echo?.ingresoNetoMensual) != null ? num(echo?.ingresoNetoMensual) : null) ??
-      (num(lead?.ingresoTotal) != null ? num(lead?.ingresoTotal) : null) ??
-      (num(perfilLegacy?.ingresoTotal) != null ? num(perfilLegacy?.ingresoTotal) : null) ??
-      null;
+    const plaza = firstStr(lead?.ciudad, lead?.ciudad_compra, lead?.ciudadCompra);
+    const canal = getCanal(lead);
+    const origen = getOrigen(lead);
 
-    // Deudas mensuales: _echo.otrasDeudasMensuales → lead.deudaMensual → lead.otrasDeudasMensuales
-    const deudaMensual =
-      (num(echo?.otrasDeudasMensuales) != null ? num(echo?.otrasDeudasMensuales) : null) ??
-      (num(lead?.deudaMensual) != null ? num(lead?.deudaMensual) : null) ??
-      (num(lead?.otrasDeudasMensuales) != null ? num(lead?.otrasDeudasMensuales) : null) ??
-      null;
+    // =========================
+    // Edad / ingreso / deudas
+    // =========================
+    const edad = firstNum(lead?.edad, perfil?.edad, echo?.edad);
 
-    // DTI/LTV/PrecioMax (directo del resultado del motor)
-    const dtiConHipoteca =
-      (num(resultadoObj?.dtiConHipoteca) != null ? num(resultadoObj?.dtiConHipoteca) : null) ?? null;
+    const ingresoMensual = firstNum(
+      lead?.ingreso_mensual,
+      lead?.ingresoMensual,
+      lead?.ingresoTotal,
+      perfil?.ingresoTotal,
+      echo?.ingresoNetoMensual,
+      echo?.ingresoTotal
+    );
 
-    const ltv =
-      (num(resultadoObj?.ltv) != null ? num(resultadoObj?.ltv) : null) ?? null;
+    const deudaMensual = firstNum(
+      lead?.deuda_mensual_aprox,
+      lead?.deudaMensual,
+      perfil?.otrasDeudasMensuales,
+      echo?.otrasDeudasMensuales
+    );
 
-    const precioMaxVivienda =
-      (num(resultadoObj?.precioMaxVivienda) != null ? num(resultadoObj?.precioMaxVivienda) : null) ??
-      (num(resultadoObj?.precioMaximoVivienda) != null ? num(resultadoObj?.precioMaximoVivienda) : null) ??
-      null;
+    // =========================
+    // Métricas motor
+    // =========================
+    const dtiConHipoteca = firstNum(
+      r?.dtiConHipoteca,
+      r?.dti_con_hipoteca,
+      r?.dti
+    );
 
-    // Bancos Top 3 (si existe)
-    const bancosTop3 = Array.isArray(resultadoObj?.bancosTop3) ? resultadoObj.bancosTop3 : [];
+    const ltv = firstNum(r?.ltv, r?.LTV);
 
-    // -----------------------
-    // Contexto (factual)
-    // -----------------------
-    const tipoIngreso = perfilMotor?.tipoIngreso ?? lead?.tipoIngreso ?? "-";
-    const antiguedadAnios =
-      (num(perfilMotor?.aniosEstabilidad) != null ? num(perfilMotor?.aniosEstabilidad) : null) ??
-      lead?.antiguedadLaboral ??
-      "-";
+    const productoElegido = firstStr(
+      r?.productoElegido,
+      r?.tipoCreditoElegido,
+      lead?.producto,
+      lead?.tipoProducto
+    );
 
-    const tasaAnual =
-      (num(resultadoObj?.tasaAnual) != null ? num(resultadoObj?.tasaAnual) : null) ??
-      (num(lead?.tasaAnual) != null ? num(lead?.tasaAnual) : null) ??
-      (num(scoreObj?.tasaBase) != null ? num(scoreObj?.tasaBase) : null) ??
-      null;
+    const ventanaCierre = firstStr(lead?.tiempoCompra, lead?.tiempo_compra);
 
-    const plazoMeses =
-      (num(resultadoObj?.plazoMeses) != null ? num(resultadoObj?.plazoMeses) : null) ??
-      (num(lead?.plazoMeses) != null ? num(lead?.plazoMeses) : null) ??
-      (num(scoreObj?.plazoMeses) != null ? num(scoreObj?.plazoMeses) : null) ??
-      null;
+    const tasaAnual = firstNum(r?.tasaAnual, r?.tasa_anual, r?.stressTest?.tasaBase, r?.costos?.tcea);
+    const plazoMeses = firstNum(r?.plazoMeses, r?.plazo_meses);
 
-    const cuotaEstimada =
-      (num(resultadoObj?.cuotaEstimada) != null ? num(resultadoObj?.cuotaEstimada) : null) ??
-      (num(lead?.cuotaEstimada) != null ? num(lead?.cuotaEstimada) : null) ??
-      null;
+    const cuotaEstimada = firstNum(r?.cuotaEstimada, r?.cuota_estimada, r?.capacidadPago);
 
-    // “montoMaxVivienda” (si tuvieras uno) — fallback a resultado.montoMaximo / lead.montoMax...
-    const montoMaxVivienda =
-      (num(lead?.montoMaxVivienda) != null ? num(lead?.montoMaxVivienda) : null) ??
-      (num(lead?.montoMaxViviendaSugerido) != null ? num(lead?.montoMaxViviendaSugerido) : null) ??
-      (num(resultadoObj?.montoMaximo) != null ? num(resultadoObj?.montoMaximo) : null) ??
-      null;
+    const precioMaxVivienda = firstNum(
+      r?.precioMaxVivienda,
+      r?.precioMaximoVivienda,
+      r?.precioMaximo,
+      r?.precioMax
+    );
 
-    // Costos / entrada: si no tienes en lead, intenta resultado.costos
-    const costosMotor = resultadoObj?.costos || {};
-    const entradaUSD =
-      (num(costosLegacy?.entrada) != null ? num(costosLegacy?.entrada) : null) ??
-      (num(echo?.entradaDisponible) != null ? num(echo?.entradaDisponible) : null) ??
-      (num(lead?.entradaDisponible) != null ? num(lead?.entradaDisponible) : null) ??
-      null;
+    const montoMaxPrestamo = firstNum(
+      r?.montoMaximo,
+      r?.montoMax,
+      r?.montoMaximoPrestamo,
+      r?.montoMaximoCredito
+    );
 
-    const costoInicialUSD =
-      (num(costosLegacy?.costoInicial) != null ? num(costosLegacy?.costoInicial) : null) ?? null;
+    // =========================
+    // Perfil / reglas (solo factual)
+    // =========================
+    const tipoIngreso = firstStr(perfil?.tipoIngreso, lead?.tipoIngreso);
+    const antiguedadAnios = firstNum(perfil?.aniosEstabilidad, lead?.anios_estabilidad, lead?.aniosEstabilidad);
+    const afiliadoIess = firstStr(perfil?.afiliadoIess, lead?.afiliado_iess);
+    // "Primera vivienda" -> en tu perfil viene como tieneVivienda (false => primera vivienda Sí)
+    // Para no “interpretar”, lo mandamos como viene: true/false/"-"
+    const tieneVivienda = (perfil?.tieneVivienda !== undefined && perfil?.tieneVivienda !== null)
+      ? String(perfil.tieneVivienda)
+      : (lead?.tieneVivienda != null ? String(lead.tieneVivienda) : "-");
 
-    const avaluoUSD =
-      (num(costosLegacy?.avaluo) != null ? num(costosLegacy?.avaluo) : null) ??
-      (num(costosMotor?.avaluo) != null ? num(costosMotor?.avaluo) : null) ??
-      null;
+    // =========================
+    // Top 3 bancos: viene en resultado (web)
+    // =========================
+    const bancosTop3 = Array.isArray(r?.bancosTop3) ? r.bancosTop3 : [];
 
-    const segurosAnuales =
-      (num(lead?.segurosAnuales) != null ? num(lead?.segurosAnuales) : null) ??
-      (num(costosMotor?.segurosAnuales) != null ? num(costosMotor?.segurosAnuales) : null) ??
-      null;
+    // =========================
+    // Conteos (si existen)
+    // =========================
+    const docsCount = Array.isArray(lead?.documentos) ? lead.documentos.length : 0;
+    const accionesCount = Array.isArray(lead?.acciones) ? lead.acciones.length : 0;
 
-    // Entrada %
-    const entradaPct = pctFrom(entradaUSD, montoMaxVivienda || precioMaxVivienda, 0);
-
-    // Producto elegido
-    const productoElegido =
-      resultadoObj?.productoElegido ??
-      lead?.productoElegido ??
-      lead?.producto ??
-      "-";
-
-    const plaza = String(lead?.ciudad || "-").trim() || "-";
-    const ventanaCierre = lead?.tiempoCompra ?? "-";
-
-    const resultadoOk = resultadoObj?.ok === true ? "ok=true" : `ok=${String(resultadoObj?.ok ?? "-")}`;
-
-    // Señales operativas (solo conteos)
-    const docsCount = Array.isArray(lead.documentos) ? lead.documentos.length : 0;
-    const accionesCount = Array.isArray(lead.acciones) ? lead.acciones.length : 0;
-
-    // Contacto (sin juicio)
-    const nombre = lead?.nombre ?? lead?.nombreCompleto ?? "-";
-    const email = lead?.email ?? "-";
-    const telefono = lead?.telefono ?? "-";
-
-    const canal = lead?.metadata?.canal ?? lead?.canal ?? "Web";
-    const origen = lead?.origen ?? "Simulador Hipoteca Exprés";
-
-    // Campos informativos (sin juicio)
-    const afiliadoIess = perfilMotor?.afiliadoIess ?? null; // "Sí"/"No" o boolean
-    const tieneVivienda =
-      typeof perfilMotor?.tieneVivienda === "boolean"
-        ? (perfilMotor.tieneVivienda ? "Sí" : "No")
-        : (typeof lead?.tieneVivienda === "boolean" ? (lead.tieneVivienda ? "Sí" : "No") : "-");
-
-    // ✅ Mejor código para imprimir
+    // =========================
+    // Código final
+    // =========================
     const codigoFinal =
       lead.codigo || lead.codigoHL || lead.codigoUnico || lead.codigoLead || lead.codigo_lead || code;
 
+    // =========================
+    // Data para PDF (alineado a fichaComercialPdf.js)
+    // =========================
     const dataPDF = {
-      // Identificación
       codigo: codigoFinal,
       fecha: hoyEC(),
       plaza,
 
-      // Contacto / origen
+      // contacto
       nombre,
-      email,
       telefono,
-      canal,
-      origen,
+      email,
 
-      // Métricas (sin juicio)
+      // métricas
       score,
       edad,
       ingresoMensual,
       deudaMensual,
       dtiConHipoteca,
       ltv,
-      precioMaxVivienda,
 
-      // Contexto del motor
       productoElegido,
+      ventanaCierre,
+
       tasaAnual,
       plazoMeses,
       cuotaEstimada,
-      montoMaxVivienda,
 
-      // Perfil declarado
+      precioMaxVivienda,
+      montoMaxPrestamo,
+
+      // perfil
       tipoIngreso,
       antiguedadAnios,
-      afiliadoIess,
+      afiliadoIess: afiliadoIess === "true" ? "Sí" : afiliadoIess === "false" ? "No" : afiliadoIess,
       tieneVivienda,
 
-      // Costos
-      entradaUSD,
-      entradaPct,
-      costoInicialUSD,
-      avaluoUSD,
-      segurosAnuales,
+      // bancos
+      bancosTop3,
 
-      // Otros
-      resultadoOk,
-      ventanaCierre,
-      tiempoOptimoContacto: "≤ 48h",
+      // contexto
+      origen,
+      canal,
 
-      // Operación
+      // conteos
       docsCount,
       accionesCount,
-
-      // Bancos
-      bancosTop3,
     };
 
     return generarFichaComercialPDF(res, dataPDF);
@@ -278,3 +276,4 @@ export async function descargarFichaComercial(req, res) {
     });
   }
 }
+
