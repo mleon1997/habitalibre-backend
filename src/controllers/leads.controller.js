@@ -465,6 +465,9 @@ export async function crearLead(req, res) {
         tipo_compra: tipoCompraLower || null,
         tipo_compra_numero: tipoCompraNumeroNorm,
 
+
+          ...(edadNorm != null ? { edad: edadNorm } : {}),
+        ...(tipoIngresoNorm ? { tipo_ingreso: tipoIngresoNorm } : {}),
         ...(valorViviendaNorm != null ? { valor_vivienda: valorViviendaNorm } : {}),
         ...(entradaDisponibleNorm != null ? { entrada_disponible: entradaDisponibleNorm } : {}),
 

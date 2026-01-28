@@ -2,7 +2,7 @@
 import Lead from "../models/Lead.js";
 import { generarFichaComercialPDF } from "../utils/fichaComercialPdf.js";
 
-const REPORTES_VERSION = "2026-01-27-ficha-v1.5-focus-core";
+const REPORTES_VERSION = "2026-01-28-ficha-v1.5-plus-perfil-financiero";
 
 function hoyEC() {
   return new Date().toLocaleDateString("es-EC", {
@@ -34,19 +34,30 @@ function firstStr(...vals) {
   return "-";
 }
 
-// ✅ Score HL: evita “0 default” (si tu score real es 0-100, 0 normalmente = no calculado)
+function firstBoolOrNull(...vals) {
+  for (const v of vals) {
+    if (v === true) return true;
+    if (v === false) return false;
+    const s = String(v ?? "").trim().toLowerCase();
+    if (s === "true" || s === "1" || s === "si" || s === "sí") return true;
+    if (s === "false" || s === "0" || s === "no") return false;
+  }
+  return null;
+}
+
+// ✅ Score HL: evita “0 default”
 function getScoreHL(lead) {
   const r = lead?.resultado || {};
-  const s =
-    firstNum(
-      lead?.scoreHL,
-      lead?.decision?.scoreHL,
-      r?.puntajeHabitaLibre?.score,
-      r?.puntajeHabitaLibre?.puntaje,
-      r?.puntajeHabitaLibre
-    );
+  const s = firstNum(
+    lead?.scoreHL,
+    lead?.decision?.scoreHL,
+    r?.puntajeHabitaLibre?.score,
+    r?.puntajeHabitaLibre?.puntaje,
+    r?.puntajeHabitaLibre,
+    r?.scoreHL?.total,
+    r?.scoreHL
+  );
 
-  // Si viene 0, lo tratamos como “no disponible”
   if (s === 0) return null;
   return s != null ? s : null;
 }
@@ -89,55 +100,115 @@ export async function descargarFichaComercial(req, res) {
     const perfil = r?.perfil || {};
     const costos = r?.costos || lead?.costos || {};
 
-    // ✅ Código final para imprimir
     const codigoFinal =
       lead.codigo || lead.codigoHL || lead.codigoUnico || lead.codigoLead || lead.codigo_lead || code;
 
-    // ✅ Campos core que SÍ quieres
+    // =========================
+    // CORE
+    // =========================
     const score = getScoreHL(lead);
 
-    const edad = firstNum(
-      lead?.edad,
-      perfil?.edad,
-      echo?.edad
-    );
+    const edad = firstNum(lead?.edad, perfil?.edad, echo?.edad);
 
+    // ✅ Ahora sí: campo plano real es tipo_ingreso
     const tipoIngreso = firstStr(
-      lead?.tipoIngreso,
+      lead?.tipo_ingreso,
+      lead?.tipoIngreso, // legacy
       perfil?.tipoIngreso,
       echo?.tipoIngreso
     );
 
-    // ✅ Precio vivienda (declarado) — NO “max”
-    // Ajusta los keys según tu motor: aquí puse los más típicos que he visto en tus estructuras
-    const precioVivienda = firstNum(
+    // ✅ Precio vivienda declarado: nuevo campo plano es valor_vivienda
+    const valorVivienda = firstNum(
+      lead?.valor_vivienda,
       lead?.precio_vivienda,
       lead?.precioVivienda,
       echo?.precioVivienda,
       echo?.precioObjetivo,
+      r?.valorVivienda,
       r?.precioVivienda
     );
 
-    // ✅ Entrada (USD) y % (si hay precio)
+    // ✅ Entrada USD: nuevo campo plano es entrada_disponible
     const entradaUSD = firstNum(
+      lead?.entrada_disponible,
       lead?.entrada,
       lead?.entradaUSD,
       echo?.entrada,
       echo?.entradaUSD,
-      costos?.entrada
+      costos?.entrada,
+      r?.entradaDisponible
     );
 
     const entradaPct =
-      (entradaUSD != null && precioVivienda != null && precioVivienda > 0)
-        ? (entradaUSD / precioVivienda)
+      entradaUSD != null && valorVivienda != null && valorVivienda > 0
+        ? entradaUSD / valorVivienda
         : null;
 
-    // (Opcional) Plaza + contacto, se mantienen porque ayudan al ejecutivo y no “ensucian”
+    // =========================
+    // PERFIL FINANCIERO (para el PDF)
+    // =========================
+    const ingresoMensual = firstNum(
+      lead?.ingreso_mensual,
+      perfil?.ingresoTotal,
+      perfil?.ingresoMensual,
+      echo?.ingresoMensual,
+      echo?.ingreso_mensual
+    );
+
+    const deudasMensuales = firstNum(
+      lead?.deuda_mensual_aprox,
+      perfil?.otrasDeudasMensuales,
+      perfil?.deudaMensualAprox,
+      echo?.otrasDeudasMensuales,
+      echo?.deudaMensualAprox,
+      echo?.deuda_mensual_aprox
+    );
+
+    const afiliadoIess = firstBoolOrNull(
+      lead?.afiliado_iess,
+      perfil?.afiliadoIess,
+      echo?.afiliadoIess,
+      echo?.afiliado_iess
+    );
+
+    const aniosEstabilidad = firstNum(
+      lead?.anios_estabilidad,
+      perfil?.aniosEstabilidad,
+      echo?.aniosEstabilidad,
+      echo?.anios_estabilidad
+    );
+
+    const ciudadCompra = firstStr(
+      lead?.ciudad_compra,
+      perfil?.ciudadCompra,
+      echo?.ciudadCompra,
+      lead?.ciudad
+    );
+
+    const tipoCompra = firstStr(
+      lead?.tipo_compra,
+      perfil?.tipoCompra,
+      echo?.tipoCompra
+    );
+
+    const producto = firstStr(
+      lead?.producto,
+      r?.productoElegido,
+      r?.tipoCreditoElegido,
+      r?.productoSugerido,
+      r?.producto
+    );
+
+    // =========================
+    // CONTACTO
+    // =========================
     const plaza = firstStr(lead?.ciudad, lead?.ciudad_compra, lead?.ciudadCompra);
     const nombre = firstStr(lead?.nombre, lead?.nombreCompleto);
     const telefono = firstStr(lead?.telefono);
     const email = firstStr(lead?.email);
 
+    // ✅ Data final para el PDF (con llaves nuevas esperadas por fichaComercialPdf.js nuevo)
     const dataPDF = {
       codigo: codigoFinal,
       fecha: hoyEC(),
@@ -150,9 +221,18 @@ export async function descargarFichaComercial(req, res) {
       score,
       edad,
       tipoIngreso,
-      precioVivienda,
+      producto,
+
+      valorVivienda,
       entradaUSD,
       entradaPct,
+
+      ingresoMensual,
+      deudasMensuales,
+      afiliadoIess,
+      aniosEstabilidad,
+      ciudadCompra,
+      tipoCompra,
     };
 
     return generarFichaComercialPDF(res, dataPDF);
@@ -165,5 +245,3 @@ export async function descargarFichaComercial(req, res) {
     });
   }
 }
-
-

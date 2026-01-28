@@ -121,11 +121,16 @@ export function leadDecision(lead = {}) {
   const cap = num(res?.capacidadPago);
   const producto = res?.productoSugerido || res?.productoElegido || res?.tipoCreditoElegido || lead?.producto || null;
 
-  // Score HL (si existe)
+   // Score HL (si existe)
   const scoreHL =
-    (res?.puntajeHabitaLibre && typeof res.puntajeHabitaLibre.score === "number" ? res.puntajeHabitaLibre.score : null) ??
+    (typeof res?.puntajeHabitaLibre === "number" ? res.puntajeHabitaLibre : null) ??
+    (res?.puntajeHabitaLibre &&
+    typeof res.puntajeHabitaLibre.score === "number"
+      ? res.puntajeHabitaLibre.score
+      : null) ??
     (typeof res?.scoreHL === "number" ? res.scoreHL : null) ??
     (typeof lead?.scoreHL === "number" ? lead.scoreHL : null);
+
 
   // -----------------------------
   // Faltantes mínimos operativos

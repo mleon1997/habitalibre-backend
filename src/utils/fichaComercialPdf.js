@@ -14,37 +14,39 @@ const numOrDash = (n) => {
   return Number.isFinite(x) ? String(x) : "-";
 };
 
+const yesNoDash = (v) => {
+  if (v === true) return "Sí";
+  if (v === false) return "No";
+  return "-";
+};
+
 const pct0 = (v) => {
   const x = Number(v);
   if (!Number.isFinite(x)) return "-";
-  // Si viene como 0.10 => 10%
   if (x > 0 && x <= 1) return `${Math.round(x * 100)}%`;
-  // Si viene como 10 => 10%
   return `${Math.round(x)}%`;
 };
 
-function computeEntradaPct(precioVivienda, entradaUSD) {
-  const pv = Number(precioVivienda);
-  const en = Number(entradaUSD);
-  if (!Number.isFinite(pv) || !Number.isFinite(en) || pv <= 0) return null;
-  return en / pv; // devolvemos ratio 0-1 para pct0
+// Helpers: calcula entrada %
+function calcEntradaPct(valorVivienda, entradaUSD) {
+  const v = Number(valorVivienda);
+  const e = Number(entradaUSD);
+  if (!Number.isFinite(v) || !Number.isFinite(e) || v <= 0) return null;
+  return (e / v) * 100;
 }
 
 /**
- * Genera y envía el PDF directamente al response (streaming).
- *
- * ✅ Ahora soporta 2 formatos:
- * - data “viejo” (score, tipoIngreso, precioVivienda, entradaUSD, entradaPct)
- * - data “nuevo” basado en Lead (scoreHL, edad, tipo_ingreso, valor_vivienda, entrada_disponible)
+ * data esperado (recomendado):
+ * {
+ *  codigo, fecha, plaza, nombre, telefono, email,
+ *  score, edad, tipoIngreso,
+ *  valorVivienda, entradaUSD,
+ *  ingresoMensual, deudasMensuales, afiliadoIess, aniosEstabilidad,
+ *  ciudadCompra, tipoCompra, producto
+ * }
  */
 export function generarFichaComercialPDF(res, data) {
-  const codigo = safe(
-    data?.codigo ??
-      data?.codigoHL ??
-      data?.lead?.codigoHL,
-    "HL"
-  );
-
+  const codigo = safe(data?.codigo, "HL");
   const filename = `HL_FICHA_${String(codigo).replace(/[^\w\-]/g, "_")}.pdf`;
 
   res.setHeader("Content-Type", "application/pdf");
@@ -52,50 +54,6 @@ export function generarFichaComercialPDF(res, data) {
 
   const doc = new PDFDocument({ size: "A4", margin: 42 });
   doc.pipe(res);
-
-  // =========================
-  // ✅ Normalización de inputs (aquí está el fix)
-  // =========================
-  const score =
-    data?.score ??
-    data?.scoreHL ??
-    data?.lead?.scoreHL ??
-    null;
-
-  const edad =
-    data?.edad ??
-    data?.lead?.edad ??
-    null;
-
-  const tipoIngreso =
-    data?.tipoIngreso ??
-    data?.tipo_ingreso ??
-    data?.lead?.tipo_ingreso ??
-    "-";
-
-  const precioVivienda =
-    data?.precioVivienda ??
-    data?.valor_vivienda ??
-    data?.lead?.valor_vivienda ??
-    null;
-
-  const entradaUSD =
-    data?.entradaUSD ??
-    data?.entrada_disponible ??
-    data?.lead?.entrada_disponible ??
-    null;
-
-  const entradaPct =
-    data?.entradaPct ??
-    computeEntradaPct(precioVivienda, entradaUSD);
-
-  // Header fields
-  const fecha = safe(data?.fecha);
-  const plaza = safe(data?.plaza ?? data?.ciudad_compra ?? data?.ciudad ?? data?.lead?.ciudad_compra ?? data?.lead?.ciudad);
-
-  const nombre = data?.nombre ?? data?.lead?.nombre ?? null;
-  const telefono = data?.telefono ?? data?.lead?.telefono ?? null;
-  const email = data?.email ?? data?.lead?.email ?? null;
 
   // =========================
   // Estilos
@@ -106,8 +64,10 @@ export function generarFichaComercialPDF(res, data) {
 
   const h1 = (t) =>
     doc.font("Helvetica-Bold").fontSize(18).fillColor(COLOR_TEXT).text(t);
+
   const h2 = (t) =>
     doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT).text(t);
+
   const small = (t) =>
     doc.font("Helvetica").fontSize(9).fillColor(COLOR_MUTED).text(t);
 
@@ -130,11 +90,13 @@ export function generarFichaComercialPDF(res, data) {
     const col = (w - 16) / 2;
 
     const y = doc.y;
+
     doc
       .font("Helvetica-Bold")
       .fontSize(9)
       .fillColor(COLOR_MUTED)
       .text(label1, x, y, { width: col });
+
     doc
       .font("Helvetica-Bold")
       .fontSize(12)
@@ -146,6 +108,7 @@ export function generarFichaComercialPDF(res, data) {
       .fontSize(9)
       .fillColor(COLOR_MUTED)
       .text(label2, x + col + 16, y, { width: col });
+
     doc
       .font("Helvetica-Bold")
       .fontSize(12)
@@ -161,12 +124,16 @@ export function generarFichaComercialPDF(res, data) {
   h1("FICHA COMERCIAL HABITALIBRE v1.5");
   doc.moveDown(0.35);
 
-  small(`Código HL: ${safe(codigo)}   •   Fecha: ${fecha}   •   Plaza: ${plaza}`);
+  small(
+    `Código HL: ${safe(data?.codigo)}   •   Fecha: ${safe(
+      data?.fecha
+    )}   •   Plaza: ${safe(data?.plaza)}`
+  );
 
   const contacto = [];
-  if (nombre) contacto.push(`Nombre: ${safe(nombre)}`);
-  if (telefono) contacto.push(`Tel: ${safe(telefono)}`);
-  if (email) contacto.push(`Email: ${safe(email)}`);
+  if (data?.nombre) contacto.push(`Nombre: ${safe(data?.nombre)}`);
+  if (data?.telefono) contacto.push(`Tel: ${safe(data?.telefono)}`);
+  if (data?.email) contacto.push(`Email: ${safe(data?.email)}`);
   if (contacto.length) small(contacto.join("   •   "));
 
   hr();
@@ -177,23 +144,44 @@ export function generarFichaComercialPDF(res, data) {
   h2("1) Campos clave (core)");
   doc.moveDown(0.7);
 
-  row2("Score HL", numOrDash(score), "Edad", edad != null ? String(edad) : "-");
+  row2("Score HL", numOrDash(data?.score), "Edad", data?.edad != null ? String(data.edad) : "-");
 
-  row2("Tipo de ingreso", safe(tipoIngreso), "—", "—");
+  row2("Tipo de ingreso", safe(data?.tipoIngreso), "Producto", safe(data?.producto));
 
   row2(
     "Precio de vivienda (declarado)",
-    precioVivienda != null ? money0(precioVivienda) : "-",
+    data?.valorVivienda != null ? money0(data?.valorVivienda) : "-",
     "Entrada (USD)",
-    entradaUSD != null ? money0(entradaUSD) : "-"
+    data?.entradaUSD != null ? money0(data?.entradaUSD) : "-"
+  );
+
+  const entradaPctCalc =
+    data?.entradaPct != null ? data.entradaPct : calcEntradaPct(data?.valorVivienda, data?.entradaUSD);
+
+  row2("Entrada (%)", entradaPctCalc != null ? pct0(entradaPctCalc) : "-", "Ciudad compra", safe(data?.ciudadCompra));
+
+  // =========================
+  // 2) Perfil financiero (lo que faltaba)
+  // =========================
+  doc.moveDown(0.4);
+  h2("2) Perfil financiero");
+  doc.moveDown(0.7);
+
+  row2(
+    "Ingreso mensual (decl.)",
+    data?.ingresoMensual != null ? money0(data?.ingresoMensual) : "-",
+    "Deudas mensuales (aprox.)",
+    data?.deudasMensuales != null ? money0(data?.deudasMensuales) : "-"
   );
 
   row2(
-    "Entrada (%)",
-    entradaPct != null ? pct0(entradaPct) : "-",
-    "—",
-    "—"
+    "Afiliado IESS",
+    yesNoDash(data?.afiliadoIess),
+    "Años de estabilidad",
+    data?.aniosEstabilidad != null ? String(data.aniosEstabilidad) : "-"
   );
+
+  row2("Tipo de compra", safe(data?.tipoCompra), "—", "—");
 
   doc.moveDown(0.2);
   small("Nota: Información declarada + cálculos estimados. El banco realiza la validación y underwriting final.");

@@ -21,8 +21,16 @@ async function main() {
 
     try {
       const d = leadDecision(lead.toObject());
+
       lead.decision = d;
       lead.decisionUpdatedAt = new Date();
+
+      // ✅ campos planos
+      lead.decision_estado = d?.estado || null;
+      lead.decision_etapa = d?.etapa || null;
+      lead.decision_heat = Number.isFinite(Number(d?.heat)) ? Number(d.heat) : 0;
+      lead.decision_llamarHoy = d?.llamarHoy === true;
+
       await lead.save();
       updated++;
 

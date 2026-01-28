@@ -14,11 +14,9 @@ const LeadSchema = new mongoose.Schema(
     producto: { type: String },
 
     // ✅ Top-level score para tabla/dashboard
-    // (lo ideal es setearlo desde controller: scoreHL = resultado?.puntajeHabitaLibre?.score || resultado?.scoreHL?.total)
     scoreHL: { type: Number, default: null, index: true },
 
     // ✅ (Recomendado) guarda el objeto completo del score por fuera de resultado
-    // para debug y UI admin (sin depender de resultado.*)
     scoreHLDetalle: { type: mongoose.Schema.Types.Mixed, default: null },
 
     tiempoCompra: { type: String, index: true },
@@ -48,7 +46,6 @@ const LeadSchema = new mongoose.Schema(
 
     // ==========================
     // ✅ CAMPOS “RÁPIDOS” (planos)
-    // Para dashboard/filters/sort SIN depender de metadata/resultado
     // ==========================
     edad: { type: Number, default: null, index: true },
     tipo_ingreso: {
@@ -71,7 +68,6 @@ const LeadSchema = new mongoose.Schema(
     tipo_compra_numero: { type: Number, default: null, index: true },
 
     // ✅ Mixed para que Mongoose no te elimine/transforme campos anidados
-    // (incluye puntajeHabitaLibre, scoreHL, escenarios, etc.)
     resultado: { type: mongoose.Schema.Types.Mixed, default: null },
     resultadoUpdatedAt: { type: Date, index: true },
 
@@ -113,36 +109,16 @@ const LeadSchema = new mongoose.Schema(
     },
 
     // ==========================
-    // ✅ DECISIÓN OPERATIVA (alineada con src/lib/leadDecision.js)
+    // ✅ DECISION (Opción A)
+    // Guardamos TODO el objeto (ruta, bancosTop3, nextActions, etc.)
     // ==========================
-    decision: {
-      callToday: { type: Boolean, default: false, index: true },
+    decision: { type: mongoose.Schema.Types.Mixed, default: null },
 
-      // bancable | rescatable | descartable
-      bucket: {
-        type: String,
-        enum: ["bancable", "rescatable", "descartable"],
-        default: "rescatable",
-        index: true,
-      },
-
-      // captura_incompleta | necesita_info | evaluado
-      stage: {
-        type: String,
-        enum: ["captura_incompleta", "necesita_info", "evaluado"],
-        default: "captura_incompleta",
-        index: true,
-      },
-
-      // 0-100
-      heat: { type: Number, default: 0, index: true },
-
-      // Campos faltantes (para UI)
-      missing: { type: [String], default: [] },
-
-      // Razones explicables (para UI)
-      reasons: { type: [String], default: [] },
-    },
+    // ✅ Campos planos indexables para filtros/sort en dashboard
+    decision_estado: { type: String, default: null, index: true }, // bancable/rescatable/descartable/por_calificar
+    decision_etapa: { type: String, default: null, index: true }, // captura_incompleta/precalificado/...
+    decision_heat: { type: Number, default: 0, index: true },
+    decision_llamarHoy: { type: Boolean, default: false, index: true },
 
     decisionUpdatedAt: { type: Date, default: null, index: true },
 
@@ -160,8 +136,7 @@ const LeadSchema = new mongoose.Schema(
   }
 );
 
-// ✅ (Opcional) helper: recalcular decision antes de guardar si cambian campos
-// Si no lo quieres automático, puedes borrar este hook y dejarlo solo en controller.
+// ✅ Hook: recalcular decision si NO viene seteada desde controller
 LeadSchema.pre("save", function (next) {
   try {
     // si ya viene seteada desde controller, no la pises
@@ -170,6 +145,13 @@ LeadSchema.pre("save", function (next) {
     const d = leadDecision(this.toObject());
     this.decision = d;
     this.decisionUpdatedAt = new Date();
+
+    // ✅ set campos planos
+    this.decision_estado = d?.estado || null;
+    this.decision_etapa = d?.etapa || null;
+    this.decision_heat = Number.isFinite(Number(d?.heat)) ? Number(d.heat) : 0;
+    this.decision_llamarHoy = d?.llamarHoy === true;
+
     return next();
   } catch {
     return next();
