@@ -11,7 +11,7 @@ import { leadDecision } from "../lib/leadDecision.js";
 // ✅ NUEVO: Merge Web + ManyChat (un solo lead por persona)
 import { upsertLeadMerged } from "../services/leadMerge.js";
 
-const LEADS_CONTROLLER_VERSION = "2026-01-22-merge-web-manychat-v1";
+const LEADS_CONTROLLER_VERSION = "2026-01-28-fix-scoreHL-perfil-v1";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
@@ -19,7 +19,11 @@ const LEADS_CONTROLLER_VERSION = "2026-01-22-merge-web-manychat-v1";
 function extraerScoreHL(resultado) {
   if (!resultado) return null;
 
-  // ✅ nuevo score principal
+  // ✅ Caso más común: puntajeHabitaLibre es NUMBER (ej: 72)
+  const s0 = resultado?.puntajeHabitaLibre;
+  if (typeof s0 === "number") return s0;
+
+  // ✅ Caso alterno: puntajeHabitaLibre es objeto { score: 72 }
   const s1 = resultado?.puntajeHabitaLibre?.score;
   if (typeof s1 === "number") return s1;
 
@@ -122,12 +126,34 @@ function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
   const ciudadCompra =
     perfil?.ciudadCompra != null ? String(perfil.ciudadCompra).trim() : null;
 
+  // 👇 NUEVOS (si existen en resultado)
+  const edad =
+    perfil?.edad != null ? toNumberOrNull(perfil.edad) : null;
+
+  const tipoIngreso =
+    perfil?.tipoIngreso != null ? String(perfil.tipoIngreso).trim() : null;
+
+  // 👇 Estos suelen venir top-level en scoring.js
+  const valorVivienda =
+    resultadoNormalizado?.valorVivienda != null
+      ? toNumberOrNull(resultadoNormalizado.valorVivienda)
+      : null;
+
+  const entradaDisponible =
+    resultadoNormalizado?.entradaDisponible != null
+      ? toNumberOrNull(resultadoNormalizado.entradaDisponible)
+      : null;
+
   return {
     afiliadoIess,
     aniosEstabilidad,
     ingresoMensual,
     deudaMensualAprox,
     ciudadCompra,
+    edad,
+    tipoIngreso,
+    valorVivienda,
+    entradaDisponible,
   };
 }
 
@@ -236,6 +262,7 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
   try {
     const decision = leadDecision(leadDoc.toObject());
     leadDoc.decision = decision;
+    leadDoc.decisionUpdatedAt = new Date();
     await leadDoc.save();
   } catch (e) {
     console.warn(`⚠️ No se pudo calcular decision (${tag}):`, e?.message || e);
@@ -270,9 +297,13 @@ export async function crearLead(req, res) {
       tipoCompra,
       tipoCompraNumero,
 
-      // opcional
+      // ✅ opcional (si el front lo manda)
       valorVivienda,
       entradaDisponible,
+
+      // ✅ opcional (si el front lo manda como “edad/tipoIngreso” planos)
+      edad,
+      tipoIngreso,
     } = req.body || {};
 
     if (!nombre || !email || !resultado) {
@@ -327,11 +358,32 @@ export async function crearLead(req, res) {
         ? toNumberOrNull(tipoCompraNumero)
         : mapTipoCompraNumero(tipoCompraLower);
 
+    // ✅ Prioridad para valor/entrada:
+    // 1) Campos planos del FRONT
+    // 2) lo que venga en resultadoNormalizado (si el front manda output completo del scoring)
     const valorViviendaNorm =
-      valorVivienda != null ? toNumberOrNull(valorVivienda) : null;
+      valorVivienda != null
+        ? toNumberOrNull(valorVivienda)
+        : (derivados.valorVivienda != null ? derivados.valorVivienda : null);
 
     const entradaDisponibleNorm =
-      entradaDisponible != null ? toNumberOrNull(entradaDisponible) : null;
+      entradaDisponible != null
+        ? toNumberOrNull(entradaDisponible)
+        : (derivados.entradaDisponible != null ? derivados.entradaDisponible : null);
+
+    // ✅ edad/tipoIngreso (no están en schema como campos planos -> los dejamos en metadata para UI/reportes)
+    const edadNorm =
+      edad != null ? toNumberOrNull(edad) : (derivados.edad != null ? derivados.edad : null);
+
+    const tipoIngresoNorm =
+      (tipoIngreso != null ? String(tipoIngreso).trim() : null) ||
+      (derivados.tipoIngreso != null ? String(derivados.tipoIngreso).trim() : null);
+
+    // ✅ score detalle (para debug/admin UI sin depender de resultado.*)
+    const scoreHLDetalleNorm =
+      resultadoNormalizado?.puntajeHabitaLibre != null
+        ? resultadoNormalizado.puntajeHabitaLibre
+        : (resultadoNormalizado?.scoreHL != null ? resultadoNormalizado.scoreHL : null);
 
     console.info("✅ Nuevo lead recibido (WEB):", {
       nombre,
@@ -352,6 +404,11 @@ export async function crearLead(req, res) {
       ciudad_compra: ciudadCompraNorm,
       tipo_compra: tipoCompraLower,
       tipo_compra_numero: tipoCompraNumeroNorm,
+      valor_vivienda: valorViviendaNorm,
+      entrada_disponible: entradaDisponibleNorm,
+      edad: edadNorm,
+      tipoIngreso: tipoIngresoNorm,
+      scoreHL,
     });
 
     let userIdFinal = null;
@@ -394,6 +451,7 @@ export async function crearLead(req, res) {
 
         producto: producto || null,
         scoreHL: typeof scoreHL === "number" ? scoreHL : null,
+        scoreHLDetalle: scoreHLDetalleNorm || null, // ✅ NUEVO: guardamos detalle
 
         // ✅ CANÓNICO
         resultado: resultadoNormalizado,
@@ -414,6 +472,15 @@ export async function crearLead(req, res) {
         metadata: {
           canal: "Web",
           customerLeadIdFromToken: req.customer?.leadId || null,
+
+          // ✅ Los guardamos en metadata para que el dashboard/reporte ya pueda mostrarlos
+          // (si luego decides, los pasamos a campos planos en el schema)
+          perfil: {
+            ...(edadNorm != null ? { edad: edadNorm } : {}),
+            ...(tipoIngresoNorm ? { tipoIngreso: tipoIngresoNorm } : {}),
+            ...(valorViviendaNorm != null ? { valorVivienda: valorViviendaNorm } : {}),
+            ...(entradaDisponibleNorm != null ? { entradaDisponible: entradaDisponibleNorm } : {}),
+          },
         },
       },
     });
@@ -480,6 +547,14 @@ export async function crearLead(req, res) {
       codigoHL,
       linkedToUser,
       linkedMethod,
+      // ✅ debug rápido
+      debug: {
+        scoreHL: lead.scoreHL,
+        scoreHLDetalle: lead.scoreHLDetalle || null,
+        valor_vivienda: lead.valor_vivienda || null,
+        entrada_disponible: lead.entrada_disponible || null,
+        perfilMeta: lead?.metadata?.perfil || null,
+      },
     });
   } catch (err) {
     console.error("❌ Error en crearLead:", err);

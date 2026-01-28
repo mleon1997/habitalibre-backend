@@ -46,6 +46,20 @@ const LeadSchema = new mongoose.Schema(
     manychatSubscriberId: { type: String, index: true },
     igUsername: { type: String, index: true },
 
+    // ==========================
+    // ✅ CAMPOS “RÁPIDOS” (planos)
+    // Para dashboard/filters/sort SIN depender de metadata/resultado
+    // ==========================
+    edad: { type: Number, default: null, index: true },
+    tipo_ingreso: {
+      type: String,
+      enum: ["Dependiente", "Independiente", "Mixto", null],
+      default: null,
+      index: true,
+    },
+    valor_vivienda: { type: Number, default: null, index: true },
+    entrada_disponible: { type: Number, default: null, index: true },
+
     afiliado_iess: { type: Boolean, default: null, index: true },
     anios_estabilidad: { type: Number, default: null, index: true },
     ingreso_mensual: { type: Number, default: null, index: true },
