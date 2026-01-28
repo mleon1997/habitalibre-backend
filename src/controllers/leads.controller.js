@@ -11,7 +11,7 @@ import { leadDecision } from "../lib/leadDecision.js";
 // ✅ NUEVO: Merge Web + ManyChat (un solo lead por persona)
 import { upsertLeadMerged } from "../services/leadMerge.js";
 
-const LEADS_CONTROLLER_VERSION = "2026-01-28-fix-scoreHL-perfil-v1";
+const LEADS_CONTROLLER_VERSION = "2026-01-28-fix-scoreHL-perfil-v1-PATCHED";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
@@ -127,8 +127,7 @@ function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
     perfil?.ciudadCompra != null ? String(perfil.ciudadCompra).trim() : null;
 
   // 👇 NUEVOS (si existen en resultado)
-  const edad =
-    perfil?.edad != null ? toNumberOrNull(perfil.edad) : null;
+  const edad = perfil?.edad != null ? toNumberOrNull(perfil.edad) : null;
 
   const tipoIngreso =
     perfil?.tipoIngreso != null ? String(perfil.tipoIngreso).trim() : null;
@@ -257,12 +256,23 @@ function pickSubscriberId(body = {}) {
 
 /* ===========================================================
    Helper: guardar decision en lead sin romper el request
+   ✅ PATCH 2: también setea decision_* planos
 =========================================================== */
 async function safeDecisionSave(leadDoc, tag = "GEN") {
   try {
-    const decision = leadDecision(leadDoc.toObject());
-    leadDoc.decision = decision;
+    const d = leadDecision(leadDoc.toObject());
+
+    leadDoc.decision = d;
     leadDoc.decisionUpdatedAt = new Date();
+
+    // ✅ set campos planos indexables (hook no corre si decision fue modificado)
+    leadDoc.decision_estado = d?.estado || null;
+    leadDoc.decision_etapa = d?.etapa || null;
+    leadDoc.decision_heat = Number.isFinite(Number(d?.heat))
+      ? Number(d.heat)
+      : 0;
+    leadDoc.decision_llamarHoy = d?.llamarHoy === true;
+
     await leadDoc.save();
   } catch (e) {
     console.warn(`⚠️ No se pudo calcular decision (${tag}):`, e?.message || e);
@@ -313,6 +323,49 @@ export async function crearLead(req, res) {
       });
     }
 
+    // ✅ PATCH 1: aceptar snake_case/camelCase para campos mínimos
+    const body = req.body || {};
+
+    const edadRaw =
+      edad ?? body.edad ?? body.perfil?.edad ?? body.metadata?.perfil?.edad ?? null;
+
+    const tipoIngresoRaw =
+      tipoIngreso ??
+      body.tipo_ingreso ??
+      body.tipoIngreso ??
+      body.perfil?.tipo_ingreso ??
+      body.perfil?.tipoIngreso ??
+      body.metadata?.perfil?.tipoIngreso ??
+      null;
+
+    const valorViviendaRaw =
+      valorVivienda ??
+      body.valor_vivienda ??
+      body.valorVivienda ??
+      body.precio_vivienda ??
+      body.precioVivienda ??
+      body.perfil?.valor_vivienda ??
+      body.perfil?.valorVivienda ??
+      body.metadata?.perfil?.valorVivienda ??
+      null;
+
+    const entradaDisponibleRaw =
+      entradaDisponible ??
+      body.entrada_disponible ??
+      body.entradaDisponible ??
+      body.entrada_usd ??
+      body.entradaUsd ??
+      body.perfil?.entrada_disponible ??
+      body.perfil?.entradaDisponible ??
+      body.metadata?.perfil?.entradaDisponible ??
+      null;
+
+    const tipoCompraRaw =
+      tipoCompra ?? body.tipo_compra ?? body.tipoCompra ?? null;
+
+    const tipoCompraNumeroRaw =
+      tipoCompraNumero ?? body.tipo_compra_numero ?? body.tipoCompraNumero ?? null;
+
     const emailNorm = String(email).toLowerCase().trim();
     const tokenEmail = String(req.customer?.email || "").toLowerCase().trim();
     const emailEfectivo = tokenEmail || emailNorm;
@@ -351,32 +404,33 @@ export async function crearLead(req, res) {
       null;
 
     const tipoCompraLower =
-      tipoCompra != null ? toLowerOrNull(tipoCompra) : null;
+      tipoCompraRaw != null ? toLowerOrNull(tipoCompraRaw) : null;
 
     const tipoCompraNumeroNorm =
-      tipoCompraNumero != null
-        ? toNumberOrNull(tipoCompraNumero)
+      tipoCompraNumeroRaw != null
+        ? toNumberOrNull(tipoCompraNumeroRaw)
         : mapTipoCompraNumero(tipoCompraLower);
 
     // ✅ Prioridad para valor/entrada:
-    // 1) Campos planos del FRONT
+    // 1) Campos planos del FRONT (snake o camel)
     // 2) lo que venga en resultadoNormalizado (si el front manda output completo del scoring)
     const valorViviendaNorm =
-      valorVivienda != null
-        ? toNumberOrNull(valorVivienda)
+      valorViviendaRaw != null
+        ? toNumberOrNull(valorViviendaRaw)
         : (derivados.valorVivienda != null ? derivados.valorVivienda : null);
 
     const entradaDisponibleNorm =
-      entradaDisponible != null
-        ? toNumberOrNull(entradaDisponible)
+      entradaDisponibleRaw != null
+        ? toNumberOrNull(entradaDisponibleRaw)
         : (derivados.entradaDisponible != null ? derivados.entradaDisponible : null);
 
-    // ✅ edad/tipoIngreso (no están en schema como campos planos -> los dejamos en metadata para UI/reportes)
     const edadNorm =
-      edad != null ? toNumberOrNull(edad) : (derivados.edad != null ? derivados.edad : null);
+      edadRaw != null
+        ? toNumberOrNull(edadRaw)
+        : (derivados.edad != null ? derivados.edad : null);
 
     const tipoIngresoNorm =
-      (tipoIngreso != null ? String(tipoIngreso).trim() : null) ||
+      (tipoIngresoRaw != null ? String(tipoIngresoRaw).trim() : null) ||
       (derivados.tipoIngreso != null ? String(derivados.tipoIngreso).trim() : null);
 
     // ✅ score detalle (para debug/admin UI sin depender de resultado.*)
@@ -451,7 +505,7 @@ export async function crearLead(req, res) {
 
         producto: producto || null,
         scoreHL: typeof scoreHL === "number" ? scoreHL : null,
-        scoreHLDetalle: scoreHLDetalleNorm || null, // ✅ NUEVO: guardamos detalle
+        scoreHLDetalle: scoreHLDetalleNorm || null, // ✅ guardamos detalle
 
         // ✅ CANÓNICO
         resultado: resultadoNormalizado,
@@ -465,8 +519,7 @@ export async function crearLead(req, res) {
         tipo_compra: tipoCompraLower || null,
         tipo_compra_numero: tipoCompraNumeroNorm,
 
-
-          ...(edadNorm != null ? { edad: edadNorm } : {}),
+        ...(edadNorm != null ? { edad: edadNorm } : {}),
         ...(tipoIngresoNorm ? { tipo_ingreso: tipoIngresoNorm } : {}),
         ...(valorViviendaNorm != null ? { valor_vivienda: valorViviendaNorm } : {}),
         ...(entradaDisponibleNorm != null ? { entrada_disponible: entradaDisponibleNorm } : {}),
@@ -476,8 +529,7 @@ export async function crearLead(req, res) {
           canal: "Web",
           customerLeadIdFromToken: req.customer?.leadId || null,
 
-          // ✅ Los guardamos en metadata para que el dashboard/reporte ya pueda mostrarlos
-          // (si luego decides, los pasamos a campos planos en el schema)
+          // ✅ guardamos también en metadata (por si UI/reportes lo usan)
           perfil: {
             ...(edadNorm != null ? { edad: edadNorm } : {}),
             ...(tipoIngresoNorm ? { tipoIngreso: tipoIngresoNorm } : {}),
@@ -502,7 +554,7 @@ export async function crearLead(req, res) {
       await lead.save();
     }
 
-    // ✅ decision
+    // ✅ decision (ya setea planos)
     await safeDecisionSave(lead, "WEB");
 
     const codigoHL = lead.codigoHL;
@@ -549,6 +601,7 @@ export async function crearLead(req, res) {
       leadId: lead._id,
       codigoHL,
       linkedToUser,
+      linkedToUser,
       linkedMethod,
       // ✅ debug rápido
       debug: {
@@ -556,7 +609,10 @@ export async function crearLead(req, res) {
         scoreHLDetalle: lead.scoreHLDetalle || null,
         valor_vivienda: lead.valor_vivienda || null,
         entrada_disponible: lead.entrada_disponible || null,
+        tipo_ingreso: lead.tipo_ingreso || null,
+        edad: lead.edad || null,
         perfilMeta: lead?.metadata?.perfil || null,
+        decision_heat: lead.decision_heat ?? 0,
       },
     });
   } catch (err) {
