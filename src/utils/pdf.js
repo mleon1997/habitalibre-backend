@@ -760,9 +760,10 @@ export async function generarPDFLead(lead = {}, resultadoRaw = {}) {
         .moveDown(0.8);
 
       doc
-        .fontSize(12.5)
-        .fillColor(brand.text)
-        .text("🎯 Rango recomendado de vivienda:", M, doc.y);
+  .fontSize(12.5)
+  .fillColor(brand.text)
+  .text("Rango recomendado de vivienda:", M, doc.y);
+
 
       doc
         .fontSize(16)

@@ -1001,5 +1001,79 @@ export async function descargarFichaComercialPDF(req, res) {
     console.error("❌ descargarFichaComercialPDF:", err?.stack || err);
     return res.status(500).json({ ok: false, msg: "Error generando PDF" });
   }
+
+  // ✅ resultado: NO lo renormalices aquí (puede perder campos)
+const resultadoStored = lead.resultado || null;
+
+// ✅ snapshot opcional (por si el schema cambia en el futuro)
+const precalificacion = resultadoStored
+  ? {
+      bancoSugerido: resultadoStored?.bancoSugerido ?? null,
+      productoSugerido: resultadoStored?.productoSugerido ?? null,
+      tasaAnual: resultadoStored?.tasaAnual ?? null,
+      plazoMeses: resultadoStored?.plazoMeses ?? null,
+      cuotaEstimada: resultadoStored?.cuotaEstimada ?? null,
+      cuotaStress: resultadoStored?.cuotaStress ?? resultadoStored?.stressTest?.cuotaStress ?? null,
+      dtiConHipoteca: resultadoStored?.dtiConHipoteca ?? null,
+      ltv: resultadoStored?.ltv ?? null,
+      montoMaximo: resultadoStored?.montoMaximo ?? null,
+      precioMaxVivienda: resultadoStored?.precioMaxVivienda ?? null,
+    }
+  : null;
+
+const data = {
+  codigoHL: lead.codigoHL || "-",
+  fecha,
+  plaza,
+
+  nombre: lead.nombre || "-",
+  telefono: lead.telefono || "-",
+  email: lead.email || "-",
+
+  // campos core
+  scoreHL: lead.scoreHL ?? null,
+  edad: lead.edad ?? null,
+  tipo_ingreso: lead.tipo_ingreso ?? null,
+  valor_vivienda: lead.valor_vivienda ?? null,
+  entrada_disponible: lead.entrada_disponible ?? null,
+  ciudad_compra: lead.ciudad_compra ?? null,
+  tipo_compra: lead.tipo_compra ?? null,
+  producto: lead.producto ?? null,
+
+  // perfil financiero
+  ingreso_mensual: lead.ingreso_mensual ?? null,
+  deuda_mensual_aprox: lead.deuda_mensual_aprox ?? null,
+  afiliado_iess: lead.afiliado_iess ?? null,
+  anios_estabilidad: lead.anios_estabilidad ?? null,
+
+  // ✅ IMPORTANTES
+  resultado: resultadoStored,          // 👈 sin normalize aquí
+  decision: lead.decision || null,     // 👈 esto te faltaba
+  precalificacion,                     // 👈 opcional, pero recomendado
+};
+
+console.log("🧪 DEBUG FICHA COMERCIAL (data):", {
+  codigoHL: data.codigoHL,
+  producto: data.producto,
+  valor_vivienda: data.valor_vivienda,
+  entrada_disponible: data.entrada_disponible,
+  ingreso_mensual: data.ingreso_mensual,
+  deuda_mensual_aprox: data.deuda_mensual_aprox,
+  afiliado_iess: data.afiliado_iess,
+  anios_estabilidad: data.anios_estabilidad,
+  resultadoKeys: data.resultado ? Object.keys(data.resultado) : null,
+  resultado_productoSugerido: data.resultado?.productoSugerido,
+  resultado_bancoSugerido: data.resultado?.bancoSugerido,
+  resultado_tasaAnual: data.resultado?.tasaAnual,
+  resultado_plazoMeses: data.resultado?.plazoMeses,
+  resultado_cuotaEstimada: data.resultado?.cuotaEstimada,
+  resultado_montoMaximo: data.resultado?.montoMaximo,
+  resultado_precioMaxVivienda: data.resultado?.precioMaxVivienda,
+  resultado_flags: data.resultado?.flags,
+});
+
+
+return generarFichaComercialPDF(res, data);
+
 }
 
