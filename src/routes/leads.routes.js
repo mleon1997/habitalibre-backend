@@ -63,7 +63,7 @@ router.get("/mine", verificarCustomer, async (req, res) => {
 
     const user = await User.findById(userId).lean();
     const lead =
-      (user?.currentLeadId && await Lead.findById(user.currentLeadId)) ||
+      (user?.currentLeadId && (await Lead.findById(user.currentLeadId))) ||
       (await Lead.findOne({ userId }).sort({ createdAt: -1 }));
 
     if (!lead) {

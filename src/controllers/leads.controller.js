@@ -327,7 +327,11 @@ export async function crearLead(req, res) {
     const body = req.body || {};
 
     const edadRaw =
-      edad ?? body.edad ?? body.perfil?.edad ?? body.metadata?.perfil?.edad ?? null;
+      edad ??
+      body.edad ??
+      body.perfil?.edad ??
+      body.metadata?.perfil?.edad ??
+      null;
 
     const tipoIngresoRaw =
       tipoIngreso ??
@@ -360,11 +364,13 @@ export async function crearLead(req, res) {
       body.metadata?.perfil?.entradaDisponible ??
       null;
 
-    const tipoCompraRaw =
-      tipoCompra ?? body.tipo_compra ?? body.tipoCompra ?? null;
+    const tipoCompraRaw = tipoCompra ?? body.tipo_compra ?? body.tipoCompra ?? null;
 
     const tipoCompraNumeroRaw =
-      tipoCompraNumero ?? body.tipo_compra_numero ?? body.tipoCompraNumero ?? null;
+      tipoCompraNumero ??
+      body.tipo_compra_numero ??
+      body.tipoCompraNumero ??
+      null;
 
     const emailNorm = String(email).toLowerCase().trim();
     const tokenEmail = String(req.customer?.email || "").toLowerCase().trim();
@@ -403,8 +409,7 @@ export async function crearLead(req, res) {
       (ciudad ? String(ciudad).trim() : null) ||
       null;
 
-    const tipoCompraLower =
-      tipoCompraRaw != null ? toLowerOrNull(tipoCompraRaw) : null;
+    const tipoCompraLower = tipoCompraRaw != null ? toLowerOrNull(tipoCompraRaw) : null;
 
     const tipoCompraNumeroNorm =
       tipoCompraNumeroRaw != null
@@ -417,17 +422,23 @@ export async function crearLead(req, res) {
     const valorViviendaNorm =
       valorViviendaRaw != null
         ? toNumberOrNull(valorViviendaRaw)
-        : (derivados.valorVivienda != null ? derivados.valorVivienda : null);
+        : derivados.valorVivienda != null
+          ? derivados.valorVivienda
+          : null;
 
     const entradaDisponibleNorm =
       entradaDisponibleRaw != null
         ? toNumberOrNull(entradaDisponibleRaw)
-        : (derivados.entradaDisponible != null ? derivados.entradaDisponible : null);
+        : derivados.entradaDisponible != null
+          ? derivados.entradaDisponible
+          : null;
 
     const edadNorm =
       edadRaw != null
         ? toNumberOrNull(edadRaw)
-        : (derivados.edad != null ? derivados.edad : null);
+        : derivados.edad != null
+          ? derivados.edad
+          : null;
 
     const tipoIngresoNorm =
       (tipoIngresoRaw != null ? String(tipoIngresoRaw).trim() : null) ||
@@ -437,7 +448,9 @@ export async function crearLead(req, res) {
     const scoreHLDetalleNorm =
       resultadoNormalizado?.puntajeHabitaLibre != null
         ? resultadoNormalizado.puntajeHabitaLibre
-        : (resultadoNormalizado?.scoreHL != null ? resultadoNormalizado.scoreHL : null);
+        : resultadoNormalizado?.scoreHL != null
+          ? resultadoNormalizado.scoreHL
+          : null;
 
     console.info("✅ Nuevo lead recibido (WEB):", {
       nombre,
@@ -601,7 +614,6 @@ export async function crearLead(req, res) {
       leadId: lead._id,
       codigoHL,
       linkedToUser,
-      linkedToUser,
       linkedMethod,
       // ✅ debug rápido
       debug: {
@@ -630,10 +642,7 @@ export async function crearLead(req, res) {
 export async function listarLeads(req, res) {
   try {
     const pagina = Math.max(parseInt(req.query.pagina || "1", 10), 1);
-    const limit = Math.min(
-      Math.max(parseInt(req.query.limit || "10", 10), 1),
-      100
-    );
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "10", 10), 1), 100);
 
     const {
       email,
@@ -651,7 +660,8 @@ export async function listarLeads(req, res) {
     if (telefono) filter.telefono = { $regex: String(telefono).trim(), $options: "i" };
     if (ciudad) filter.ciudad = { $regex: String(ciudad).trim(), $options: "i" };
     if (tiempoCompra) filter.tiempoCompra = String(tiempoCompra).trim();
-    if (sustentoIndependiente) filter.sustentoIndependiente = String(sustentoIndependiente).trim();
+    if (sustentoIndependiente)
+      filter.sustentoIndependiente = String(sustentoIndependiente).trim();
     if (canal) filter.canal = String(canal).trim().toLowerCase();
     if (fuente) filter.fuente = String(fuente).trim().toLowerCase();
 
