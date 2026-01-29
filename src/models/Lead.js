@@ -122,6 +122,17 @@ const LeadSchema = new mongoose.Schema(
 
     decisionUpdatedAt: { type: Date, default: null, index: true },
 
+    // ==========================
+    // ✅ Snapshot plano para PDF (precalificación)
+    // ==========================
+    precalificacion: { type: mongoose.Schema.Types.Mixed, default: null },
+
+    // ✅ Campos planos (opcionales) para filtros/sort sin abrir el objeto
+    precalificacion_banco: { type: String, default: null, index: true },
+    precalificacion_tasaAnual: { type: Number, default: null, index: true },
+    precalificacion_plazoMeses: { type: Number, default: null, index: true },
+    precalificacion_cuotaEstimada: { type: Number, default: null, index: true },
+
     codigoHL: {
       type: String,
       unique: true,

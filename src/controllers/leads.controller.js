@@ -277,10 +277,7 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
 
     await leadDoc.save();
   } catch (e) {
-    console.warn(
-      `⚠️ No se pudo calcular decision (${tag}):`,
-      e?.message || e
-    );
+    console.warn(`⚠️ No se pudo calcular decision (${tag}):`, e?.message || e);
   }
 }
 
@@ -289,6 +286,7 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
    ✅ MERGE Web + ManyChat
    ✅ guarda campos “rápidos”
    ✅ calcula lead.decision aquí mismo
+   ✅ guarda lead.precalificacion snapshot (para PDF)
 =========================================================== */
 export async function crearLead(req, res) {
   try {
@@ -394,7 +392,9 @@ export async function crearLead(req, res) {
     const derivados = extraerCamposRapidosDesdeResultado(resultadoNormalizado);
 
     const afiliadoIessNorm =
-      afiliadoIess != null ? toBoolOrNull(afiliadoIess) : derivados.afiliadoIess;
+      afiliadoIess != null
+        ? toBoolOrNull(afiliadoIess)
+        : derivados.afiliadoIess;
 
     const aniosEstabilidadNorm =
       aniosEstabilidad != null
@@ -609,6 +609,70 @@ export async function crearLead(req, res) {
       bancoSugerido: resultadoNormalizado.bancoSugerido || null,
       productoSugerido: resultadoNormalizado.productoSugerido || null,
     };
+
+    // ✅ Guardar snapshot plano para PDFs (opcional pero recomendado)
+    try {
+      lead.precalificacion = {
+        bancoSugerido: resultadoConCodigo?.bancoSugerido ?? null,
+        productoSugerido:
+          resultadoConCodigo?.productoSugerido ??
+          resultadoConCodigo?.rutaRecomendada?.tipo ??
+          resultadoConCodigo?.productoElegido ??
+          null,
+
+        tasaAnual:
+          resultadoConCodigo?.tasaAnual ??
+          resultadoConCodigo?.rutaRecomendada?.tasaAnual ??
+          null,
+
+        plazoMeses:
+          resultadoConCodigo?.plazoMeses ??
+          resultadoConCodigo?.rutaRecomendada?.plazoMeses ??
+          (Number.isFinite(Number(resultadoConCodigo?.rutaRecomendada?.plazoAnios))
+            ? Number(resultadoConCodigo.rutaRecomendada.plazoAnios) * 12
+            : null),
+
+        cuotaEstimada:
+          resultadoConCodigo?.cuotaEstimada ??
+          resultadoConCodigo?.rutaRecomendada?.cuotaEstimada ??
+          resultadoConCodigo?.rutaRecomendada?.cuota ??
+          null,
+
+        cuotaStress:
+          resultadoConCodigo?.cuotaStress ??
+          resultadoConCodigo?.stressTest?.cuotaStress ??
+          null,
+
+        dtiConHipoteca: resultadoConCodigo?.dtiConHipoteca ?? null,
+
+        ltv:
+          resultadoConCodigo?.ltv ??
+          resultadoConCodigo?.rutaRecomendada?.ltv ??
+          null,
+
+        montoMaximo:
+          resultadoConCodigo?.montoMaximo ??
+          resultadoConCodigo?.rutaRecomendada?.montoMaximo ??
+          null,
+
+        precioMaxVivienda:
+          resultadoConCodigo?.precioMaxVivienda ??
+          resultadoConCodigo?.rutaRecomendada?.precioMaxVivienda ??
+          null,
+
+        capacidadPago:
+          resultadoConCodigo?.capacidadPago ??
+          resultadoConCodigo?.rutaRecomendada?.capacidadPago ??
+          null,
+      };
+
+      await lead.save();
+    } catch (e) {
+      console.warn(
+        "⚠️ No se pudo guardar precalificacion snapshot:",
+        e?.message || e
+      );
+    }
 
     try {
       await Promise.all([
@@ -968,37 +1032,77 @@ export async function descargarFichaComercialPDF(req, res) {
     // ✅ Resultado tal cual guardado (NO lo renormalizamos aquí)
     const resultadoStored = lead.resultado || null;
 
-    // ✅ Snapshot plano para que el PDF NUNCA salga con “-” si el resultado trae datos
-    const precalificacion = resultadoStored
-      ? {
-          bancoSugerido: resultadoStored?.bancoSugerido ?? null,
-          productoSugerido: resultadoStored?.productoSugerido ?? null,
-          tasaAnual: resultadoStored?.tasaAnual ?? null,
-          plazoMeses: resultadoStored?.plazoMeses ?? null,
-          cuotaEstimada: resultadoStored?.cuotaEstimada ?? null,
-          cuotaStress:
-            resultadoStored?.cuotaStress ??
-            resultadoStored?.stressTest?.cuotaStress ??
-            null,
-          dtiConHipoteca: resultadoStored?.dtiConHipoteca ?? null,
-          ltv: resultadoStored?.ltv ?? null,
-          montoMaximo:
-            resultadoStored?.montoMaximo ??
-            resultadoStored?.montoPrestamoMax ??
-            resultadoStored?.prestamoMax ??
-            null,
-          precioMaxVivienda:
-            resultadoStored?.precioMaxVivienda ??
-            resultadoStored?.precioMax ??
-            resultadoStored?.valorMaxVivienda ??
-            null,
-          capacidadPago:
-            resultadoStored?.capacidadPagoPrograma ??
-            resultadoStored?.capacidadPago ??
-            resultadoStored?.capacidadPagoGlobal ??
-            null,
-        }
-      : null;
+    // ✅ Precalificación: 1) snapshot guardado, 2) fallback desde resultadoStored (prioriza rutaRecomendada)
+    const precalificacion =
+      lead.precalificacion ||
+      (resultadoStored
+        ? {
+            bancoSugerido:
+              resultadoStored?.bancoSugerido ??
+              resultadoStored?.rutaRecomendada?.banco ??
+              null,
+
+            productoSugerido:
+              resultadoStored?.productoSugerido ??
+              resultadoStored?.rutaRecomendada?.tipo ??
+              resultadoStored?.productoElegido ??
+              null,
+
+            tasaAnual:
+              resultadoStored?.tasaAnual ??
+              resultadoStored?.rutaRecomendada?.tasaAnual ??
+              null,
+
+            plazoMeses:
+              resultadoStored?.plazoMeses ??
+              resultadoStored?.rutaRecomendada?.plazoMeses ??
+              (Number.isFinite(Number(resultadoStored?.rutaRecomendada?.plazoAnios))
+                ? Number(resultadoStored.rutaRecomendada.plazoAnios) * 12
+                : null),
+
+            cuotaEstimada:
+              resultadoStored?.cuotaEstimada ??
+              resultadoStored?.rutaRecomendada?.cuotaEstimada ??
+              resultadoStored?.rutaRecomendada?.cuota ??
+              null,
+
+            cuotaStress:
+              resultadoStored?.cuotaStress ??
+              resultadoStored?.stressTest?.cuotaStress ??
+              null,
+
+            dtiConHipoteca:
+              resultadoStored?.dtiConHipoteca ??
+              resultadoStored?.rutaRecomendada?.dtiConHipoteca ??
+              null,
+
+            ltv:
+              resultadoStored?.ltv ??
+              resultadoStored?.rutaRecomendada?.ltv ??
+              null,
+
+            montoMaximo:
+              resultadoStored?.montoMaximo ??
+              resultadoStored?.montoPrestamoMax ??
+              resultadoStored?.prestamoMax ??
+              resultadoStored?.rutaRecomendada?.montoMaximo ??
+              null,
+
+            precioMaxVivienda:
+              resultadoStored?.precioMaxVivienda ??
+              resultadoStored?.precioMax ??
+              resultadoStored?.valorMaxVivienda ??
+              resultadoStored?.rutaRecomendada?.precioMaxVivienda ??
+              null,
+
+            capacidadPago:
+              resultadoStored?.capacidadPagoPrograma ??
+              resultadoStored?.capacidadPago ??
+              resultadoStored?.capacidadPagoGlobal ??
+              resultadoStored?.rutaRecomendada?.capacidadPago ??
+              null,
+          }
+        : null);
 
     // ✅ data que consume tu PDF util
     const data = {
