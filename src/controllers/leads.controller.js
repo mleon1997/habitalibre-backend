@@ -965,13 +965,42 @@ export async function descargarFichaComercialPDF(req, res) {
       lead?.metadata?.perfil?.ciudadCompra ||
       "-";
 
-    // ✅ Resultado stored + normalización segura (NO elimina campos)
+    // ✅ Resultado tal cual guardado (NO lo renormalizamos aquí)
     const resultadoStored = lead.resultado || null;
-    const resultadoForPdf = resultadoStored
-      ? normalizeResultadoParaSalida(resultadoStored)
+
+    // ✅ Snapshot plano para que el PDF NUNCA salga con “-” si el resultado trae datos
+    const precalificacion = resultadoStored
+      ? {
+          bancoSugerido: resultadoStored?.bancoSugerido ?? null,
+          productoSugerido: resultadoStored?.productoSugerido ?? null,
+          tasaAnual: resultadoStored?.tasaAnual ?? null,
+          plazoMeses: resultadoStored?.plazoMeses ?? null,
+          cuotaEstimada: resultadoStored?.cuotaEstimada ?? null,
+          cuotaStress:
+            resultadoStored?.cuotaStress ??
+            resultadoStored?.stressTest?.cuotaStress ??
+            null,
+          dtiConHipoteca: resultadoStored?.dtiConHipoteca ?? null,
+          ltv: resultadoStored?.ltv ?? null,
+          montoMaximo:
+            resultadoStored?.montoMaximo ??
+            resultadoStored?.montoPrestamoMax ??
+            resultadoStored?.prestamoMax ??
+            null,
+          precioMaxVivienda:
+            resultadoStored?.precioMaxVivienda ??
+            resultadoStored?.precioMax ??
+            resultadoStored?.valorMaxVivienda ??
+            null,
+          capacidadPago:
+            resultadoStored?.capacidadPagoPrograma ??
+            resultadoStored?.capacidadPago ??
+            resultadoStored?.capacidadPagoGlobal ??
+            null,
+        }
       : null;
 
-    // ✅ data consistente con tu util PDF (soporta snake_case y lee data.resultado)
+    // ✅ data que consume tu PDF util
     const data = {
       codigoHL: lead.codigoHL || "-",
       fecha,
@@ -997,21 +1026,27 @@ export async function descargarFichaComercialPDF(req, res) {
       afiliado_iess: lead.afiliado_iess ?? null,
       anios_estabilidad: lead.anios_estabilidad ?? null,
 
-      // ✅ IMPORTANTES para que NO salga vacío el DTI si toca fallback:
-      resultado: resultadoForPdf,
+      // ✅ IMPORTANTES
+      resultado: resultadoStored,
       decision: lead.decision || null,
+      precalificacion,
     };
 
-    // 🧪 DEBUG opcional (comenta si ya no lo necesitas)
-    console.log("🧪 DEBUG FICHA COMERCIAL:", {
+    // 🧪 DEBUG (déjalo un rato)
+    console.log("🧪 DEBUG FICHA COMERCIAL (precalif):", {
       codigoHL: data.codigoHL,
-      dti_en_resultado: data?.resultado?.dtiConHipoteca ?? null,
-      dti_en_decision: data?.decision?.dti ?? null,
-      cuota_en_resultado: data?.resultado?.cuotaEstimada ?? null,
-      cap_en_resultado: data?.resultado?.capacidadPago ?? null,
-      ltv_en_resultado: data?.resultado?.ltv ?? null,
-      banco: data?.resultado?.bancoSugerido ?? null,
-      productoSugerido: data?.resultado?.productoSugerido ?? null,
+      bancoSugerido: data.precalificacion?.bancoSugerido ?? null,
+      productoSugerido: data.precalificacion?.productoSugerido ?? null,
+      tasaAnual: data.precalificacion?.tasaAnual ?? null,
+      plazoMeses: data.precalificacion?.plazoMeses ?? null,
+      cuotaEstimada: data.precalificacion?.cuotaEstimada ?? null,
+      cuotaStress: data.precalificacion?.cuotaStress ?? null,
+      dtiConHipoteca: data.precalificacion?.dtiConHipoteca ?? null,
+      ltv: data.precalificacion?.ltv ?? null,
+      capacidadPago: data.precalificacion?.capacidadPago ?? null,
+      montoMaximo: data.precalificacion?.montoMaximo ?? null,
+      precioMaxVivienda: data.precalificacion?.precioMaxVivienda ?? null,
+      decision_dti: data?.decision?.dti ?? null,
     });
 
     return generarFichaComercialPDF(res, data);

@@ -23,15 +23,14 @@ const yesNoDash = (v) => {
 const pct0 = (v) => {
   const x = Number(v);
   if (!Number.isFinite(x)) return "-";
-  // soporta 0..1 y 0..100
-  if (x > 0 && x <= 1) return `${Math.round(x * 100)}%`;
+  // soporta 0..1 y 0..100 (incluye 0)
+  if (x >= 0 && x <= 1) return `${Math.round(x * 100)}%`;
   return `${Math.round(x)}%`;
 };
 
 const ratePct2 = (v) => {
   const x = Number(v);
   if (!Number.isFinite(x)) return "-";
-  // tasa anual suele venir 0.0499
   if (x > 0 && x <= 1) return `${(x * 100).toFixed(2)}%`;
   return `${x.toFixed(2)}%`;
 };
@@ -52,7 +51,6 @@ function pick(...vals) {
   return null;
 }
 
-// Helper: convierte a número o null
 function toNum(v) {
   const x = Number(v);
   return Number.isFinite(x) ? x : null;
@@ -60,33 +58,70 @@ function toNum(v) {
 
 /**
  * ✅ Precalificación “a prueba de balas”
- * - Prioriza lead.resultado.* (tu motor actual)
- * - Fallback a lead.decision.ruta.* (si el resultado no existe / cambió)
- * - Fallback a estructuras alternativas que ya tienes (mejorBanco, rutaRecomendada, etc.)
+ * Prioridad:
+ * 1) data.precalificacion (snapshot plano)
+ * 2) data.resultado (motor)
+ * 3) data.decision.ruta (fallback)
  */
 function pickPrecalif(data = {}) {
+  const snap = data?.precalificacion || null;
+
   const r = data?.resultado || {};
   const d = data?.decision || {};
   const ruta = d?.ruta || r?.rutaRecomendada || null;
 
   const banco =
-    r?.bancoSugerido ||
-    ruta?.banco ||
-    r?.mejorBanco?.banco ||
-    (Array.isArray(r?.bancosTop3) ? r.bancosTop3?.[0]?.banco : null) ||
-    null;
+    pick(
+      snap?.bancoSugerido,
+      r?.bancoSugerido,
+      ruta?.banco,
+      r?.mejorBanco?.banco,
+      Array.isArray(r?.bancosTop3) ? r.bancosTop3?.[0]?.banco : null,
+      Array.isArray(r?.bancosProbabilidad) ? r.bancosProbabilidad?.[0]?.banco : null
+    ) || null;
 
-  const tasaAnual = pick(r?.tasaAnual, ruta?.tasaAnual);
-  const plazoMeses = pick(r?.plazoMeses, ruta?.plazoMeses);
+  const tasaAnual = pick(snap?.tasaAnual, r?.tasaAnual, ruta?.tasaAnual);
+  const plazoMeses = pick(snap?.plazoMeses, r?.plazoMeses, ruta?.plazoMeses);
 
-  const cuotaEstimada = pick(r?.cuotaEstimada, ruta?.cuota, r?.cuota);
-  const cuotaStress = pick(r?.cuotaStress, r?.stressTest?.cuotaStress);
+  const cuotaEstimada = pick(
+    snap?.cuotaEstimada,
+    r?.cuotaEstimada,
+    ruta?.cuota,
+    r?.cuota
+  );
 
-  const dtiConHipoteca = pick(r?.dtiConHipoteca, d?.dti);
-  const ltv = pick(r?.ltv, d?.ltv);
+  const cuotaStress = pick(
+    snap?.cuotaStress,
+    r?.cuotaStress,
+    r?.stressTest?.cuotaStress,
+    r?.stressTest?.cuota
+  );
 
-  const montoMaximo = pick(r?.montoMaximo);
-  const precioMaxVivienda = pick(r?.precioMaxVivienda);
+  const dtiConHipoteca = pick(snap?.dtiConHipoteca, r?.dtiConHipoteca, d?.dti);
+  const ltv = pick(snap?.ltv, r?.ltv, d?.ltv);
+
+  const montoMaximo = pick(
+    snap?.montoMaximo,
+    r?.montoMaximo,
+    r?.montoPrestamoMax,
+    r?.prestamoMax
+  );
+
+  const precioMaxVivienda = pick(
+    snap?.precioMaxVivienda,
+    r?.precioMaxVivienda,
+    r?.precioMax,
+    r?.valorMaxVivienda
+  );
+
+  // ✅ NUEVO: capacidad de pago (clave para que el reporte no “se vea incompleto”)
+  const capacidadPago = pick(
+    snap?.capacidadPago,
+    r?.capacidadPagoPrograma,
+    r?.capacidadPago,
+    r?.capacidadPagoGlobal,
+    d?.capacidadPago
+  );
 
   return {
     banco,
@@ -98,23 +133,12 @@ function pickPrecalif(data = {}) {
     ltv,
     montoMaximo,
     precioMaxVivienda,
+    capacidadPago, // ✅ NUEVO
   };
 }
 
 /**
- * data esperado (recomendado):
- * {
- *  codigo, fecha, plaza, nombre, telefono, email,
- *  score, edad, tipoIngreso,
- *  valorVivienda, entradaUSD,
- *  ingresoMensual, deudasMensuales, afiliadoIess, aniosEstabilidad,
- *  ciudadCompra, tipoCompra, producto,
- *  resultado (opcional) -> objeto de simulación/precalificación
- *  decision (opcional) -> objeto decision (fallback)
- * }
- *
- * ✅ Este archivo soporta snake_case:
- *  valor_vivienda, entrada_disponible, tipo_ingreso, ingreso_mensual, deuda_mensual_aprox, afiliado_iess...
+ * ✅ Genera la ficha comercial
  */
 export function generarFichaComercialPDF(res, data) {
   const codigo = safe(data?.codigo ?? data?.codigoHL, "HL");
@@ -190,12 +214,17 @@ export function generarFichaComercialPDF(res, data) {
   };
 
   // =========================
-  // Normalización de inputs (camelCase + snake_case + resultado/decision)
+  // Normalización inputs
   // =========================
   const resultado = data?.resultado || null;
   const decision = data?.decision || null;
 
-  const codigoHL = pick(data?.codigo, data?.codigoHL, data?.codigoUnico, data?.codigoUnicoHL);
+  const codigoHL = pick(
+    data?.codigo,
+    data?.codigoHL,
+    data?.codigoUnico,
+    data?.codigoUnicoHL
+  );
 
   const nombre = pick(data?.nombre);
   const telefono = pick(data?.telefono);
@@ -216,7 +245,9 @@ export function generarFichaComercialPDF(res, data) {
     data?.scoreHL,
     decision?.scoreHL,
     resultado?.puntajeHabitaLibre?.score,
-    resultado?.puntajeHabitaLibre,
+    typeof resultado?.puntajeHabitaLibre === "number"
+      ? resultado.puntajeHabitaLibre
+      : null,
     resultado?.scoreHL?.total
   );
 
@@ -229,7 +260,6 @@ export function generarFichaComercialPDF(res, data) {
     resultado?.perfil?.tipoIngreso
   );
 
-  // Declarados (o desde DB)
   const valorViviendaDeclarado = pick(data?.valorVivienda, data?.valor_vivienda);
   const entradaUSDDeclarado = pick(data?.entradaUSD, data?.entrada_disponible);
 
@@ -242,21 +272,38 @@ export function generarFichaComercialPDF(res, data) {
 
   const tipoCompra = pick(data?.tipoCompra, data?.tipo_compra);
 
-  // Perfil financiero
-  const ingresoMensual = pick(data?.ingresoMensual, data?.ingreso_mensual, resultado?.perfil?.ingresoTotal);
-  const deudasMensuales = pick(data?.deudasMensuales, data?.deuda_mensual_aprox, resultado?.perfil?.otrasDeudasMensuales);
-  const afiliadoIess = pick(data?.afiliadoIess, data?.afiliado_iess, resultado?.perfil?.afiliadoIess);
-  const aniosEstabilidad = pick(data?.aniosEstabilidad, data?.anios_estabilidad, resultado?.perfil?.aniosEstabilidad);
+  const ingresoMensual = pick(
+    data?.ingresoMensual,
+    data?.ingreso_mensual,
+    resultado?.perfil?.ingresoTotal
+  );
+  const deudasMensuales = pick(
+    data?.deudasMensuales,
+    data?.deuda_mensual_aprox,
+    resultado?.perfil?.otrasDeudasMensuales
+  );
+  const afiliadoIess = pick(
+    data?.afiliadoIess,
+    data?.afiliado_iess,
+    resultado?.perfil?.afiliadoIess
+  );
+  const aniosEstabilidad = pick(
+    data?.aniosEstabilidad,
+    data?.anios_estabilidad,
+    resultado?.perfil?.aniosEstabilidad
+  );
 
-  // ✅ Precalificación (con fallback)
+  // ✅ Precalificación robusta
   const pre = pickPrecalif({ ...data, resultado, decision });
 
-  // Si no hay "valor vivienda declarado", a veces sirve mostrar "precio máximo sugerido"
+  // Si no hay valor declarado, usa precio máximo sugerido
   const valorViviendaParaMostrar = pick(valorViviendaDeclarado, pre?.precioMaxVivienda);
 
   // Entrada %
   const entradaPctCalc =
-    data?.entradaPct != null ? toNum(data.entradaPct) : calcEntradaPct(valorViviendaParaMostrar, entradaUSDDeclarado);
+    data?.entradaPct != null
+      ? toNum(data.entradaPct)
+      : calcEntradaPct(valorViviendaParaMostrar, entradaUSDDeclarado);
 
   // =========================
   // Header
@@ -293,7 +340,12 @@ export function generarFichaComercialPDF(res, data) {
     entradaUSDDeclarado != null ? money0(entradaUSDDeclarado) : "-"
   );
 
-  row2("Entrada (%)", entradaPctCalc != null ? pct0(entradaPctCalc) : "-", "Ciudad compra", safe(ciudadCompra));
+  row2(
+    "Entrada (%)",
+    entradaPctCalc != null ? pct0(entradaPctCalc) : "-",
+    "Ciudad compra",
+    safe(ciudadCompra)
+  );
 
   // =========================
   // 2) Perfil financiero
@@ -319,13 +371,18 @@ export function generarFichaComercialPDF(res, data) {
   row2("Tipo de compra", safe(tipoCompra), "—", "—");
 
   // =========================
-  // 3) Precalificación (estimada)
+  // 3) Precalificación
   // =========================
   doc.moveDown(0.4);
   h2("3) Precalificación (estimada)");
   doc.moveDown(0.7);
 
-  row2("Banco sugerido", safe(pre?.banco), "Tasa anual", pre?.tasaAnual != null ? ratePct2(pre.tasaAnual) : "-");
+  row2(
+    "Banco sugerido",
+    safe(pre?.banco),
+    "Tasa anual",
+    pre?.tasaAnual != null ? ratePct2(pre.tasaAnual) : "-"
+  );
 
   const plazoAnios = pre?.plazoMeses != null ? Math.round(Number(pre.plazoMeses) / 12) : null;
 
@@ -338,11 +395,19 @@ export function generarFichaComercialPDF(res, data) {
     pre?.cuotaEstimada != null ? money0(pre.cuotaEstimada) : "-"
   );
 
+  // ✅ NUEVO: capacidad de pago para que el reporte quede completo
+  row2(
+    "Capacidad de pago",
+    pre?.capacidadPago != null ? money0(pre.capacidadPago) : "-",
+    "DTI con hipoteca",
+    pre?.dtiConHipoteca != null ? pct0(pre.dtiConHipoteca) : "-"
+  );
+
   row2(
     "Cuota stress",
     pre?.cuotaStress != null ? money0(pre.cuotaStress) : "-",
-    "DTI con hipoteca",
-    pre?.dtiConHipoteca != null ? pct0(pre.dtiConHipoteca) : "-"
+    "LTV",
+    pre?.ltv != null ? pct0(pre.ltv) : "-"
   );
 
   row2(
@@ -353,14 +418,16 @@ export function generarFichaComercialPDF(res, data) {
   );
 
   row2(
-    "LTV",
-    pre?.ltv != null ? pct0(pre.ltv) : "-",
     "Valor vivienda (ref.)",
-    valorViviendaParaMostrar != null ? money0(valorViviendaParaMostrar) : "-"
+    valorViviendaParaMostrar != null ? money0(valorViviendaParaMostrar) : "-",
+    "—",
+    "—"
   );
 
   doc.moveDown(0.2);
-  small("Nota: Información declarada + cálculos estimados. El banco realiza la validación y underwriting final.");
+  small(
+    "Nota: Información declarada + cálculos estimados. El banco realiza la validación y underwriting final."
+  );
 
   doc.end();
 }
