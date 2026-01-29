@@ -126,10 +126,23 @@ function normalizarInputHL(body = {}) {
 }
 
 /**
- * ✅ Reglas duras para sinOferta (fuente de verdad)
- * Alineado con tu mailer/pdf: cuota>capacidad, dti>0.50, ltv>0.90, etc.
+ * ✅ Reglas duras para sinOferta (solo como "red flag")
+ * Regla de oro: si el motor ya determinó una ruta viable, NO se puede forzar sinOferta aquí
+ * (salvo data corrupta / señales inexistentes).
  */
 function calcularSinOfertaHard(resultado = {}) {
+  // 0) Si el motor ya marcó viable, NO overrides (alinea motor vs UI/PDF)
+  const tipoRuta = resultado?.rutaRecomendada?.tipo || resultado?.productoSugerido || resultado?.productoElegido;
+  const viableByRuta = resultado?.rutaRecomendada?.viable === true;
+
+  const viableByEscenario =
+    tipoRuta &&
+    resultado?.escenariosHL &&
+    resultado.escenariosHL[String(tipoRuta).toLowerCase()]?.viable === true;
+
+  const hayViable = viableByRuta || viableByEscenario;
+
+  // 1) Números base
   const capacidad = pickNumber(
     resultado?.capacidadPagoPrograma,
     resultado?.capacidadPago,
@@ -141,6 +154,7 @@ function calcularSinOfertaHard(resultado = {}) {
   const cuota = pickNumber(resultado?.cuotaEstimada);
   const dti = pickNumber(resultado?.dtiConHipoteca);
   const ltv = pickNumber(resultado?.ltv);
+
   const montoMax = pickNumber(
     resultado?.montoMaximo,
     resultado?.montoPrestamoMax,
@@ -152,20 +166,32 @@ function calcularSinOfertaHard(resultado = {}) {
     resultado?.valorMaxVivienda
   );
 
-  // si faltan señales fuertes -> sin oferta (conservador)
+  // 2) Si faltan señales fuertes -> solo marcar sin oferta si NO hay viable.
+  // (si hay viable, no debería pasar, pero evitamos false negatives)
   const noSignals =
     !isNum(montoMax) || montoMax <= 0 ||
-    !isNum(precioMax) || precioMax <= 0 ||
-    !isNum(capacidad) || capacidad <= 0;
+    !isNum(precioMax) || precioMax <= 0;
 
-  if (noSignals) return true;
+  if (noSignals) return !hayViable;
 
-  if (isNum(dti) && dti > 0.50) return true;
-  if (isNum(ltv) && ltv > 0.90) return true;
-  if (isNum(cuota) && isNum(capacidad) && cuota > capacidad) return true;
+  // 3) Reglas duras globales (pueden mantenerse)
+  // OJO: si decides que DTI>0.50 es red flag, ok, pero NO debe contradecir un viable del motor.
+  if (!hayViable) {
+    if (isNum(dti) && dti > 0.50) return true;
+    if (isNum(ltv) && ltv > 0.90) return true;
+  }
+
+  // 4) Regla cuota > capacidad: SOLO para rutas donde aplique (Privada/Comercial)
+  const tipo = String(tipoRuta || "").toLowerCase();
+  const aplicaReglaFlujo = tipo.includes("priv") || tipo.includes("comercial");
+
+  if (!hayViable && aplicaReglaFlujo) {
+    if (isNum(cuota) && isNum(capacidad) && cuota > capacidad) return true;
+  }
 
   return false;
 }
+
 
 /* --------- DEBUG --------- */
 router.get("/ping", (req, res) => {
@@ -215,6 +241,19 @@ router.post("/", async (req, res) => {
 
     // ✅ Fuente de verdad: reglas duras
     const sinOfertaHard = calcularSinOfertaHard(resultado);
+
+    const tipoRuta =
+  resultado?.rutaRecomendada?.tipo ||
+  resultado?.productoSugerido ||
+  resultado?.productoElegido ||
+  null;
+
+const rutaViable =
+  resultado?.rutaRecomendada?.viable === true ||
+  (tipoRuta &&
+    resultado?.escenariosHL &&
+    resultado.escenariosHL[String(tipoRuta).toLowerCase()]?.viable === true) ||
+  (Array.isArray(resultado?.rutasViables) && resultado.rutasViables.some((r) => r?.viable === true));
 
     // ✅ sinOfertaFinal = (engine true) OR (hard true)
     // Ojo: si engine dice false pero hard dice true, gana hard.
