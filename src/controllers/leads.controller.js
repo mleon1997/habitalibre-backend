@@ -909,7 +909,8 @@ export async function obtenerLeadPorIdAdmin(req, res) {
     if (!id) return res.status(400).json({ ok: false, msg: "Falta id" });
 
     const lead = await Lead.findById(id).lean();
-    if (!lead) return res.status(404).json({ ok: false, msg: "Lead no encontrado" });
+    if (!lead)
+      return res.status(404).json({ ok: false, msg: "Lead no encontrado" });
 
     return res.json({ ok: true, lead });
   } catch (err) {
@@ -964,6 +965,12 @@ export async function descargarFichaComercialPDF(req, res) {
       lead?.metadata?.perfil?.ciudadCompra ||
       "-";
 
+    // ✅ Resultado stored + normalización segura (NO elimina campos)
+    const resultadoStored = lead.resultado || null;
+    const resultadoForPdf = resultadoStored
+      ? normalizeResultadoParaSalida(resultadoStored)
+      : null;
+
     // ✅ data consistente con tu util PDF (soporta snake_case y lee data.resultado)
     const data = {
       codigoHL: lead.codigoHL || "-",
@@ -990,90 +997,26 @@ export async function descargarFichaComercialPDF(req, res) {
       afiliado_iess: lead.afiliado_iess ?? null,
       anios_estabilidad: lead.anios_estabilidad ?? null,
 
-      // resultado normalizado
-      resultado: lead.resultado
-        ? normalizeResultadoParaSalida(lead.resultado)
-        : null,
+      // ✅ IMPORTANTES para que NO salga vacío el DTI si toca fallback:
+      resultado: resultadoForPdf,
+      decision: lead.decision || null,
     };
+
+    // 🧪 DEBUG opcional (comenta si ya no lo necesitas)
+    console.log("🧪 DEBUG FICHA COMERCIAL:", {
+      codigoHL: data.codigoHL,
+      dti_en_resultado: data?.resultado?.dtiConHipoteca ?? null,
+      dti_en_decision: data?.decision?.dti ?? null,
+      cuota_en_resultado: data?.resultado?.cuotaEstimada ?? null,
+      cap_en_resultado: data?.resultado?.capacidadPago ?? null,
+      ltv_en_resultado: data?.resultado?.ltv ?? null,
+      banco: data?.resultado?.bancoSugerido ?? null,
+      productoSugerido: data?.resultado?.productoSugerido ?? null,
+    });
 
     return generarFichaComercialPDF(res, data);
   } catch (err) {
     console.error("❌ descargarFichaComercialPDF:", err?.stack || err);
     return res.status(500).json({ ok: false, msg: "Error generando PDF" });
   }
-
-  // ✅ resultado: NO lo renormalices aquí (puede perder campos)
-const resultadoStored = lead.resultado || null;
-
-// ✅ snapshot opcional (por si el schema cambia en el futuro)
-const precalificacion = resultadoStored
-  ? {
-      bancoSugerido: resultadoStored?.bancoSugerido ?? null,
-      productoSugerido: resultadoStored?.productoSugerido ?? null,
-      tasaAnual: resultadoStored?.tasaAnual ?? null,
-      plazoMeses: resultadoStored?.plazoMeses ?? null,
-      cuotaEstimada: resultadoStored?.cuotaEstimada ?? null,
-      cuotaStress: resultadoStored?.cuotaStress ?? resultadoStored?.stressTest?.cuotaStress ?? null,
-      dtiConHipoteca: resultadoStored?.dtiConHipoteca ?? null,
-      ltv: resultadoStored?.ltv ?? null,
-      montoMaximo: resultadoStored?.montoMaximo ?? null,
-      precioMaxVivienda: resultadoStored?.precioMaxVivienda ?? null,
-    }
-  : null;
-
-const data = {
-  codigoHL: lead.codigoHL || "-",
-  fecha,
-  plaza,
-
-  nombre: lead.nombre || "-",
-  telefono: lead.telefono || "-",
-  email: lead.email || "-",
-
-  // campos core
-  scoreHL: lead.scoreHL ?? null,
-  edad: lead.edad ?? null,
-  tipo_ingreso: lead.tipo_ingreso ?? null,
-  valor_vivienda: lead.valor_vivienda ?? null,
-  entrada_disponible: lead.entrada_disponible ?? null,
-  ciudad_compra: lead.ciudad_compra ?? null,
-  tipo_compra: lead.tipo_compra ?? null,
-  producto: lead.producto ?? null,
-
-  // perfil financiero
-  ingreso_mensual: lead.ingreso_mensual ?? null,
-  deuda_mensual_aprox: lead.deuda_mensual_aprox ?? null,
-  afiliado_iess: lead.afiliado_iess ?? null,
-  anios_estabilidad: lead.anios_estabilidad ?? null,
-
-  // ✅ IMPORTANTES
-  resultado: resultadoStored,          // 👈 sin normalize aquí
-  decision: lead.decision || null,     // 👈 esto te faltaba
-  precalificacion,                     // 👈 opcional, pero recomendado
-};
-
-console.log("🧪 DEBUG FICHA COMERCIAL (data):", {
-  codigoHL: data.codigoHL,
-  producto: data.producto,
-  valor_vivienda: data.valor_vivienda,
-  entrada_disponible: data.entrada_disponible,
-  ingreso_mensual: data.ingreso_mensual,
-  deuda_mensual_aprox: data.deuda_mensual_aprox,
-  afiliado_iess: data.afiliado_iess,
-  anios_estabilidad: data.anios_estabilidad,
-  resultadoKeys: data.resultado ? Object.keys(data.resultado) : null,
-  resultado_productoSugerido: data.resultado?.productoSugerido,
-  resultado_bancoSugerido: data.resultado?.bancoSugerido,
-  resultado_tasaAnual: data.resultado?.tasaAnual,
-  resultado_plazoMeses: data.resultado?.plazoMeses,
-  resultado_cuotaEstimada: data.resultado?.cuotaEstimada,
-  resultado_montoMaximo: data.resultado?.montoMaximo,
-  resultado_precioMaxVivienda: data.resultado?.precioMaxVivienda,
-  resultado_flags: data.resultado?.flags,
-});
-
-
-return generarFichaComercialPDF(res, data);
-
 }
-

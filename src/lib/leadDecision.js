@@ -70,6 +70,30 @@ function pickBancosTop3(res) {
     .filter(Boolean);
 }
 
+// ✅ Helper: banco sugerido “a prueba de balas” (flat)
+function pickBancoSugerido(res) {
+  if (!res || typeof res !== "object") return null;
+
+  const bancoTop3 =
+    Array.isArray(res?.bancosTop3) && res.bancosTop3.length
+      ? (res.bancosTop3?.[0]?.banco || res.bancosTop3?.[0]?.nombre || null)
+      : null;
+
+  const bancoProb =
+    Array.isArray(res?.bancosProbabilidad) && res.bancosProbabilidad.length
+      ? (res.bancosProbabilidad?.[0]?.banco || res.bancosProbabilidad?.[0]?.nombre || null)
+      : null;
+
+  return (
+    res?.bancoSugerido ||
+    res?.banco_sugerido ||
+    res?.mejorBanco?.banco ||
+    res?.mejorBanco?.nombre ||
+    bancoTop3 ||
+    bancoProb ||
+    null
+  );
+}
 
 function buildRuta(res) {
   const producto =
@@ -79,7 +103,9 @@ function buildRuta(res) {
     res?.producto ||
     null;
 
-  const banco = res?.bancoSugerido || null;
+  // ✅ FIX: antes solo res?.bancoSugerido (muchas veces viene en mejorBanco / bancosTop3)
+  const banco = pickBancoSugerido(res);
+
   const tasaAnual = num(res?.tasaAnual);
   const plazoMeses = num(res?.plazoMeses);
   const cuota = num(res?.cuotaEstimada);
@@ -119,18 +145,17 @@ export function leadDecision(lead = {}) {
   const ltv = num(res?.ltv);
   const cuota = num(res?.cuotaEstimada);
   const cap = num(res?.capacidadPago);
-  const producto = res?.productoSugerido || res?.productoElegido || res?.tipoCreditoElegido || lead?.producto || null;
+  const producto =
+    res?.productoSugerido || res?.productoElegido || res?.tipoCreditoElegido || lead?.producto || null;
 
-   // Score HL (si existe)
+  // Score HL (si existe)
   const scoreHL =
     (typeof res?.puntajeHabitaLibre === "number" ? res.puntajeHabitaLibre : null) ??
-    (res?.puntajeHabitaLibre &&
-    typeof res.puntajeHabitaLibre.score === "number"
+    (res?.puntajeHabitaLibre && typeof res.puntajeHabitaLibre.score === "number"
       ? res.puntajeHabitaLibre.score
       : null) ??
     (typeof res?.scoreHL === "number" ? res.scoreHL : null) ??
     (typeof lead?.scoreHL === "number" ? lead.scoreHL : null);
-
 
   // -----------------------------
   // Faltantes mínimos operativos
@@ -138,7 +163,12 @@ export function leadDecision(lead = {}) {
   const faltantes = [];
 
   // Identidad mínima para acción
-  const tieneContacto = !!(lead?.telefono || lead?.email || lead?.igUsername || lead?.manychatSubscriberId);
+  const tieneContacto = !!(
+    lead?.telefono ||
+    lead?.email ||
+    lead?.igUsername ||
+    lead?.manychatSubscriberId
+  );
   if (!tieneContacto) faltantes.push("Contacto (teléfono o email)");
 
   // Para poder “calificar” bien
@@ -171,11 +201,15 @@ export function leadDecision(lead = {}) {
   if (faltantes.length > 0) {
     estado = "por_calificar";
     porQue.push("Faltan datos para calificar bien.");
-    nextActions.push("Pedir datos faltantes (ingreso, deudas, estabilidad, IESS, horizonte).");
+    nextActions.push(
+      "Pedir datos faltantes (ingreso, deudas, estabilidad, IESS, horizonte)."
+    );
   } else if (sinOferta) {
     estado = "descartable";
     porQue.push("El motor marcó sin oferta viable con la información actual.");
-    nextActions.push("Confirmar datos (ingreso/deudas/entrada) y explorar alternativas (entrada mayor o menor valor).");
+    nextActions.push(
+      "Confirmar datos (ingreso/deudas/entrada) y explorar alternativas (entrada mayor o menor valor)."
+    );
   } else {
     // Ya tenemos base
     const dtiAlto = dti != null && dti >= DTI_ALTO;
@@ -198,11 +232,6 @@ export function leadDecision(lead = {}) {
   // -----------------------------
   // Heat (0..3)
   // -----------------------------
-  // Heurística simple:
-  // 3: bancable + horizonte corto (0-3 / 0-6)
-  // 2: bancable sin horizonte corto o rescatable con horizonte corto
-  // 1: rescatable normal
-  // 0: descartable o por_calificar
   const horizonteLower = String(tiempoCompra || "").toLowerCase();
   const horizonteCorto =
     horizonteLower.includes("0-3") ||
