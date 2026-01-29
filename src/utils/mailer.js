@@ -1,6 +1,7 @@
 // src/utils/mailer.js
 import nodemailer from "nodemailer";
 import { normalizeResultadoParaSalida } from "./hlResultado.js";
+import { generarPDFLeadAvanzado } from "./pdf.js";
 
 /* ===========================================================
    Variables de entorno
@@ -35,7 +36,8 @@ function getTransporter() {
 
   // Si SMTP_SECURE viene explícito, lo respetamos.
   // Si no, inferimos por puerto (465 suele ser secure).
-  const secure = String(SMTP_SECURE || "").toLowerCase() === "true" ? true : port === 465;
+  const secure =
+    String(SMTP_SECURE || "").toLowerCase() === "true" ? true : port === 465;
 
   _transporter = nodemailer.createTransport({
     host: SMTP_HOST || "smtp-relay.sendinblue.com",
@@ -162,7 +164,8 @@ function calcularSinOfertaFallback(R = {}) {
   )
     return true;
 
-  if (typeof R.ltv === "number" && Number.isFinite(R.ltv) && R.ltv > 0.9) return true;
+  if (typeof R.ltv === "number" && Number.isFinite(R.ltv) && R.ltv > 0.9)
+    return true;
 
   if (
     typeof R.cuotaEstimada === "number" &&
@@ -187,20 +190,34 @@ function computeCapacidadEfectiva(resultado = {}) {
 }
 
 function computeSinOfertaFinal(resultado = {}) {
-  const sinOfertaFromEngine = pickBool(resultado?.flags?.sinOferta, resultado?.sinOferta);
+  const sinOfertaFromEngine = pickBool(
+    resultado?.flags?.sinOferta,
+    resultado?.sinOferta
+  );
 
   const capacidadEfectiva = computeCapacidadEfectiva(resultado);
 
   const R = {
     capacidadPago: capacidadEfectiva,
-    montoMaximo: pickNumber(resultado?.montoMaximo, resultado?.montoPrestamoMax, resultado?.prestamoMax),
-    precioMaxVivienda: pickNumber(resultado?.precioMaxVivienda, resultado?.precioMax, resultado?.valorMaxVivienda),
+    montoMaximo: pickNumber(
+      resultado?.montoMaximo,
+      resultado?.montoPrestamoMax,
+      resultado?.prestamoMax
+    ),
+    precioMaxVivienda: pickNumber(
+      resultado?.precioMaxVivienda,
+      resultado?.precioMax,
+      resultado?.valorMaxVivienda
+    ),
     ltv: pickNumber(resultado?.ltv),
     dtiConHipoteca: pickNumber(resultado?.dtiConHipoteca),
     cuotaEstimada: pickNumber(resultado?.cuotaEstimada),
   };
 
-  const sinOferta = typeof sinOfertaFromEngine === "boolean" ? sinOfertaFromEngine : calcularSinOfertaFallback(R);
+  const sinOferta =
+    typeof sinOfertaFromEngine === "boolean"
+      ? sinOfertaFromEngine
+      : calcularSinOfertaFallback(R);
 
   return { sinOferta, capacidadEfectiva };
 }
@@ -223,7 +240,7 @@ function resultadoParaEmail(resultado = {}) {
 }
 
 /* ===========================================================
-   ✅ PDF attachment helpers (NO generar PDF aquí)
+   ✅ PDF attachment helpers
 =========================================================== */
 function buildCodigoHL(lead, resultado = {}) {
   return (
@@ -251,6 +268,39 @@ function buildAttachments(lead, resultado, pdfBuffer) {
   ];
 }
 
+// ✅ FIX: generar PDF si no viene (y evitar adjuntar basura)
+function isValidPdfBuffer(buf) {
+  return Buffer.isBuffer(buf) && buf.length > 1500; // umbral simple
+}
+
+async function ensurePdfBuffer(lead, resultadoRaw, pdfBuffer) {
+  if (isValidPdfBuffer(pdfBuffer)) return pdfBuffer;
+
+  try {
+    const buf = await generarPDFLeadAvanzado(lead, resultadoRaw);
+
+    if (!isValidPdfBuffer(buf)) {
+      console.warn("⚠️ PDF generado inválido (no se adjunta)", {
+        lead: lead?.email || lead?._id,
+        size: Buffer.isBuffer(buf) ? buf.length : null,
+      });
+      return null;
+    }
+
+    if (NODE_ENV !== "production") {
+      console.log("📎 PDF generado para adjunto:", {
+        lead: lead?.email || lead?._id,
+        size: buf.length,
+      });
+    }
+
+    return buf;
+  } catch (err) {
+    console.error("❌ Error generando PDF para adjunto:", err?.stack || err);
+    return null;
+  }
+}
+
 /* ===========================================================
    Render: ranking de bancos (cliente)
 =========================================================== */
@@ -260,7 +310,9 @@ function renderTopBancosCliente(resultado = {}) {
   if (sinOferta) return "";
 
   const bancosTop3 =
-    r.bancosTop3 && r.bancosTop3.length ? r.bancosTop3 : (r.bancosProbabilidad || []).slice(0, 3);
+    r.bancosTop3 && r.bancosTop3.length
+      ? r.bancosTop3
+      : (r.bancosProbabilidad || []).slice(0, 3);
 
   if (!bancosTop3 || bancosTop3.length === 0) return "";
 
@@ -280,7 +332,8 @@ function renderTopBancosCliente(resultado = {}) {
       const probScore = rawScore !== null ? Math.round(rawScore) : null;
       const probLabel = b.probLabel || "Probabilidad media";
 
-      const tipoProducto = b.tipoProducto || b.tipoCredito || b.tipo || b.producto || "";
+      const tipoProducto =
+        b.tipoProducto || b.tipoCredito || b.tipo || b.producto || "";
 
       const filaIdx = idx + 1;
       const scoreTexto = probScore !== null ? `${probScore}%` : "—";
@@ -292,7 +345,11 @@ function renderTopBancosCliente(resultado = {}) {
           </td>
           <td style="padding:6px 10px;font-size:12px;color:#bfdbfe;border-bottom:1px solid rgba(30,64,175,0.4);text-align:center;">
             ${probLabel}
-            ${probScore !== null ? `<span style="opacity:0.8;"> · ${scoreTexto}</span>` : ""}
+            ${
+              probScore !== null
+                ? `<span style="opacity:0.8;"> · ${scoreTexto}</span>`
+                : ""
+            }
           </td>
           <td style="padding:6px 10px;font-size:11px;color:#94a3b8;border-bottom:1px solid rgba(30,64,175,0.4);text-align:right;">
             ${tipoProducto || "—"}
@@ -302,12 +359,14 @@ function renderTopBancosCliente(resultado = {}) {
     })
     .join("");
 
-  const mejorNombre = mejorBanco?.banco || mejorBanco?.nombre || "la entidad con mejor ajuste";
+  const mejorNombre =
+    mejorBanco?.banco || mejorBanco?.nombre || "la entidad con mejor ajuste";
 
   let mejorRaw = null;
   if (isNum(mejorBanco?.probScore)) mejorRaw = mejorBanco.probScore;
   else if (isNum(mejorBanco?.probPct)) mejorRaw = mejorBanco.probPct;
-  else if (isNum(mejorBanco?.probabilidad)) mejorRaw = mejorBanco.probabilidad * 100;
+  else if (isNum(mejorBanco?.probabilidad))
+    mejorRaw = mejorBanco.probabilidad * 100;
   else if (isNum(mejorBanco?.prob)) mejorRaw = mejorBanco.prob * 100;
   else if (isNum(mejorBanco?.score)) mejorRaw = mejorBanco.score;
 
@@ -359,7 +418,9 @@ function renderTopBancosInterno(resultado = {}) {
   const r = resultadoParaEmail(resultado);
 
   const bancosTop3 =
-    r.bancosTop3 && r.bancosTop3.length ? r.bancosTop3 : (r.bancosProbabilidad || []).slice(0, 3);
+    r.bancosTop3 && r.bancosTop3.length
+      ? r.bancosTop3
+      : (r.bancosProbabilidad || []).slice(0, 3);
 
   if (!bancosTop3 || bancosTop3.length === 0) return "";
 
@@ -406,7 +467,8 @@ function renderTopBancosInterno(resultado = {}) {
   let mejorRaw = null;
   if (isNum(mejorBanco?.probScore)) mejorRaw = mejorBanco.probScore;
   else if (isNum(mejorBanco?.probPct)) mejorRaw = mejorBanco.probPct;
-  else if (isNum(mejorBanco?.probabilidad)) mejorRaw = mejorBanco.probabilidad * 100;
+  else if (isNum(mejorBanco?.probabilidad))
+    mejorRaw = mejorBanco.probabilidad * 100;
   else if (isNum(mejorBanco?.prob)) mejorRaw = mejorBanco.prob * 100;
   else if (isNum(mejorBanco?.score)) mejorRaw = mejorBanco.score;
 
@@ -419,7 +481,9 @@ function renderTopBancosInterno(resultado = {}) {
         Ranking de probabilidad por banco (HabitaLibre)
       </div>
       <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;">
-        Mejor ajuste actual: <strong>${mejorNombre}</strong> (${mejorLabel}${mejorScore ? ` · ${mejorScore}` : ""}).
+        Mejor ajuste actual: <strong>${mejorNombre}</strong> (${mejorLabel}${
+    mejorScore ? ` · ${mejorScore}` : ""
+  }).
       </div>
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
              style="border-collapse:collapse;">
@@ -439,7 +503,8 @@ function renderPorQueRecomendado(resultado = {}) {
   const sinOferta = r?.flags?.sinOferta === true;
   if (sinOferta) return "";
 
-  const tipoRaw = r.productoSugerido || r.productoElegido || r.tipoCreditoElegido || "CRÉDITO";
+  const tipoRaw =
+    r.productoSugerido || r.productoElegido || r.tipoCreditoElegido || "CRÉDITO";
 
   const cuotaNum = isNum(r.cuotaEstimada) ? r.cuotaEstimada : null;
   const capacidadNum = isNum(r.capacidadPago) ? r.capacidadPago : null;
@@ -447,7 +512,8 @@ function renderPorQueRecomendado(resultado = {}) {
   const ltvNum = isNum(r.ltv) ? r.ltv : null;
 
   const cuotaTxt = cuotaNum != null ? money(cuotaNum) : "una cuota manejable";
-  const capacidadTxt = capacidadNum != null ? money(capacidadNum) : "tu capacidad de pago mensual";
+  const capacidadTxt =
+    capacidadNum != null ? money(capacidadNum) : "tu capacidad de pago mensual";
 
   const dtiTxt = dtiNum != null ? `${(dtiNum * 100).toFixed(0)}%` : null;
   const ltvTxt = ltvNum != null ? `${(ltvNum * 100).toFixed(0)}%` : null;
@@ -477,7 +543,9 @@ function renderPorQueRecomendado(resultado = {}) {
         <li>La cuota estimada (${cuotaTxt}) se mantiene dentro de ${capacidadTxt}, sin sobreendeudarte.</li>
         ${
           showDtiLtv
-            ? `<li>Tu endeudamiento total quedaría en torno a ${dtiTxt || "un porcentaje sano"} y el banco financiaría aprox. ${
+            ? `<li>Tu endeudamiento total quedaría en torno a ${
+                dtiTxt || "un porcentaje sano"
+              } y el banco financiaría aprox. ${
                 ltvTxt || "una parte razonable del valor de la vivienda"
               }.</li>`
             : ""
@@ -499,7 +567,8 @@ function htmlResumenCliente(lead = {}, resultadoRaw = {}) {
   const nombre = lead?.nombre?.split(" ")[0] || "¡Hola!";
 
   // ✅ Producto sólo si HAY oferta
-  const productoBase = resultado?.productoSugerido || resultado?.productoElegido || "Crédito hipotecario";
+  const productoBase =
+    resultado?.productoSugerido || resultado?.productoElegido || "Crédito hipotecario";
   const producto = sinOferta ? "Perfil en construcción" : productoBase;
 
   const capacidad = money(resultado?.capacidadPago);
@@ -567,18 +636,28 @@ function htmlResumenCliente(lead = {}, resultadoRaw = {}) {
                             ${pillLabel}
                           </div>
                           <div style="font-size:18px;font-weight:600;margin-bottom:4px;">${producto}</div>
-                          <div style="font-size:13px;${sinOferta ? "color:#fee2e2" : "color:#bbf7d0"};max-width:360px;">
+                          <div style="font-size:13px;${
+                            sinOferta ? "color:#fee2e2" : "color:#bbf7d0"
+                          };max-width:360px;">
                             ${textoBajadaProducto}
                           </div>
                         </div>
                         <div style="padding:4px 10px;border-radius:999px;background:${
-                          sinOferta ? "rgba(248,113,113,0.16)" : "rgba(34,197,94,0.16)"
+                          sinOferta
+                            ? "rgba(248,113,113,0.16)"
+                            : "rgba(34,197,94,0.16)"
                         };border:1px solid ${
-                          sinOferta ? "rgba(248,113,113,0.5)" : "rgba(74,222,128,0.4)"
+                          sinOferta
+                            ? "rgba(248,113,113,0.5)"
+                            : "rgba(74,222,128,0.4)"
                         };font-size:11px;color:${
                           sinOferta ? "#fecaca" : "#bbf7d0"
                         };font-weight:500;">
-                          ${sinOferta ? "Sin oferta viable hoy · perfil en ajuste" : "✔ Precalificación vigente según los datos ingresados"}
+                          ${
+                            sinOferta
+                              ? "Sin oferta viable hoy · perfil en ajuste"
+                              : "✔ Precalificación vigente según los datos ingresados"
+                          }
                         </div>
                       </div>
 
@@ -754,7 +833,7 @@ function htmlInterno(lead = {}, resultadoRaw = {}) {
 }
 
 /* ===========================================================
-   💌 enviarCorreoCliente: correo al lead + PDF (buffer opcional)
+   💌 enviarCorreoCliente: correo al lead + PDF
 =========================================================== */
 export async function enviarCorreoCliente(lead, resultadoRaw, pdfBuffer = null) {
   if (!lead?.email) {
@@ -767,6 +846,9 @@ export async function enviarCorreoCliente(lead, resultadoRaw, pdfBuffer = null) 
   const resultadoNorm = normalizeResultadoParaSalida(resultadoRaw);
   const resultado = resultadoParaEmail(resultadoNorm);
 
+  // ✅ FIX: generar PDF si no vino
+  const pdfFinal = await ensurePdfBuffer(lead, resultadoRaw, pdfBuffer);
+
   const info = await tx.sendMail({
     from: FINAL_FROM,
     to: lead.email,
@@ -776,14 +858,22 @@ export async function enviarCorreoCliente(lead, resultadoRaw, pdfBuffer = null) 
     text:
       "Gracias por usar el simulador de HabitaLibre. " +
       "Adjuntamos un PDF con el resumen detallado de tu precalificación.",
-    attachments: buildAttachments(lead, resultado, pdfBuffer),
+    attachments: buildAttachments(lead, resultado, pdfFinal),
   });
+
+  if (NODE_ENV !== "production") {
+    console.log("📩 enviarCorreoCliente OK", {
+      to: lead.email,
+      attached: isValidPdfBuffer(pdfFinal),
+      size: pdfFinal?.length || 0,
+    });
+  }
 
   return info;
 }
 
 /* ===========================================================
-   💌 enviarCorreoLead: correo interno + PDF (buffer opcional)
+   💌 enviarCorreoLead: correo interno + PDF
 =========================================================== */
 export async function enviarCorreoLead(lead, resultadoRaw, pdfBuffer = null) {
   const tx = getTransporter();
@@ -791,14 +881,27 @@ export async function enviarCorreoLead(lead, resultadoRaw, pdfBuffer = null) {
   const resultadoNorm = normalizeResultadoParaSalida(resultadoRaw);
   const resultado = resultadoParaEmail(resultadoNorm);
 
+  // ✅ FIX: generar PDF si no vino
+  const pdfFinal = await ensurePdfBuffer(lead, resultadoRaw, pdfBuffer);
+
   const info = await tx.sendMail({
     from: FINAL_FROM,
     to: INTERNAL_RECIPIENTS.join(","),
     subject: `Nuevo lead: ${lead?.nombre || "Cliente"} (${lead?.canal || "—"})`,
     html: htmlInterno(lead, resultado),
-    replyTo: lead?.email ? `"${lead?.nombre || "Cliente"}" <${lead.email}>` : undefined,
-    attachments: buildAttachments(lead, resultado, pdfBuffer),
+    replyTo: lead?.email
+      ? `"${lead?.nombre || "Cliente"}" <${lead.email}>`
+      : undefined,
+    attachments: buildAttachments(lead, resultado, pdfFinal),
   });
+
+  if (NODE_ENV !== "production") {
+    console.log("📩 enviarCorreoLead OK", {
+      to: INTERNAL_RECIPIENTS.join(","),
+      attached: isValidPdfBuffer(pdfFinal),
+      size: pdfFinal?.length || 0,
+    });
+  }
 
   return info;
 }
