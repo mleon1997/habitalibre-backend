@@ -5,16 +5,16 @@ import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
 import { generarCodigoHLDesdeObjectId } from "../utils/codigoHL.js";
 import { normalizeResultadoParaSalida } from "../utils/hlResultado.js";
 
-// ✅ NUEVO: PDF ficha comercial
+// ✅ PDF ficha comercial
 import { generarFichaComercialPDF } from "../utils/fichaComercialPdf.js";
 
-// ✅ TU archivo real está en /src/lib y exporta leadDecision
+// ✅ leadDecision (tu archivo real en /src/lib)
 import { leadDecision } from "../lib/leadDecision.js";
 
-// ✅ NUEVO: Merge Web + ManyChat (un solo lead por persona)
+// ✅ Merge Web + ManyChat (un solo lead por persona)
 import { upsertLeadMerged } from "../services/leadMerge.js";
 
-const LEADS_CONTROLLER_VERSION = "2026-01-28-fix-scoreHL-perfil-v1-PATCHED";
+const LEADS_CONTROLLER_VERSION = "2026-01-29-leads-controller-v1";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
@@ -61,7 +61,7 @@ function sanitizarResultadoCliente(resultado = {}) {
   // legacy: top-level sinOferta (lo eliminamos para evitar pisar)
   if ("sinOferta" in limpio) delete limpio.sinOferta;
 
-  // NO tocar flags.sinOferta
+  // NO tocar flags.sinOferta (pero clonamos flags)
   if (limpio.flags && typeof limpio.flags === "object") {
     limpio.flags = { ...limpio.flags };
   }
@@ -259,7 +259,7 @@ function pickSubscriberId(body = {}) {
 
 /* ===========================================================
    Helper: guardar decision en lead sin romper el request
-   ✅ PATCH 2: también setea decision_* planos
+   ✅ setea decision_* planos indexables
 =========================================================== */
 async function safeDecisionSave(leadDoc, tag = "GEN") {
   try {
@@ -268,7 +268,6 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
     leadDoc.decision = d;
     leadDoc.decisionUpdatedAt = new Date();
 
-    // ✅ set campos planos indexables (hook no corre si decision fue modificado)
     leadDoc.decision_estado = d?.estado || null;
     leadDoc.decision_etapa = d?.etapa || null;
     leadDoc.decision_heat = Number.isFinite(Number(d?.heat))
@@ -278,7 +277,10 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
 
     await leadDoc.save();
   } catch (e) {
-    console.warn(`⚠️ No se pudo calcular decision (${tag}):`, e?.message || e);
+    console.warn(
+      `⚠️ No se pudo calcular decision (${tag}):`,
+      e?.message || e
+    );
   }
 }
 
@@ -310,11 +312,11 @@ export async function crearLead(req, res) {
       tipoCompra,
       tipoCompraNumero,
 
-      // ✅ opcional (si el front lo manda)
+      // ✅ opcional
       valorVivienda,
       entradaDisponible,
 
-      // ✅ opcional (si el front lo manda como “edad/tipoIngreso” planos)
+      // ✅ opcional (planos)
       edad,
       tipoIngreso,
     } = req.body || {};
@@ -326,7 +328,7 @@ export async function crearLead(req, res) {
       });
     }
 
-    // ✅ PATCH 1: aceptar snake_case/camelCase para campos mínimos
+    // ✅ aceptar snake_case/camelCase para campos mínimos
     const body = req.body || {};
 
     const edadRaw =
@@ -381,7 +383,9 @@ export async function crearLead(req, res) {
     const emailEfectivo = tokenEmail || emailNorm;
 
     const resultadoSanitizado = sanitizarResultadoCliente(resultado);
-    const resultadoNormalizado = normalizeResultadoParaSalida(resultadoSanitizado);
+    const resultadoNormalizado = normalizeResultadoParaSalida(
+      resultadoSanitizado
+    );
 
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
@@ -421,9 +425,7 @@ export async function crearLead(req, res) {
         ? toNumberOrNull(tipoCompraNumeroRaw)
         : mapTipoCompraNumero(tipoCompraLower);
 
-    // ✅ Prioridad para valor/entrada:
-    // 1) Campos planos del FRONT (snake o camel)
-    // 2) lo que venga en resultadoNormalizado (si el front manda output completo del scoring)
+    // ✅ Prioridad valor/entrada
     const valorViviendaNorm =
       valorViviendaRaw != null
         ? toNumberOrNull(valorViviendaRaw)
@@ -451,7 +453,7 @@ export async function crearLead(req, res) {
         ? String(derivados.tipoIngreso).trim()
         : null);
 
-    // ✅ score detalle (para debug/admin UI sin depender de resultado.*)
+    // ✅ score detalle para debug/admin
     const scoreHLDetalleNorm =
       resultadoNormalizado?.puntajeHabitaLibre != null
         ? resultadoNormalizado.puntajeHabitaLibre
@@ -525,7 +527,7 @@ export async function crearLead(req, res) {
 
         producto: producto || null,
         scoreHL: typeof scoreHL === "number" ? scoreHL : null,
-        scoreHLDetalle: scoreHLDetalleNorm || null, // ✅ guardamos detalle
+        scoreHLDetalle: scoreHLDetalleNorm || null,
 
         // ✅ CANÓNICO
         resultado: resultadoNormalizado,
@@ -541,20 +543,26 @@ export async function crearLead(req, res) {
 
         ...(edadNorm != null ? { edad: edadNorm } : {}),
         ...(tipoIngresoNorm ? { tipo_ingreso: tipoIngresoNorm } : {}),
-        ...(valorViviendaNorm != null ? { valor_vivienda: valorViviendaNorm } : {}),
-        ...(entradaDisponibleNorm != null ? { entrada_disponible: entradaDisponibleNorm } : {}),
+        ...(valorViviendaNorm != null
+          ? { valor_vivienda: valorViviendaNorm }
+          : {}),
+        ...(entradaDisponibleNorm != null
+          ? { entrada_disponible: entradaDisponibleNorm }
+          : {}),
 
         origen: "Simulador Hipoteca Exprés",
         metadata: {
           canal: "Web",
           customerLeadIdFromToken: req.customer?.leadId || null,
-
-          // ✅ guardamos también en metadata (por si UI/reportes lo usan)
           perfil: {
             ...(edadNorm != null ? { edad: edadNorm } : {}),
             ...(tipoIngresoNorm ? { tipoIngreso: tipoIngresoNorm } : {}),
-            ...(valorViviendaNorm != null ? { valorVivienda: valorViviendaNorm } : {}),
-            ...(entradaDisponibleNorm != null ? { entradaDisponible: entradaDisponibleNorm } : {}),
+            ...(valorViviendaNorm != null
+              ? { valorVivienda: valorViviendaNorm }
+              : {}),
+            ...(entradaDisponibleNorm != null
+              ? { entradaDisponible: entradaDisponibleNorm }
+              : {}),
           },
         },
       },
@@ -622,7 +630,6 @@ export async function crearLead(req, res) {
       codigoHL,
       linkedToUser,
       linkedMethod,
-      // ✅ debug rápido
       debug: {
         scoreHL: lead.scoreHL,
         scoreHLDetalle: lead.scoreHLDetalle || null,
@@ -649,7 +656,10 @@ export async function crearLead(req, res) {
 export async function listarLeads(req, res) {
   try {
     const pagina = Math.max(parseInt(req.query.pagina || "1", 10), 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit || "10", 10), 1), 100);
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit || "10", 10), 1),
+      100
+    );
 
     const {
       email,
@@ -664,8 +674,10 @@ export async function listarLeads(req, res) {
     const filter = {};
 
     if (email) filter.email = { $regex: String(email).trim(), $options: "i" };
-    if (telefono) filter.telefono = { $regex: String(telefono).trim(), $options: "i" };
-    if (ciudad) filter.ciudad = { $regex: String(ciudad).trim(), $options: "i" };
+    if (telefono)
+      filter.telefono = { $regex: String(telefono).trim(), $options: "i" };
+    if (ciudad)
+      filter.ciudad = { $regex: String(ciudad).trim(), $options: "i" };
     if (tiempoCompra) filter.tiempoCompra = String(tiempoCompra).trim();
     if (sustentoIndependiente)
       filter.sustentoIndependiente = String(sustentoIndependiente).trim();
@@ -726,7 +738,9 @@ export async function statsLeads(req, res) {
     inicioSemanaAnterior.setDate(inicioSemanaAnterior.getDate() - 7);
 
     const hoy = await Lead.countDocuments({ createdAt: { $gte: inicioHoy } });
-    const semana = await Lead.countDocuments({ createdAt: { $gte: inicioSemana } });
+    const semana = await Lead.countDocuments({
+      createdAt: { $gte: inicioSemana },
+    });
     const semanaAnterior = await Lead.countDocuments({
       createdAt: { $gte: inicioSemanaAnterior, $lt: inicioSemana },
     });
@@ -887,7 +901,7 @@ export async function crearLeadInstagram(req, res) {
 }
 
 /* ===========================================================
-   ✅ NUEVO: GET /api/leads/:id  (detalle admin)
+   ✅ GET /api/leads/:id  (detalle admin)
 =========================================================== */
 export async function obtenerLeadPorIdAdmin(req, res) {
   try {
@@ -905,7 +919,7 @@ export async function obtenerLeadPorIdAdmin(req, res) {
 }
 
 /* ===========================================================
-   ✅ NUEVO: PDF Ficha Comercial
+   ✅ PDF Ficha Comercial
    - GET /api/leads/:id/ficha-comercial.pdf
    - GET /api/leads/hl/:codigoHL/ficha-comercial.pdf
 =========================================================== */
@@ -920,7 +934,7 @@ export async function descargarFichaComercialPDF(req, res) {
       lead = await Lead.findById(id).lean();
     }
 
-    // 2) Buscar por código HL (si viene en ruta hl/:codigoHL)
+    // 2) Buscar por código HL
     if (!lead && codigoHL) {
       lead = await Lead.findOne({ codigoHL: String(codigoHL).trim() }).lean();
     }
@@ -943,16 +957,14 @@ export async function descargarFichaComercialPDF(req, res) {
       }
     })();
 
-    // ✅ “Plaza” en tu PDF (en screenshot sale Aventura)
+    // ✅ Plaza
     const plaza =
       lead.ciudad_compra ||
       lead.ciudad ||
       lead?.metadata?.perfil?.ciudadCompra ||
       "-";
 
-    // ⚠️ IMPORTANTÍSIMO:
-    // Tu PDF util ya soporta snake_case y lee data.resultado.
-    // Aquí solo armamos el objeto data consistente.
+    // ✅ data consistente con tu util PDF (soporta snake_case y lee data.resultado)
     const data = {
       codigoHL: lead.codigoHL || "-",
       fecha,
@@ -978,14 +990,16 @@ export async function descargarFichaComercialPDF(req, res) {
       afiliado_iess: lead.afiliado_iess ?? null,
       anios_estabilidad: lead.anios_estabilidad ?? null,
 
-      // ✅ ESTE ES EL QUE TE ESTABA SALIENDO “-” si no venía
-      resultado: lead.resultado ? normalizeResultadoParaSalida(lead.resultado) : null,
+      // resultado normalizado
+      resultado: lead.resultado
+        ? normalizeResultadoParaSalida(lead.resultado)
+        : null,
     };
 
-    // stream directo al response
     return generarFichaComercialPDF(res, data);
   } catch (err) {
     console.error("❌ descargarFichaComercialPDF:", err?.stack || err);
     return res.status(500).json({ ok: false, msg: "Error generando PDF" });
   }
 }
+

@@ -1,6 +1,5 @@
 // src/utils/mailer.js
 import nodemailer from "nodemailer";
-import { generarPDFLeadAvanzado } from "./pdf.js";
 import { normalizeResultadoParaSalida } from "./hlResultado.js";
 
 /* ===========================================================
@@ -156,7 +155,11 @@ function calcularSinOfertaFallback(R = {}) {
 
   if (noSignals) return true;
 
-  if (typeof R.dtiConHipoteca === "number" && Number.isFinite(R.dtiConHipoteca) && R.dtiConHipoteca > 0.5)
+  if (
+    typeof R.dtiConHipoteca === "number" &&
+    Number.isFinite(R.dtiConHipoteca) &&
+    R.dtiConHipoteca > 0.5
+  )
     return true;
 
   if (typeof R.ltv === "number" && Number.isFinite(R.ltv) && R.ltv > 0.9) return true;
@@ -220,6 +223,35 @@ function resultadoParaEmail(resultado = {}) {
 }
 
 /* ===========================================================
+   ✅ PDF attachment helpers (NO generar PDF aquí)
+=========================================================== */
+function buildCodigoHL(lead, resultado = {}) {
+  return (
+    lead?.codigoHL ||
+    resultado?.codigoHL ||
+    lead?.codigo ||
+    lead?.codigoHabitaLibre ||
+    null
+  );
+}
+
+function buildPdfFilename(lead, resultado = {}) {
+  const code = buildCodigoHL(lead, resultado) || "HL";
+  return `HabitaLibre_${String(code).replace(/[^\w\-]/g, "_")}.pdf`;
+}
+
+function buildAttachments(lead, resultado, pdfBuffer) {
+  if (!pdfBuffer || !Buffer.isBuffer(pdfBuffer)) return [];
+  return [
+    {
+      filename: buildPdfFilename(lead, resultado),
+      content: pdfBuffer,
+      contentType: "application/pdf",
+    },
+  ];
+}
+
+/* ===========================================================
    Render: ranking de bancos (cliente)
 =========================================================== */
 function renderTopBancosCliente(resultado = {}) {
@@ -227,7 +259,8 @@ function renderTopBancosCliente(resultado = {}) {
   const sinOferta = r?.flags?.sinOferta === true;
   if (sinOferta) return "";
 
-  const bancosTop3 = r.bancosTop3 && r.bancosTop3.length ? r.bancosTop3 : (r.bancosProbabilidad || []).slice(0, 3);
+  const bancosTop3 =
+    r.bancosTop3 && r.bancosTop3.length ? r.bancosTop3 : (r.bancosProbabilidad || []).slice(0, 3);
 
   if (!bancosTop3 || bancosTop3.length === 0) return "";
 
@@ -325,7 +358,8 @@ function renderTopBancosCliente(resultado = {}) {
 function renderTopBancosInterno(resultado = {}) {
   const r = resultadoParaEmail(resultado);
 
-  const bancosTop3 = r.bancosTop3 && r.bancosTop3.length ? r.bancosTop3 : (r.bancosProbabilidad || []).slice(0, 3);
+  const bancosTop3 =
+    r.bancosTop3 && r.bancosTop3.length ? r.bancosTop3 : (r.bancosProbabilidad || []).slice(0, 3);
 
   if (!bancosTop3 || bancosTop3.length === 0) return "";
 
@@ -720,29 +754,9 @@ function htmlInterno(lead = {}, resultadoRaw = {}) {
 }
 
 /* ===========================================================
-   Helper: generar PDF avanzado desde pdf.js
+   💌 enviarCorreoCliente: correo al lead + PDF (buffer opcional)
 =========================================================== */
-async function generarPDFBuffer(lead, resultadoRaw) {
-  try {
-    const resultadoNorm = normalizeResultadoParaSalida(resultadoRaw);
-    const resultado = resultadoParaEmail(resultadoNorm);
-
-    const codigoHL = lead?.codigoHL || resultado?.codigoHL || null;
-    const leadConCodigo = codigoHL ? { ...lead, codigoHL } : lead;
-    const resultadoConCodigo = codigoHL ? { ...resultado, codigoHL } : resultado;
-
-    const buffer = await generarPDFLeadAvanzado(leadConCodigo, resultadoConCodigo);
-    return buffer;
-  } catch (err) {
-    console.error("❌ Error generando PDF avanzado:", err);
-    return null;
-  }
-}
-
-/* ===========================================================
-   💌 enviarCorreoCliente: correo al lead + PDF avanzado
-=========================================================== */
-export async function enviarCorreoCliente(lead, resultadoRaw) {
+export async function enviarCorreoCliente(lead, resultadoRaw, pdfBuffer = null) {
   if (!lead?.email) {
     console.warn("⚠️ enviarCorreoCliente: lead sin email, se omite envío.");
     return null;
@@ -753,8 +767,6 @@ export async function enviarCorreoCliente(lead, resultadoRaw) {
   const resultadoNorm = normalizeResultadoParaSalida(resultadoRaw);
   const resultado = resultadoParaEmail(resultadoNorm);
 
-  const pdfBuffer = await generarPDFBuffer(lead, resultado);
-
   const info = await tx.sendMail({
     from: FINAL_FROM,
     to: lead.email,
@@ -764,22 +776,20 @@ export async function enviarCorreoCliente(lead, resultadoRaw) {
     text:
       "Gracias por usar el simulador de HabitaLibre. " +
       "Adjuntamos un PDF con el resumen detallado de tu precalificación.",
-    attachments: pdfBuffer ? [{ filename: "HabitaLibre-precalificacion.pdf", content: pdfBuffer }] : [],
+    attachments: buildAttachments(lead, resultado, pdfBuffer),
   });
 
   return info;
 }
 
 /* ===========================================================
-   💌 enviarCorreoLead: correo interno al equipo + mismo PDF
+   💌 enviarCorreoLead: correo interno + PDF (buffer opcional)
 =========================================================== */
-export async function enviarCorreoLead(lead, resultadoRaw) {
+export async function enviarCorreoLead(lead, resultadoRaw, pdfBuffer = null) {
   const tx = getTransporter();
 
   const resultadoNorm = normalizeResultadoParaSalida(resultadoRaw);
   const resultado = resultadoParaEmail(resultadoNorm);
-
-  const pdfBuffer = await generarPDFBuffer(lead, resultado);
 
   const info = await tx.sendMail({
     from: FINAL_FROM,
@@ -787,7 +797,7 @@ export async function enviarCorreoLead(lead, resultadoRaw) {
     subject: `Nuevo lead: ${lead?.nombre || "Cliente"} (${lead?.canal || "—"})`,
     html: htmlInterno(lead, resultado),
     replyTo: lead?.email ? `"${lead?.nombre || "Cliente"}" <${lead.email}>` : undefined,
-    attachments: pdfBuffer ? [{ filename: "HabitaLibre-precalificacion.pdf", content: pdfBuffer }] : [],
+    attachments: buildAttachments(lead, resultado, pdfBuffer),
   });
 
   return info;

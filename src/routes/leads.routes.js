@@ -11,9 +11,7 @@ import {
   crearLeadWhatsapp,
   crearLeadManychat,
   crearLeadInstagram,
-  // ✅ NUEVO
   descargarFichaComercialPDF,
-  // ✅ (opcional pero recomendado)
   obtenerLeadPorIdAdmin,
 } from "../controllers/leads.controller.js";
 
@@ -48,7 +46,9 @@ function customerOptional(req, _res, next) {
 }
 
 /* ===============================
-   Webhooks públicos
+   Webhooks públicos (ManyChat)
+   ✅ OJO: si quieres asegurar, agrega verificación X-API-KEY aquí
+   (pero ahora lo haces dentro del controller con getApiKeyOk)
 ================================ */
 router.post("/manychat", crearLeadManychat);
 router.post("/instagram", crearLeadInstagram);
@@ -67,47 +67,49 @@ router.get("/mine", verificarCustomer, async (req, res) => {
 
     const user = await User.findById(userId).lean();
     const lead =
-      (user?.currentLeadId && (await Lead.findById(user.currentLeadId))) ||
-      (await Lead.findOne({ userId }).sort({ createdAt: -1 }));
+      (user?.currentLeadId && (await Lead.findById(user.currentLeadId).lean())) ||
+      (await Lead.findOne({ userId }).sort({ createdAt: -1 }).lean());
 
     if (!lead) {
       return res.status(404).json({ error: "No hay lead asociado" });
     }
 
-    res.json({ lead });
+    return res.json({ lead });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error cargando lead" });
+    console.error("❌ /mine:", err);
+    return res.status(500).json({ error: "Error cargando lead" });
   }
 });
 
 /* ===============================
-   Público
+   Público (Web Form)
 ================================ */
 router.post("/", customerOptional, crearLead);
 
 /* ===============================
-   🔐 ADMIN (ÚNICO LUGAR PROTEGIDO)
+   🔐 ADMIN
+   ✅ IMPORTANTE: rutas específicas ANTES de "/:id"
 ================================ */
 router.get("/stats", adminAuth, statsLeads);
 router.get("/", adminAuth, listarLeads);
 
 /**
- * ✅ DETALLE lead (admin)
- * Útil para tu UI cuando hagas click en un lead
+ * ✅ PDF por código HL (admin) — DEBE IR ANTES de "/:id"
  */
-router.get("/:id", adminAuth, obtenerLeadPorIdAdmin);
-
-/**
- * ✅ PDF FICHA COMERCIAL (admin)
- * - Por ID Mongo
- * - Por código HL
- */
-router.get("/:id/ficha-comercial.pdf", adminAuth, descargarFichaComercialPDF);
 router.get(
   "/hl/:codigoHL/ficha-comercial.pdf",
   adminAuth,
   descargarFichaComercialPDF
 );
+
+/**
+ * ✅ PDF por ID (admin)
+ */
+router.get("/:id/ficha-comercial.pdf", adminAuth, descargarFichaComercialPDF);
+
+/**
+ * ✅ DETALLE lead (admin)
+ */
+router.get("/:id", adminAuth, obtenerLeadPorIdAdmin);
 
 export default router;
