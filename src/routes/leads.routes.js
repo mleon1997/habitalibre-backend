@@ -11,6 +11,10 @@ import {
   crearLeadWhatsapp,
   crearLeadManychat,
   crearLeadInstagram,
+  // ✅ NUEVO
+  descargarFichaComercialPDF,
+  // ✅ (opcional pero recomendado)
+  obtenerLeadPorIdAdmin,
 } from "../controllers/leads.controller.js";
 
 import { verificarCustomer } from "../middlewares/customerAuth.js";
@@ -87,5 +91,23 @@ router.post("/", customerOptional, crearLead);
 ================================ */
 router.get("/stats", adminAuth, statsLeads);
 router.get("/", adminAuth, listarLeads);
+
+/**
+ * ✅ DETALLE lead (admin)
+ * Útil para tu UI cuando hagas click en un lead
+ */
+router.get("/:id", adminAuth, obtenerLeadPorIdAdmin);
+
+/**
+ * ✅ PDF FICHA COMERCIAL (admin)
+ * - Por ID Mongo
+ * - Por código HL
+ */
+router.get("/:id/ficha-comercial.pdf", adminAuth, descargarFichaComercialPDF);
+router.get(
+  "/hl/:codigoHL/ficha-comercial.pdf",
+  adminAuth,
+  descargarFichaComercialPDF
+);
 
 export default router;

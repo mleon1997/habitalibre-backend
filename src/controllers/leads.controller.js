@@ -5,6 +5,9 @@ import { enviarCorreoCliente, enviarCorreoLead } from "../utils/mailer.js";
 import { generarCodigoHLDesdeObjectId } from "../utils/codigoHL.js";
 import { normalizeResultadoParaSalida } from "../utils/hlResultado.js";
 
+// ✅ NUEVO: PDF ficha comercial
+import { generarFichaComercialPDF } from "../utils/fichaComercialPdf.js";
+
 // ✅ TU archivo real está en /src/lib y exporta leadDecision
 import { leadDecision } from "../lib/leadDecision.js";
 
@@ -132,7 +135,7 @@ function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
   const tipoIngreso =
     perfil?.tipoIngreso != null ? String(perfil.tipoIngreso).trim() : null;
 
-  // 👇 Estos suelen venir top-level en scoring.js
+  // 👇 Estos suelen venir top-level en scoring.js (pero si no vienen, queda null)
   const valorVivienda =
     resultadoNormalizado?.valorVivienda != null
       ? toNumberOrNull(resultadoNormalizado.valorVivienda)
@@ -364,7 +367,8 @@ export async function crearLead(req, res) {
       body.metadata?.perfil?.entradaDisponible ??
       null;
 
-    const tipoCompraRaw = tipoCompra ?? body.tipo_compra ?? body.tipoCompra ?? null;
+    const tipoCompraRaw =
+      tipoCompra ?? body.tipo_compra ?? body.tipoCompra ?? null;
 
     const tipoCompraNumeroRaw =
       tipoCompraNumero ??
@@ -409,7 +413,8 @@ export async function crearLead(req, res) {
       (ciudad ? String(ciudad).trim() : null) ||
       null;
 
-    const tipoCompraLower = tipoCompraRaw != null ? toLowerOrNull(tipoCompraRaw) : null;
+    const tipoCompraLower =
+      tipoCompraRaw != null ? toLowerOrNull(tipoCompraRaw) : null;
 
     const tipoCompraNumeroNorm =
       tipoCompraNumeroRaw != null
@@ -423,34 +428,36 @@ export async function crearLead(req, res) {
       valorViviendaRaw != null
         ? toNumberOrNull(valorViviendaRaw)
         : derivados.valorVivienda != null
-          ? derivados.valorVivienda
-          : null;
+        ? derivados.valorVivienda
+        : null;
 
     const entradaDisponibleNorm =
       entradaDisponibleRaw != null
         ? toNumberOrNull(entradaDisponibleRaw)
         : derivados.entradaDisponible != null
-          ? derivados.entradaDisponible
-          : null;
+        ? derivados.entradaDisponible
+        : null;
 
     const edadNorm =
       edadRaw != null
         ? toNumberOrNull(edadRaw)
         : derivados.edad != null
-          ? derivados.edad
-          : null;
+        ? derivados.edad
+        : null;
 
     const tipoIngresoNorm =
       (tipoIngresoRaw != null ? String(tipoIngresoRaw).trim() : null) ||
-      (derivados.tipoIngreso != null ? String(derivados.tipoIngreso).trim() : null);
+      (derivados.tipoIngreso != null
+        ? String(derivados.tipoIngreso).trim()
+        : null);
 
     // ✅ score detalle (para debug/admin UI sin depender de resultado.*)
     const scoreHLDetalleNorm =
       resultadoNormalizado?.puntajeHabitaLibre != null
         ? resultadoNormalizado.puntajeHabitaLibre
         : resultadoNormalizado?.scoreHL != null
-          ? resultadoNormalizado.scoreHL
-          : null;
+        ? resultadoNormalizado.scoreHL
+        : null;
 
     console.info("✅ Nuevo lead recibido (WEB):", {
       nombre,
@@ -877,4 +884,108 @@ export async function crearLeadWhatsapp(req, res) {
 =========================================================== */
 export async function crearLeadInstagram(req, res) {
   return crearLeadManychat(req, res);
+}
+
+/* ===========================================================
+   ✅ NUEVO: GET /api/leads/:id  (detalle admin)
+=========================================================== */
+export async function obtenerLeadPorIdAdmin(req, res) {
+  try {
+    const { id } = req.params || {};
+    if (!id) return res.status(400).json({ ok: false, msg: "Falta id" });
+
+    const lead = await Lead.findById(id).lean();
+    if (!lead) return res.status(404).json({ ok: false, msg: "Lead no encontrado" });
+
+    return res.json({ ok: true, lead });
+  } catch (err) {
+    console.error("❌ obtenerLeadPorIdAdmin:", err);
+    return res.status(500).json({ ok: false, msg: "Error interno" });
+  }
+}
+
+/* ===========================================================
+   ✅ NUEVO: PDF Ficha Comercial
+   - GET /api/leads/:id/ficha-comercial.pdf
+   - GET /api/leads/hl/:codigoHL/ficha-comercial.pdf
+=========================================================== */
+export async function descargarFichaComercialPDF(req, res) {
+  try {
+    const { id, codigoHL } = req.params || {};
+
+    let lead = null;
+
+    // 1) Buscar por ID
+    if (id) {
+      lead = await Lead.findById(id).lean();
+    }
+
+    // 2) Buscar por código HL (si viene en ruta hl/:codigoHL)
+    if (!lead && codigoHL) {
+      lead = await Lead.findOne({ codigoHL: String(codigoHL).trim() }).lean();
+    }
+
+    if (!lead) {
+      return res.status(404).json({ ok: false, msg: "Lead no encontrado" });
+    }
+
+    // ✅ Fecha bonita dd/mm/yyyy
+    const fecha = (() => {
+      try {
+        const d = lead.createdAt ? new Date(lead.createdAt) : new Date();
+        return d.toLocaleDateString("es-EC", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+        });
+      } catch {
+        return "-";
+      }
+    })();
+
+    // ✅ “Plaza” en tu PDF (en screenshot sale Aventura)
+    const plaza =
+      lead.ciudad_compra ||
+      lead.ciudad ||
+      lead?.metadata?.perfil?.ciudadCompra ||
+      "-";
+
+    // ⚠️ IMPORTANTÍSIMO:
+    // Tu PDF util ya soporta snake_case y lee data.resultado.
+    // Aquí solo armamos el objeto data consistente.
+    const data = {
+      codigoHL: lead.codigoHL || "-",
+      fecha,
+      plaza,
+
+      nombre: lead.nombre || "-",
+      telefono: lead.telefono || "-",
+      email: lead.email || "-",
+
+      // campos core
+      scoreHL: lead.scoreHL ?? null,
+      edad: lead.edad ?? null,
+      tipo_ingreso: lead.tipo_ingreso ?? null,
+      valor_vivienda: lead.valor_vivienda ?? null,
+      entrada_disponible: lead.entrada_disponible ?? null,
+      ciudad_compra: lead.ciudad_compra ?? null,
+      tipo_compra: lead.tipo_compra ?? null,
+      producto: lead.producto ?? null,
+
+      // perfil financiero
+      ingreso_mensual: lead.ingreso_mensual ?? null,
+      deuda_mensual_aprox: lead.deuda_mensual_aprox ?? null,
+      afiliado_iess: lead.afiliado_iess ?? null,
+      anios_estabilidad: lead.anios_estabilidad ?? null,
+
+      // ✅ ESTE ES EL QUE TE ESTABA SALIENDO “-” si no venía
+      resultado: lead.resultado ? normalizeResultadoParaSalida(lead.resultado) : null,
+    };
+
+    // stream directo al response
+    return generarFichaComercialPDF(res, data);
+  } catch (err) {
+    console.error("❌ descargarFichaComercialPDF:", err?.stack || err);
+    return res.status(500).json({ ok: false, msg: "Error generando PDF" });
+  }
 }
