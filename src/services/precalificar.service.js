@@ -3,24 +3,55 @@ import { evaluarProbabilidadPorBanco } from "../lib/scoring.js";
 import { normalizeResultadoParaSalida } from "../utils/hlResultado.js";
 
 /* --------- helpers --------- */
-const toBool = (v) => {
-  if (v === true || v === 1) return true;
-  if (v === false || v === 0) return false;
-  const s = String(v ?? "").trim().toLowerCase();
-  if (!s) return false;
-  return s === "true" || s === "1" || s === "sí" || s === "si" || s === "s";
+const toNum = (v, def = 0) => {
+  if (v == null) return def;
+  const s = String(v).trim();
+  if (!s) return def;
+  const n = Number(s.replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : def;
 };
 
-const toNum = (v, def = 0) => {
-  const n = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(n) ? n : def;
+const toNumOrNull = (v) => {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s.replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : null;
 };
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
+const toBoolOrNull = (v) => {
+  if (v === true || v === 1) return true;
+  if (v === false || v === 0) return false;
+  if (v == null) return null;
+
+  const s = String(v).trim().toLowerCase();
+  if (!s) return null;
+
+  if (["true", "1", "sí", "si", "s", "y", "yes"].includes(s)) return true;
+  if (["false", "0", "no", "n"].includes(s)) return false;
+
+  return null;
+};
+
+const pickFirstDefined = (...vals) => {
+  for (const v of vals) {
+    if (v !== undefined) return v;
+  }
+  return undefined;
+};
+
+const pickFirstNonNull = (...vals) => {
+  for (const v of vals) {
+    if (v != null) return v;
+  }
+  return null;
+};
+
 const pickNumber = (...vals) => {
   for (const v of vals) {
-    const n = Number(v);
+    const n = toNumOrNull(v);
     if (Number.isFinite(n)) return n;
   }
   return null;
@@ -33,63 +64,180 @@ const pickBool = (...vals) => {
   return undefined;
 };
 
+const normString = (v, def = null) => {
+  const s = String(v ?? "").trim();
+  return s ? s : def;
+};
+
+const normTipoIngreso = (v) => {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  // normalización suave (sin forzar demasiado)
+  return s;
+};
+
 /**
  * ✅ Normalizador PRO de input
- * Acepta input nuevo y legacy
+ * Acepta input nuevo, legacy y campos planos del Lead (snake_case)
  */
 export function normalizarInputHL(body = {}) {
-  const afiliadoRaw =
-    body.afiliadoIess ??
-    body.afiliadoIESS ??
-    body.afiliado_iess ??
-    body.afiliado;
+  // ✅ Afiliación IESS: puede venir como boolean, string, 0/1, etc.
+  const afiliadoRaw = pickFirstNonNull(
+    body.afiliadoIess,
+    body.afiliadoIESS,
+    body.afiliado_iess,
+    body.afiliado_iess_bool,
+    body.afiliado,
+    body?.perfil?.afiliadoIess,
+    body?.perfil?.afiliado_iess,
+    body?.metadata?.perfil?.afiliadoIess
+  );
 
+  // ✅ IESS aportes (si existen)
   const iessAportesTotales = toNum(
-    body.iessAportesTotales ?? body.aportesTotales ?? body.iess_totales ?? 0,
+    pickFirstNonNull(
+      body.iessAportesTotales,
+      body.aportesTotales,
+      body.iess_totales,
+      body.iess_aportes_totales,
+      body?.perfil?.iessAportesTotales,
+      body?.metadata?.perfil?.iessAportesTotales
+    ),
     0
   );
 
   const iessAportesConsecutivos = toNum(
-    body.iessAportesConsecutivos ??
-      body.iessAportesConsecutivas ??
-      body.aportesConsecutivos ??
-      0,
+    pickFirstNonNull(
+      body.iessAportesConsecutivos,
+      body.iessAportesConsecutivas,
+      body.aportesConsecutivos,
+      body.iess_aportes_consecutivos,
+      body?.perfil?.iessAportesConsecutivos,
+      body?.metadata?.perfil?.iessAportesConsecutivos
+    ),
     0
   );
 
-  const ingresoNetoMensual = toNum(body.ingresoNetoMensual ?? body.ingreso ?? 0, 0);
-  const ingresoPareja = toNum(body.ingresoPareja ?? 0, 0);
+  // ✅ Ingreso / deudas (camelCase + snake_case + legacy)
+  const ingresoNetoMensual = toNum(
+    pickFirstNonNull(
+      body.ingresoNetoMensual,
+      body.ingreso_mensual,
+      body.ingresoMensual,
+      body.ingreso,
+      body?.perfil?.ingresoTotal,
+      body?.perfil?.ingresoNetoMensual,
+      body?.metadata?.perfil?.ingresoTotal
+    ),
+    0
+  );
+
+  const ingresoPareja = toNum(
+    pickFirstNonNull(
+      body.ingresoPareja,
+      body.ingreso_pareja,
+      body?.perfil?.ingresoPareja,
+      0
+    ),
+    0
+  );
 
   const otrasDeudasMensuales = toNum(
-    body.otrasDeudasMensuales ?? body.deudas ?? 0,
+    pickFirstNonNull(
+      body.otrasDeudasMensuales,
+      body.deuda_mensual_aprox,
+      body.otras_deudas_mensuales,
+      body.deudas,
+      body?.perfil?.otrasDeudasMensuales,
+      body?.metadata?.perfil?.otrasDeudasMensuales
+    ),
     0
   );
 
-  const valorVivienda = toNum(body.valorVivienda ?? body.valor ?? 0, 0);
+  // ✅ Valor vivienda / entrada (camelCase + snake_case + legacy)
+  const valorVivienda = toNum(
+    pickFirstNonNull(
+      body.valorVivienda,
+      body.valor_vivienda,
+      body.precioVivienda,
+      body.precio_vivienda,
+      body.valor,
+      body?.perfil?.valorVivienda,
+      body?.metadata?.perfil?.valorVivienda
+    ),
+    0
+  );
 
   const entradaDisponible = toNum(
-    body.entradaDisponible ?? body.entrada ?? 0,
+    pickFirstNonNull(
+      body.entradaDisponible,
+      body.entrada_disponible,
+      body.entradaUsd,
+      body.entrada_usd,
+      body.entrada,
+      body?.perfil?.entradaDisponible,
+      body?.metadata?.perfil?.entradaDisponible
+    ),
     0
   );
 
-  const edad = toNum(body.edad ?? 30, 30);
-  const tipoIngreso = body.tipoIngreso ?? "Dependiente";
-  const aniosEstabilidad = toNum(body.aniosEstabilidad ?? 0, 0);
+  // ✅ Edad / tipo ingreso / estabilidad (camelCase + snake_case)
+  const edad = toNum(
+    pickFirstNonNull(
+      body.edad,
+      body?.perfil?.edad,
+      body?.metadata?.perfil?.edad,
+      30
+    ),
+    30
+  );
 
-  const primeraVivienda = body.primeraVivienda ?? null;
-  const viviendaUsada = body.viviendaUsada ?? null;
-  const viviendaEstrenar = body.viviendaEstrenar ?? body.viviendaNueva ?? true;
+  const tipoIngreso = normTipoIngreso(
+    pickFirstNonNull(
+      body.tipoIngreso,
+      body.tipo_ingreso,
+      body?.perfil?.tipoIngreso,
+      body?.perfil?.tipo_ingreso,
+      body?.metadata?.perfil?.tipoIngreso
+    )
+  ) || "Dependiente";
 
-  const nacionalidad = body.nacionalidad ?? "ecuatoriana";
-  const estadoCivil = body.estadoCivil ?? "soltero";
-  const declaracionBuro = body.declaracionBuro ?? "ninguno";
-  const sustentoIndependiente = body.sustentoIndependiente ?? null;
-  const horizonteCompra = body.horizonteCompra ?? body.tiempoCompra ?? null;
+  const aniosEstabilidad = toNum(
+    pickFirstNonNull(
+      body.aniosEstabilidad,
+      body.anios_estabilidad,
+      body?.perfil?.aniosEstabilidad,
+      body?.metadata?.perfil?.aniosEstabilidad,
+      0
+    ),
+    0
+  );
 
-  const plazoAnios = body.plazoAnios ?? null;
+  // ✅ Otros campos (se mantienen)
+  const primeraVivienda = pickFirstDefined(body.primeraVivienda, null);
+  const viviendaUsada = pickFirstDefined(body.viviendaUsada, null);
+  const viviendaEstrenar = pickFirstDefined(
+    body.viviendaEstrenar,
+    body.viviendaNueva,
+    true
+  );
+
+  const nacionalidad = normString(body.nacionalidad, "ecuatoriana");
+  const estadoCivil = normString(body.estadoCivil, "soltero");
+  const declaracionBuro = normString(body.declaracionBuro, "ninguno");
+  const sustentoIndependiente = pickFirstDefined(body.sustentoIndependiente, null);
+  const horizonteCompra = pickFirstDefined(
+    body.horizonteCompra,
+    body.tiempoCompra,
+    null
+  );
+
+  const plazoAnios = pickFirstDefined(body.plazoAnios, null);
 
   return {
     ...body,
+
+    // ✅ numéricos limpios
     ingresoNetoMensual,
     ingresoPareja,
     otrasDeudasMensuales,
@@ -99,11 +247,14 @@ export function normalizarInputHL(body = {}) {
     tipoIngreso,
     aniosEstabilidad,
 
-    // ✅ boolean o null
-    afiliadoIess: afiliadoRaw == null ? null : toBool(afiliadoRaw),
+    // ✅ boolean/null
+    afiliadoIess: afiliadoRaw == null ? null : toBoolOrNull(afiliadoRaw),
 
+    // ✅ iess
     iessAportesTotales,
     iessAportesConsecutivos,
+
+    // ✅ otros
     primeraVivienda,
     viviendaUsada,
     viviendaEstrenar,
@@ -170,8 +321,8 @@ export function calcularSinOfertaHard(resultado = {}) {
 
   // Reglas duras globales (solo si NO hay viable)
   if (!hayViable) {
-    if (isNum(dti) && dti > 0.50) return true;
-    if (isNum(ltv) && ltv > 0.90) return true;
+    if (isNum(dti) && dti > 0.5) return true;
+    if (isNum(ltv) && ltv > 0.9) return true;
   }
 
   // Regla cuota > capacidad (solo en privada/comercial) si NO hay viable
@@ -205,13 +356,17 @@ export function precalificarHL(body = {}) {
   }
 
   // compat legacy
-  const sinOfertaEngine = pickBool(resultado?.flags?.sinOferta, resultado?.sinOferta);
+  const sinOfertaEngine = pickBool(
+    resultado?.flags?.sinOferta,
+    resultado?.sinOferta
+  );
 
   const sinOfertaHard = calcularSinOfertaHard(resultado);
 
   // sinOfertaFinal = engine OR hard (hard puede elevar)
   const sinOfertaFinal =
-    (typeof sinOfertaEngine === "boolean" ? sinOfertaEngine : false) || sinOfertaHard;
+    (typeof sinOfertaEngine === "boolean" ? sinOfertaEngine : false) ||
+    sinOfertaHard;
 
   resultado.flags.sinOferta = sinOfertaFinal;
   resultado.sinOferta = sinOfertaFinal; // compat legacy
@@ -221,12 +376,15 @@ export function precalificarHL(body = {}) {
   const bancosTop3 = resultado.bancosTop3 || [];
   const mejorBanco = resultado.mejorBanco || null;
 
-  // Flat sugeridos
-  const productoSugerido = sinOfertaFinal ? null : (resultado.productoSugerido || null);
+  // Flat sugeridos (para Progreso.jsx / PDF / Mailer)
+  const productoSugerido = sinOfertaFinal
+    ? null
+    : resultado.productoSugerido || null;
 
   const bancoSugerido = sinOfertaFinal
     ? null
-    : (resultado.bancoSugerido || (productoSugerido ? mejorBanco?.banco || null : null));
+    : resultado.bancoSugerido ||
+      (productoSugerido ? mejorBanco?.banco || null : null);
 
   const respuesta = {
     ok: resultado.ok,
@@ -267,14 +425,14 @@ export function precalificarHL(body = {}) {
     bancosTop3,
     mejorBanco,
 
-    // 👇 lo que usan Progreso.jsx / PDF / Mailer
+    // 👇 lo que usa UI/PDF/Correo
     productoSugerido,
     bancoSugerido,
 
     // echo limpio
     _echo: resultado._echo || {},
 
-    // ✅ debug (si quieres apagarlo en producción, lo puedes borrar luego)
+    // ✅ debug (puedes borrar luego)
     _debugSinOferta: {
       sinOfertaEngine,
       sinOfertaHard,
@@ -283,6 +441,16 @@ export function precalificarHL(body = {}) {
       capacidadPago: resultado?.capacidadPago ?? null,
       dtiConHipoteca: resultado?.dtiConHipoteca ?? null,
       ltv: resultado?.ltv ?? null,
+      input_resumen: {
+        ingresoNetoMensual: input.ingresoNetoMensual,
+        otrasDeudasMensuales: input.otrasDeudasMensuales,
+        valorVivienda: input.valorVivienda,
+        entradaDisponible: input.entradaDisponible,
+        edad: input.edad,
+        tipoIngreso: input.tipoIngreso,
+        afiliadoIess: input.afiliadoIess,
+        aniosEstabilidad: input.aniosEstabilidad,
+      },
     },
   };
 

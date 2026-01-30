@@ -987,6 +987,7 @@ export async function obtenerLeadPorIdAdmin(req, res) {
    ✅ PDF Ficha Comercial
    - GET /api/leads/:id/ficha-comercial.pdf
    - GET /api/leads/hl/:codigoHL/ficha-comercial.pdf
+   ✅ “A prueba de balas”: si precalif está incompleta, recalcula con motor.
 =========================================================== */
 export async function descargarFichaComercialPDF(req, res) {
   try {
@@ -1029,80 +1030,166 @@ export async function descargarFichaComercialPDF(req, res) {
       lead?.metadata?.perfil?.ciudadCompra ||
       "-";
 
-    // ✅ Resultado tal cual guardado (NO lo renormalizamos aquí)
+    // ✅ Resultado tal cual guardado
     const resultadoStored = lead.resultado || null;
 
-    // ✅ Precalificación: 1) snapshot guardado, 2) fallback desde resultadoStored (prioriza rutaRecomendada)
-    const precalificacion =
-      lead.precalificacion ||
-      (resultadoStored
-        ? {
-            bancoSugerido:
-              resultadoStored?.bancoSugerido ??
-              resultadoStored?.rutaRecomendada?.banco ??
-              null,
+    // ✅ Snapshot guardado (si existe)
+    const snap = lead.precalificacion || null;
 
-            productoSugerido:
-              resultadoStored?.productoSugerido ??
-              resultadoStored?.rutaRecomendada?.tipo ??
-              resultadoStored?.productoElegido ??
-              null,
+    // ✅ Detectar si faltan campos CRÍTICOS (los que te interesan para banco)
+    const faltaCritico =
+      !snap ||
+      snap?.bancoSugerido == null ||
+      snap?.cuotaEstimada == null ||
+      snap?.capacidadPago == null ||
+      snap?.dtiConHipoteca == null;
 
-            tasaAnual:
-              resultadoStored?.tasaAnual ??
-              resultadoStored?.rutaRecomendada?.tasaAnual ??
-              null,
+    let precalificacion = snap;
 
-            plazoMeses:
-              resultadoStored?.plazoMeses ??
-              resultadoStored?.rutaRecomendada?.plazoMeses ??
-              (Number.isFinite(Number(resultadoStored?.rutaRecomendada?.plazoAnios))
-                ? Number(resultadoStored.rutaRecomendada.plazoAnios) * 12
-                : null),
+    // ✅ Si falta, recalcular con el motor desde los campos planos del lead
+    if (faltaCritico) {
+      const bodyMotor = {
+        ingresoNetoMensual: lead.ingreso_mensual ?? 0,
+        ingresoPareja: 0,
+        otrasDeudasMensuales: lead.deuda_mensual_aprox ?? 0,
+        valorVivienda: lead.valor_vivienda ?? 0,
+        entradaDisponible: lead.entrada_disponible ?? 0,
+        edad: lead.edad ?? null,
+        afiliadoIess: lead.afiliado_iess ?? null,
+        iessAportesTotales: lead.iess_aportes_totales ?? 0,
+        iessAportesConsecutivos: lead.iess_aportes_consecutivos ?? 0,
+        tipoIngreso: lead.tipo_ingreso ?? lead.tipoIngreso ?? "Dependiente",
+        aniosEstabilidad: lead.anios_estabilidad ?? 0,
+        plazoAnios: null,
+      };
 
-            cuotaEstimada:
-              resultadoStored?.cuotaEstimada ??
-              resultadoStored?.rutaRecomendada?.cuotaEstimada ??
-              resultadoStored?.rutaRecomendada?.cuota ??
-              null,
+      try {
+        const { respuesta } = precalificarHL(bodyMotor);
 
-            cuotaStress:
-              resultadoStored?.cuotaStress ??
-              resultadoStored?.stressTest?.cuotaStress ??
-              null,
+        // ✅ Construir/Completar snapshot
+        precalificacion = {
+          ...(snap || {}),
 
-            dtiConHipoteca:
-              resultadoStored?.dtiConHipoteca ??
-              resultadoStored?.rutaRecomendada?.dtiConHipoteca ??
-              null,
+          bancoSugerido: respuesta?.bancoSugerido ?? snap?.bancoSugerido ?? null,
+          productoSugerido:
+            respuesta?.productoSugerido ?? snap?.productoSugerido ?? null,
 
-            ltv:
-              resultadoStored?.ltv ??
-              resultadoStored?.rutaRecomendada?.ltv ??
-              null,
+          tasaAnual: respuesta?.tasaAnual ?? snap?.tasaAnual ?? null,
+          plazoMeses: respuesta?.plazoMeses ?? snap?.plazoMeses ?? null,
 
-            montoMaximo:
-              resultadoStored?.montoMaximo ??
-              resultadoStored?.montoPrestamoMax ??
-              resultadoStored?.prestamoMax ??
-              resultadoStored?.rutaRecomendada?.montoMaximo ??
-              null,
+          cuotaEstimada: respuesta?.cuotaEstimada ?? snap?.cuotaEstimada ?? null,
+          cuotaStress: respuesta?.cuotaStress ?? snap?.cuotaStress ?? null,
 
-            precioMaxVivienda:
-              resultadoStored?.precioMaxVivienda ??
-              resultadoStored?.precioMax ??
-              resultadoStored?.valorMaxVivienda ??
-              resultadoStored?.rutaRecomendada?.precioMaxVivienda ??
-              null,
+          dtiConHipoteca:
+            respuesta?.dtiConHipoteca ?? snap?.dtiConHipoteca ?? null,
 
-            capacidadPago:
-              resultadoStored?.capacidadPagoPrograma ??
-              resultadoStored?.capacidadPago ??
-              resultadoStored?.capacidadPagoGlobal ??
-              resultadoStored?.rutaRecomendada?.capacidadPago ??
-              null,
-          }
-        : null);
+          ltv: respuesta?.ltv ?? snap?.ltv ?? null,
+
+          montoMaximo: respuesta?.montoMaximo ?? snap?.montoMaximo ?? null,
+          precioMaxVivienda:
+            respuesta?.precioMaxVivienda ?? snap?.precioMaxVivienda ?? null,
+
+          capacidadPago: respuesta?.capacidadPago ?? snap?.capacidadPago ?? null,
+        };
+
+        // ✅ Guardar snapshot para futuras descargas
+        try {
+          await Lead.updateOne(
+            { _id: lead._id },
+            { $set: { precalificacion } }
+          );
+        } catch (eSave) {
+          console.warn(
+            "⚠️ No se pudo guardar precalificacion recalculada:",
+            eSave?.message || eSave
+          );
+        }
+
+        // 🧪 Debug útil
+        console.log("✅ PDF Comercial: precalificación recalculada", {
+          codigoHL: lead.codigoHL,
+          bancoSugerido: precalificacion?.bancoSugerido ?? null,
+          cuotaEstimada: precalificacion?.cuotaEstimada ?? null,
+          capacidadPago: precalificacion?.capacidadPago ?? null,
+          dtiConHipoteca: precalificacion?.dtiConHipoteca ?? null,
+        });
+      } catch (eMotor) {
+        console.warn(
+          "⚠️ No se pudo recalcular precalificación para PDF:",
+          eMotor?.message || eMotor
+        );
+        // seguimos con lo que haya
+        precalificacion = snap;
+      }
+    }
+
+    // ✅ Fallback final: si no hay snap ni motor, intenta armarlo desde resultadoStored
+    if (!precalificacion && resultadoStored) {
+      precalificacion = {
+        bancoSugerido:
+          resultadoStored?.bancoSugerido ??
+          resultadoStored?.rutaRecomendada?.banco ??
+          null,
+
+        productoSugerido:
+          resultadoStored?.productoSugerido ??
+          resultadoStored?.rutaRecomendada?.tipo ??
+          resultadoStored?.productoElegido ??
+          null,
+
+        tasaAnual:
+          resultadoStored?.tasaAnual ??
+          resultadoStored?.rutaRecomendada?.tasaAnual ??
+          null,
+
+        plazoMeses:
+          resultadoStored?.plazoMeses ??
+          resultadoStored?.rutaRecomendada?.plazoMeses ??
+          (Number.isFinite(Number(resultadoStored?.rutaRecomendada?.plazoAnios))
+            ? Number(resultadoStored.rutaRecomendada.plazoAnios) * 12
+            : null),
+
+        cuotaEstimada:
+          resultadoStored?.cuotaEstimada ??
+          resultadoStored?.rutaRecomendada?.cuotaEstimada ??
+          resultadoStored?.rutaRecomendada?.cuota ??
+          null,
+
+        cuotaStress:
+          resultadoStored?.cuotaStress ??
+          resultadoStored?.stressTest?.cuotaStress ??
+          null,
+
+        dtiConHipoteca:
+          resultadoStored?.dtiConHipoteca ??
+          resultadoStored?.rutaRecomendada?.dtiConHipoteca ??
+          null,
+
+        ltv:
+          resultadoStored?.ltv ?? resultadoStored?.rutaRecomendada?.ltv ?? null,
+
+        montoMaximo:
+          resultadoStored?.montoMaximo ??
+          resultadoStored?.montoPrestamoMax ??
+          resultadoStored?.prestamoMax ??
+          resultadoStored?.rutaRecomendada?.montoMaximo ??
+          null,
+
+        precioMaxVivienda:
+          resultadoStored?.precioMaxVivienda ??
+          resultadoStored?.precioMax ??
+          resultadoStored?.valorMaxVivienda ??
+          resultadoStored?.rutaRecomendada?.precioMaxVivienda ??
+          null,
+
+        capacidadPago:
+          resultadoStored?.capacidadPagoPrograma ??
+          resultadoStored?.capacidadPago ??
+          resultadoStored?.capacidadPagoGlobal ??
+          resultadoStored?.rutaRecomendada?.capacidadPago ??
+          null,
+      };
+    }
 
     // ✅ data que consume tu PDF util
     const data = {
@@ -1137,20 +1224,14 @@ export async function descargarFichaComercialPDF(req, res) {
     };
 
     // 🧪 DEBUG (déjalo un rato)
-    console.log("🧪 DEBUG FICHA COMERCIAL (precalif):", {
+    console.log("🧪 DEBUG FICHA COMERCIAL (final):", {
       codigoHL: data.codigoHL,
       bancoSugerido: data.precalificacion?.bancoSugerido ?? null,
-      productoSugerido: data.precalificacion?.productoSugerido ?? null,
+      cuotaEstimada: data.precalificacion?.cuotaEstimada ?? null,
+      capacidadPago: data.precalificacion?.capacidadPago ?? null,
+      dtiConHipoteca: data.precalificacion?.dtiConHipoteca ?? null,
       tasaAnual: data.precalificacion?.tasaAnual ?? null,
       plazoMeses: data.precalificacion?.plazoMeses ?? null,
-      cuotaEstimada: data.precalificacion?.cuotaEstimada ?? null,
-      cuotaStress: data.precalificacion?.cuotaStress ?? null,
-      dtiConHipoteca: data.precalificacion?.dtiConHipoteca ?? null,
-      ltv: data.precalificacion?.ltv ?? null,
-      capacidadPago: data.precalificacion?.capacidadPago ?? null,
-      montoMaximo: data.precalificacion?.montoMaximo ?? null,
-      precioMaxVivienda: data.precalificacion?.precioMaxVivienda ?? null,
-      decision_dti: data?.decision?.dti ?? null,
     });
 
     return generarFichaComercialPDF(res, data);
