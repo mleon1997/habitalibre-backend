@@ -33,7 +33,10 @@ function customerOptional(req, _res, next) {
     if (!secret) return next();
 
     const payload = jwt.verify(token, secret);
-    if (payload?.typ && payload.typ !== "customer") return next();
+
+    // ✅ acepta typ o type
+    const typ = payload?.typ || payload?.type;
+    if (typ && typ !== "customer") return next();
 
     const userId = payload?.sub || payload?.userId || payload?.id;
     if (!userId) return next();
@@ -47,8 +50,6 @@ function customerOptional(req, _res, next) {
 
 /* ===============================
    Webhooks públicos (ManyChat)
-   ✅ OJO: si quieres asegurar, agrega verificación X-API-KEY aquí
-   (pero ahora lo haces dentro del controller con getApiKeyOk)
 ================================ */
 router.post("/manychat", crearLeadManychat);
 router.post("/instagram", crearLeadInstagram);
@@ -96,11 +97,14 @@ router.get("/", adminAuth, listarLeads);
 /**
  * ✅ PDF por código HL (admin) — DEBE IR ANTES de "/:id"
  */
-router.get(
-  "/hl/:codigoHL/ficha-comercial.pdf",
-  adminAuth,
-  descargarFichaComercialPDF
-);
+router.get("/hl/:codigoHL/ficha-comercial.pdf", adminAuth, descargarFichaComercialPDF);
+
+/**
+ * ✅ (OPCIONAL) Alias por si quieres pegarle desde frontend tipo:
+ * GET /api/leads/reportes/ficha/:codigoHL
+ * (si NO lo vas a usar, puedes borrarlo)
+ */
+router.get("/reportes/ficha/:codigoHL", adminAuth, descargarFichaComercialPDF);
 
 /**
  * ✅ PDF por ID (admin)

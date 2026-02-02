@@ -7,7 +7,9 @@ export async function adminLogin(req, res) {
 
     const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
     const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
-    const JWT_SECRET = String(process.env.JWT_SECRET || "").trim();
+
+    // ✅ Unificamos: ADMIN_JWT_SECRET o fallback a JWT_SECRET
+    const JWT_SECRET = String(process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || "").trim();
 
     if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
       return res.status(500).json({
@@ -19,7 +21,7 @@ export async function adminLogin(req, res) {
     if (!JWT_SECRET) {
       return res.status(500).json({
         ok: false,
-        message: "JWT_SECRET no está configurado (Render env var)",
+        message: "ADMIN_JWT_SECRET o JWT_SECRET no está configurado (Render env var)",
       });
     }
 
@@ -33,8 +35,8 @@ export async function adminLogin(req, res) {
     // ✅ Un solo formato y un solo secret
     const token = jwt.sign(
       {
-        type: "admin",
-        rolGeneral: "admin",
+        typ: "admin",          // ✅ tipado estándar
+        rolGeneral: "admin",   // ✅ tu check actual
         email: ADMIN_EMAIL,
       },
       JWT_SECRET,
