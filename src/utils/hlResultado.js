@@ -35,7 +35,6 @@ function heuristicaSinOferta(R = {}, ctx = {}) {
   if (isNum(R.cuotaEstimada) && isNum(cap) && R.cuotaEstimada > cap) return true;
 
   // Reglas suaves (NO uses DTI>0.5 como "sin oferta": hay programas que igual aplican)
-  // Si quieres mantenerlas, súbelas bastante o bórralas:
   // if (isNum(R.dtiConHipoteca) && R.dtiConHipoteca > 0.65) return true;
   // if (isNum(R.ltv) && R.ltv > 0.93) return true;
 
@@ -48,6 +47,7 @@ function heuristicaSinOferta(R = {}, ctx = {}) {
  * - productoSugerido / bancoSugerido “flat”
  * - escenariosHL priorizado
  * - objetos siempre definidos (flags/_echo)
+ * - ✅ IMPORTANTÍSIMO: reinyecta campos numéricos “flat” (DTI/cuota/cap/ltv/montos)
  */
 export function normalizeResultadoParaSalida(resultadoRaw = {}) {
   const r = resultadoRaw || {};
@@ -70,6 +70,8 @@ export function normalizeResultadoParaSalida(resultadoRaw = {}) {
     r.mejorBanco?.nombre ||
     (Array.isArray(r.bancosTop3) &&
       (r.bancosTop3[0]?.banco || r.bancosTop3[0]?.nombre)) ||
+    (Array.isArray(r.bancosProbabilidad) &&
+      (r.bancosProbabilidad[0]?.banco || r.bancosProbabilidad[0]?.nombre)) ||
     null;
 
   // ✅ Capacidad: prioriza capacidadPagoPrograma
@@ -82,15 +84,27 @@ export function normalizeResultadoParaSalida(resultadoRaw = {}) {
     NaN
   );
 
+  // ✅ “flat fields” (los que tu PDF necesita)
+  const montoMaximo = toNum(r.montoMaximo ?? r.montoPrestamoMax ?? r.prestamoMax, NaN);
+  const precioMaxVivienda = toNum(
+    r.precioMaxVivienda ?? r.precioMax ?? r.valorMaxVivienda,
+    NaN
+  );
+  const ltv = toNum(r.ltv, NaN);
+  const dtiConHipoteca = toNum(r.dtiConHipoteca, NaN);
+  const cuotaEstimada = toNum(r.cuotaEstimada, NaN);
+  const entradaDisponible = toNum(r.entradaDisponible ?? r.perfil?.entradaDisponible, NaN);
+  const valorVivienda = toNum(r.valorVivienda ?? r.perfil?.valorVivienda, NaN);
+
   const R = {
     capacidadPago,
-    montoMaximo: toNum(r.montoMaximo ?? r.montoPrestamoMax ?? r.prestamoMax, NaN),
-    precioMaxVivienda: toNum(r.precioMaxVivienda ?? r.precioMax ?? r.valorMaxVivienda, NaN),
-    ltv: toNum(r.ltv, NaN),
-    dtiConHipoteca: toNum(r.dtiConHipoteca, NaN),
-    cuotaEstimada: toNum(r.cuotaEstimada, NaN),
-    entradaDisponible: toNum(r.entradaDisponible ?? r.perfil?.entradaDisponible, NaN),
-    valorVivienda: toNum(r.valorVivienda ?? r.perfil?.valorVivienda, NaN),
+    montoMaximo,
+    precioMaxVivienda,
+    ltv,
+    dtiConHipoteca,
+    cuotaEstimada,
+    entradaDisponible,
+    valorVivienda,
   };
 
   /**
@@ -107,20 +121,33 @@ export function normalizeResultadoParaSalida(resultadoRaw = {}) {
   } else {
     sinOferta = heuristicaSinOferta(R, { productoSugerido, bancoSugerido });
   }
-
   flags.sinOferta = !!sinOferta;
 
   // Escenarios: prioriza el “nuevo”
   const escenariosHL = r.escenariosHL || r.escenarios || null;
 
-  return {
+  // ✅ REINYECCIÓN: si el motor ya trae el campo, se respeta; si no, se completa con R.*
+  const out = {
     ...r,
     flags,
     escenariosHL,
     productoSugerido,
     bancoSugerido,
+
+    // claves para PDF/UI
+    capacidadPago: typeof r.capacidadPago === "number" ? r.capacidadPago : (isNum(capacidadPago) ? capacidadPago : r.capacidadPago),
+    montoMaximo: typeof r.montoMaximo === "number" ? r.montoMaximo : (isNum(montoMaximo) ? montoMaximo : r.montoMaximo),
+    precioMaxVivienda: typeof r.precioMaxVivienda === "number" ? r.precioMaxVivienda : (isNum(precioMaxVivienda) ? precioMaxVivienda : r.precioMaxVivienda),
+    ltv: typeof r.ltv === "number" ? r.ltv : (isNum(ltv) ? ltv : r.ltv),
+    dtiConHipoteca: typeof r.dtiConHipoteca === "number" ? r.dtiConHipoteca : (isNum(dtiConHipoteca) ? dtiConHipoteca : r.dtiConHipoteca),
+    cuotaEstimada: typeof r.cuotaEstimada === "number" ? r.cuotaEstimada : (isNum(cuotaEstimada) ? cuotaEstimada : r.cuotaEstimada),
+    entradaDisponible: typeof r.entradaDisponible === "number" ? r.entradaDisponible : (isNum(entradaDisponible) ? entradaDisponible : r.entradaDisponible),
+    valorVivienda: typeof r.valorVivienda === "number" ? r.valorVivienda : (isNum(valorVivienda) ? valorVivienda : r.valorVivienda),
+
     _echo: r._echo || {},
   };
+
+  return out;
 }
 
 export default normalizeResultadoParaSalida;

@@ -14,7 +14,10 @@ import { leadDecision } from "../lib/leadDecision.js";
 // ✅ Merge Web + ManyChat (un solo lead por persona)
 import { upsertLeadMerged } from "../services/leadMerge.js";
 
-const LEADS_CONTROLLER_VERSION = "2026-01-29-leads-controller-v1";
+// ✅ NEW: motor backend (para snapshot real de precalificación)
+import { precalificarHL } from "../services/precalificar.service.js";
+
+const LEADS_CONTROLLER_VERSION = "2026-02-02-leads-controller-v1.1";
 
 /* ===========================================================
    Helpers para extraer datos del resultado
@@ -282,11 +285,117 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
 }
 
 /* ===========================================================
+   ✅ Helper: snapshot precalificación backend-first (blindado)
+   - si el snapshot no tiene campos críticos, recalcula con motor.
+   - setea también campos planos precalificacion_*
+=========================================================== */
+async function asegurarSnapshotPrecalificacion(leadDoc, tag = "GEN") {
+  try {
+    const snapActual = leadDoc?.precalificacion || null;
+
+    const faltaCritico =
+      !snapActual ||
+      snapActual?.bancoSugerido == null ||
+      snapActual?.cuotaEstimada == null ||
+      snapActual?.capacidadPago == null ||
+      snapActual?.dtiConHipoteca == null;
+
+    let snapshotFinal = snapActual;
+
+    if (faltaCritico) {
+      const bodyMotor = {
+        ingresoNetoMensual: leadDoc.ingreso_mensual ?? 0,
+        ingresoPareja: 0,
+        otrasDeudasMensuales: leadDoc.deuda_mensual_aprox ?? 0,
+        valorVivienda: leadDoc.valor_vivienda ?? 0,
+        entradaDisponible: leadDoc.entrada_disponible ?? 0,
+        edad: leadDoc.edad ?? null,
+        afiliadoIess: leadDoc.afiliado_iess ?? null,
+        iessAportesTotales: 0,
+        iessAportesConsecutivos: 0,
+        tipoIngreso: leadDoc.tipo_ingreso ?? "Dependiente",
+        aniosEstabilidad: leadDoc.anios_estabilidad ?? 0,
+        plazoAnios: null,
+      };
+
+      const { respuesta } = precalificarHL(bodyMotor);
+
+      snapshotFinal = {
+        ...(snapActual || {}),
+
+        bancoSugerido:
+          respuesta?.bancoSugerido ?? snapActual?.bancoSugerido ?? null,
+        productoSugerido:
+          respuesta?.productoSugerido ?? snapActual?.productoSugerido ?? null,
+
+        tasaAnual: respuesta?.tasaAnual ?? snapActual?.tasaAnual ?? null,
+        plazoMeses: respuesta?.plazoMeses ?? snapActual?.plazoMeses ?? null,
+
+        cuotaEstimada:
+          respuesta?.cuotaEstimada ?? snapActual?.cuotaEstimada ?? null,
+        cuotaStress: respuesta?.cuotaStress ?? snapActual?.cuotaStress ?? null,
+
+        capacidadPago:
+          respuesta?.capacidadPago ?? snapActual?.capacidadPago ?? null,
+        dtiConHipoteca:
+          respuesta?.dtiConHipoteca ?? snapActual?.dtiConHipoteca ?? null,
+        ltv: respuesta?.ltv ?? snapActual?.ltv ?? null,
+
+        montoMaximo: respuesta?.montoMaximo ?? snapActual?.montoMaximo ?? null,
+        precioMaxVivienda:
+          respuesta?.precioMaxVivienda ?? snapActual?.precioMaxVivienda ?? null,
+      };
+    }
+
+    leadDoc.precalificacion = snapshotFinal;
+
+    leadDoc.precalificacion_banco = snapshotFinal?.bancoSugerido || null;
+
+    leadDoc.precalificacion_tasaAnual = Number.isFinite(
+      Number(snapshotFinal?.tasaAnual)
+    )
+      ? Number(snapshotFinal.tasaAnual)
+      : null;
+
+    leadDoc.precalificacion_plazoMeses = Number.isFinite(
+      Number(snapshotFinal?.plazoMeses)
+    )
+      ? Number(snapshotFinal.plazoMeses)
+      : null;
+
+    leadDoc.precalificacion_cuotaEstimada = Number.isFinite(
+      Number(snapshotFinal?.cuotaEstimada)
+    )
+      ? Number(snapshotFinal.cuotaEstimada)
+      : null;
+
+    await leadDoc.save();
+
+    console.log(`✅ precalificacion snapshot FINAL (${tag}):`, {
+      codigoHL: leadDoc.codigoHL,
+      bancoSugerido: leadDoc.precalificacion?.bancoSugerido ?? null,
+      productoSugerido: leadDoc.precalificacion?.productoSugerido ?? null,
+      cuotaEstimada: leadDoc.precalificacion?.cuotaEstimada ?? null,
+      capacidadPago: leadDoc.precalificacion?.capacidadPago ?? null,
+      dtiConHipoteca: leadDoc.precalificacion?.dtiConHipoteca ?? null,
+    });
+
+    return snapshotFinal;
+  } catch (e) {
+    console.warn(
+      `⚠️ No se pudo setear precalificacion (${tag}):`,
+      e?.message || e
+    );
+    return leadDoc?.precalificacion || null;
+  }
+}
+
+/* ===========================================================
    POST /api/leads   (crear lead desde el simulador)
    ✅ MERGE Web + ManyChat
    ✅ guarda campos “rápidos”
    ✅ calcula lead.decision aquí mismo
-   ✅ guarda lead.precalificacion snapshot (para PDF)
+   ✅ guarda lead.precalificacion snapshot (para PDF) (backend-first)
 =========================================================== */
 export async function crearLead(req, res) {
   try {
@@ -585,6 +694,9 @@ export async function crearLead(req, res) {
     // ✅ decision (ya setea planos)
     await safeDecisionSave(lead, "WEB");
 
+    // ✅ precalificación snapshot (backend-first, blindado) + campos planos precalificacion_*
+    await asegurarSnapshotPrecalificacion(lead, "WEB");
+
     const codigoHL = lead.codigoHL;
     const leadPlano = lead.toObject();
 
@@ -609,70 +721,6 @@ export async function crearLead(req, res) {
       bancoSugerido: resultadoNormalizado.bancoSugerido || null,
       productoSugerido: resultadoNormalizado.productoSugerido || null,
     };
-
-    // ✅ Guardar snapshot plano para PDFs (opcional pero recomendado)
-    try {
-      lead.precalificacion = {
-        bancoSugerido: resultadoConCodigo?.bancoSugerido ?? null,
-        productoSugerido:
-          resultadoConCodigo?.productoSugerido ??
-          resultadoConCodigo?.rutaRecomendada?.tipo ??
-          resultadoConCodigo?.productoElegido ??
-          null,
-
-        tasaAnual:
-          resultadoConCodigo?.tasaAnual ??
-          resultadoConCodigo?.rutaRecomendada?.tasaAnual ??
-          null,
-
-        plazoMeses:
-          resultadoConCodigo?.plazoMeses ??
-          resultadoConCodigo?.rutaRecomendada?.plazoMeses ??
-          (Number.isFinite(Number(resultadoConCodigo?.rutaRecomendada?.plazoAnios))
-            ? Number(resultadoConCodigo.rutaRecomendada.plazoAnios) * 12
-            : null),
-
-        cuotaEstimada:
-          resultadoConCodigo?.cuotaEstimada ??
-          resultadoConCodigo?.rutaRecomendada?.cuotaEstimada ??
-          resultadoConCodigo?.rutaRecomendada?.cuota ??
-          null,
-
-        cuotaStress:
-          resultadoConCodigo?.cuotaStress ??
-          resultadoConCodigo?.stressTest?.cuotaStress ??
-          null,
-
-        dtiConHipoteca: resultadoConCodigo?.dtiConHipoteca ?? null,
-
-        ltv:
-          resultadoConCodigo?.ltv ??
-          resultadoConCodigo?.rutaRecomendada?.ltv ??
-          null,
-
-        montoMaximo:
-          resultadoConCodigo?.montoMaximo ??
-          resultadoConCodigo?.rutaRecomendada?.montoMaximo ??
-          null,
-
-        precioMaxVivienda:
-          resultadoConCodigo?.precioMaxVivienda ??
-          resultadoConCodigo?.rutaRecomendada?.precioMaxVivienda ??
-          null,
-
-        capacidadPago:
-          resultadoConCodigo?.capacidadPago ??
-          resultadoConCodigo?.rutaRecomendada?.capacidadPago ??
-          null,
-      };
-
-      await lead.save();
-    } catch (e) {
-      console.warn(
-        "⚠️ No se pudo guardar precalificacion snapshot:",
-        e?.message || e
-      );
-    }
 
     try {
       await Promise.all([
@@ -703,6 +751,8 @@ export async function crearLead(req, res) {
         edad: lead.edad || null,
         perfilMeta: lead?.metadata?.perfil || null,
         decision_heat: lead.decision_heat ?? 0,
+        precalificacion: lead.precalificacion || null,
+        precalificacion_banco: lead.precalificacion_banco || null,
       },
     });
   } catch (err) {
@@ -934,6 +984,9 @@ export async function crearLeadManychat(req, res) {
 
     await safeDecisionSave(lead, "MANYCHAT");
 
+    // (opcional) si quieres snapshot aunque ManyChat no tenga todos los campos
+    // await asegurarSnapshotPrecalificacion(lead, "MANYCHAT");
+
     return res.json({
       ok: true,
       version: LEADS_CONTROLLER_VERSION,
@@ -1092,11 +1145,31 @@ export async function descargarFichaComercialPDF(req, res) {
           capacidadPago: respuesta?.capacidadPago ?? snap?.capacidadPago ?? null,
         };
 
-        // ✅ Guardar snapshot para futuras descargas
+        // ✅ Guardar snapshot + planos para futuras descargas + dashboard filters
         try {
           await Lead.updateOne(
             { _id: lead._id },
-            { $set: { precalificacion } }
+            {
+              $set: {
+                precalificacion,
+                precalificacion_banco: precalificacion?.bancoSugerido || null,
+                precalificacion_tasaAnual: Number.isFinite(
+                  Number(precalificacion?.tasaAnual)
+                )
+                  ? Number(precalificacion.tasaAnual)
+                  : null,
+                precalificacion_plazoMeses: Number.isFinite(
+                  Number(precalificacion?.plazoMeses)
+                )
+                  ? Number(precalificacion.plazoMeses)
+                  : null,
+                precalificacion_cuotaEstimada: Number.isFinite(
+                  Number(precalificacion?.cuotaEstimada)
+                )
+                  ? Number(precalificacion.cuotaEstimada)
+                  : null,
+              },
+            }
           );
         } catch (eSave) {
           console.warn(
@@ -1105,10 +1178,10 @@ export async function descargarFichaComercialPDF(req, res) {
           );
         }
 
-        // 🧪 Debug útil
         console.log("✅ PDF Comercial: precalificación recalculada", {
           codigoHL: lead.codigoHL,
           bancoSugerido: precalificacion?.bancoSugerido ?? null,
+          productoSugerido: precalificacion?.productoSugerido ?? null,
           cuotaEstimada: precalificacion?.cuotaEstimada ?? null,
           capacidadPago: precalificacion?.capacidadPago ?? null,
           dtiConHipoteca: precalificacion?.dtiConHipoteca ?? null,
@@ -1118,7 +1191,6 @@ export async function descargarFichaComercialPDF(req, res) {
           "⚠️ No se pudo recalcular precalificación para PDF:",
           eMotor?.message || eMotor
         );
-        // seguimos con lo que haya
         precalificacion = snap;
       }
     }
@@ -1191,7 +1263,6 @@ export async function descargarFichaComercialPDF(req, res) {
       };
     }
 
-    // ✅ data que consume tu PDF util
     const data = {
       codigoHL: lead.codigoHL || "-",
       fecha,
@@ -1223,10 +1294,10 @@ export async function descargarFichaComercialPDF(req, res) {
       precalificacion,
     };
 
-    // 🧪 DEBUG (déjalo un rato)
     console.log("🧪 DEBUG FICHA COMERCIAL (final):", {
       codigoHL: data.codigoHL,
       bancoSugerido: data.precalificacion?.bancoSugerido ?? null,
+      productoSugerido: data.precalificacion?.productoSugerido ?? null,
       cuotaEstimada: data.precalificacion?.cuotaEstimada ?? null,
       capacidadPago: data.precalificacion?.capacidadPago ?? null,
       dtiConHipoteca: data.precalificacion?.dtiConHipoteca ?? null,
