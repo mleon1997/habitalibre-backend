@@ -8,14 +8,12 @@ const router = Router();
 /**
  * ✅ Ficha comercial (ADMIN)
  * GET /api/reportes/ficha/:codigo
- * Usa EXACTAMENTE el mismo token admin del dashboard
+ * Reutiliza descargarFichaComercialPDF pero mapea :codigo → :codigoHL
  */
-router.get(
-  "/ficha/:codigo",
-  adminAuth,
-  descargarFichaComercialPDF
-);
+router.get("/ficha/:codigo", adminAuth, (req, res, next) => {
+  req.params.codigoHL = req.params.codigo; // ✅ puente clave
+  return descargarFichaComercialPDF(req, res, next);
+});
 
-// ✅ Export BOTH (ok, esto está bien)
 export const reportesRoutes = router;
 export default router;
