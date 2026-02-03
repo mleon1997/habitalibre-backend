@@ -1,7 +1,7 @@
 // src/utils/fichaComercialPdf.js
+import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
-import PDFDocument from "pdfkit";
 
 const safe = (v, fallback = "-") => (v == null || v === "" ? fallback : v);
 
@@ -19,6 +19,9 @@ const numOrDash = (n) => {
 const yesNoDash = (v) => {
   if (v === true) return "Sí";
   if (v === false) return "No";
+  const s = String(v ?? "").trim().toLowerCase();
+  if (["si", "sí", "true", "1"].includes(s)) return "Sí";
+  if (["no", "false", "0"].includes(s)) return "No";
   return "-";
 };
 
@@ -62,52 +65,19 @@ function toLower(v) {
   return s || null;
 }
 
-/**
- * ✅ Logo desde /public/LOGOHL.png (estable en prod)
- */
-function getLogoBuffer() {
-  try {
-    const logoPath = path.resolve(process.cwd(), "public", "LOGOHL.png");
-    if (!fs.existsSync(logoPath)) {
-      console.warn("⚠️ LOGOHL no encontrado en:", logoPath);
-      return null;
-    }
-    return fs.readFileSync(logoPath);
-  } catch (err) {
-    console.error("❌ Error cargando LOGOHL:", err);
-    return null;
-  }
-}
-
-function scoreTone(score) {
-  const s = Number(score);
-  if (!Number.isFinite(s)) return "muted";
-  if (s >= 80) return "good";
-  if (s >= 60) return "ok";
-  if (s >= 40) return "warn";
-  return "bad";
-}
-
-function heatLabelSmall(h) {
+function heatLabel(h) {
   const x = Number(h);
   if (!Number.isFinite(x)) return "-";
-  if (x <= 0) return "❄️ Frío";
-  if (x === 1) return "🟡 Tibio";
-  if (x === 2) return "✅ Caliente";
-  return "🔥 Hot";
-}
-
-function decisionTone(estado) {
-  const e = String(estado || "").trim().toLowerCase();
-  if (e === "bancable") return "good";
-  if (e === "rescatable") return "warn";
-  if (e === "descartable") return "muted";
-  if (e === "por_calificar") return "info";
-  return "muted";
+  if (x >= 80) return "🔥 Muy caliente";
+  if (x >= 60) return "✅ Caliente";
+  if (x >= 40) return "🟡 Tibio";
+  return "❄️ Frío";
 }
 
 /**
  * ✅ Precalificación “a prueba de balas”
+ * (SIN BANCO: orientado a venta B2B a bancos)
+ *
  * Prioridad:
  * 1) data.precalificacion (snapshot plano)
  * 2) data.resultado (motor)
@@ -119,16 +89,6 @@ function pickPrecalif(data = {}) {
   const r = data?.resultado || {};
   const d = data?.decision || {};
   const ruta = d?.ruta || r?.rutaRecomendada || null;
-
-  const banco =
-    pick(
-      snap?.bancoSugerido,
-      r?.bancoSugerido,
-      ruta?.banco,
-      r?.mejorBanco?.banco,
-      Array.isArray(r?.bancosTop3) ? r.bancosTop3?.[0]?.banco : null,
-      Array.isArray(r?.bancosProbabilidad) ? r.bancosProbabilidad?.[0]?.banco : null
-    ) || null;
 
   const productoSugerido = pick(
     snap?.productoSugerido,
@@ -185,7 +145,6 @@ function pickPrecalif(data = {}) {
   );
 
   return {
-    banco,
     productoSugerido,
     tasaAnual,
     plazoMeses,
@@ -200,14 +159,14 @@ function pickPrecalif(data = {}) {
 }
 
 /**
- * ✅ Genera la ficha comercial (HabitaLibre branded)
- * Incluye:
- * - Header con banda + logo LOGOHL + código
- * - Cards con look fintech
- * - Score HL en círculo
- * - Chips de Estado / Heat / Llamar hoy
- * - Estado civil + Con codeudor
- * - Footer con versión y disclaimer
+ * =========================================================
+ * ✅ PDF “World Class” para VENDER a bancos (B2B)
+ * - Header brand (logo + barra color)
+ * - Cards con look premium
+ * - NO muestra “Top bancos”
+ * - Enfatiza eficiencia: Score / Estado / Etapa / Heat / Métricas clave
+ * - Incluye: Estado civil + Con codeudor
+ * =========================================================
  */
 export function generarFichaComercialPDF(res, data) {
   const codigo = safe(data?.codigo ?? data?.codigoHL, "HL");
@@ -220,237 +179,118 @@ export function generarFichaComercialPDF(res, data) {
   doc.pipe(res);
 
   // =========================
-  // Brand tokens (HabitaLibre)
+  // Theme (HabitaLibre)
   // =========================
-  const BRAND = {
-    emerald: "#10B981", // primary
-    emeraldDark: "#059669",
-    ink: "#0F172A",
-    muted: "#64748B",
-    line: "#E2E8F0",
-    bg: "#F8FAFC",
-    card: "#FFFFFF",
-    chipBg: "#F1F5F9",
-    danger: "#F43F5E",
-    warn: "#F59E0B",
-    info: "#2563EB",
-    ok: "#0EA5E9",
+  const COLOR_BRAND = "#10B981"; // emerald
+  const COLOR_BRAND_DARK = "#0EA371";
+  const COLOR_BG = "#F6F8FB";
+  const COLOR_CARD = "#FFFFFF";
+  const COLOR_TEXT = "#0F172A";
+  const COLOR_MUTED = "#64748B";
+  const COLOR_LINE = "#E6ECF5";
+  const COLOR_PILL = "#ECFDF5";
+
+  // =========================
+  // Helpers drawing
+  // =========================
+  const pageW = () => doc.page.width;
+  const pageH = () => doc.page.height;
+  const left = () => doc.page.margins.left;
+  const right = () => doc.page.width - doc.page.margins.right;
+  const contentW = () => right() - left();
+
+  const roundRect = (x, y, w, h, r = 14, fill = null, stroke = null) => {
+    doc.roundedRect(x, y, w, h, r);
+    if (fill) doc.fillColor(fill).fill();
+    if (stroke) doc.lineWidth(1).strokeColor(stroke).stroke();
+  };
+
+  const text = (t, x, y, opts = {}) => {
+    doc.text(t, x, y, opts);
+  };
+
+  const h1 = (t, x, y, w) => {
+    doc.font("Helvetica-Bold").fontSize(18).fillColor("#FFFFFF");
+    text(t, x, y, { width: w });
+  };
+
+  const smallWhite = (t, x, y, w) => {
+    doc.font("Helvetica").fontSize(9).fillColor("#EAFBF4");
+    text(t, x, y, { width: w });
+  };
+
+  const label = (t) => doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED).text(t);
+  const value = (t) => doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT).text(t);
+
+  const chip = (x, y, t, bg, fg, padX = 10, h = 18) => {
+    doc.font("Helvetica-Bold").fontSize(9);
+    const tw = doc.widthOfString(String(t));
+    const w = tw + padX * 2;
+    roundRect(x, y, w, h, 9, bg, null);
+    doc.fillColor(fg);
+    doc.text(String(t), x + padX, y + 4, { width: w - padX * 2, align: "center" });
+    return w;
+  };
+
+  const card = (x, y, w, h, titleText = null) => {
+    // shadow-ish: draw a faint rect behind
+    roundRect(x, y + 2, w, h, 18, "#EEF3FA", null);
+    roundRect(x, y, w, h, 18, COLOR_CARD, COLOR_LINE);
+
+    if (titleText) {
+      doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT);
+      doc.text(titleText, x + 18, y + 16, { width: w - 36 });
+    }
+  };
+
+  const grid2 = (x, y, w, items, rowGap = 14, colGap = 18) => {
+    const colW = (w - colGap) / 2;
+    let cy = y;
+    for (let i = 0; i < items.length; i += 2) {
+      const A = items[i];
+      const B = items[i + 1];
+
+      // A
+      doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED);
+      doc.text(A.label, x, cy, { width: colW });
+      doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT);
+      doc.text(A.value, x, cy + 12, { width: colW });
+
+      // B
+      if (B) {
+        doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED);
+        doc.text(B.label, x + colW + colGap, cy, { width: colW });
+        doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT);
+        doc.text(B.value, x + colW + colGap, cy + 12, { width: colW });
+      }
+
+      cy += 12 + 12 + rowGap; // label + value + gap
+    }
+    return cy;
+  };
+
+  const scoreBadge = (x, y, score) => {
+    const r = 22;
+    // ring
+    doc.circle(x + r, y + r, r).lineWidth(2).strokeColor("#F59E0B").stroke();
+    // number
+    doc.font("Helvetica-Bold").fontSize(14).fillColor("#B45309");
+    doc.text(String(score ?? "-"), x, y + 10, { width: r * 2, align: "center" });
+    doc.font("Helvetica-Bold").fontSize(8).fillColor("#B45309");
+    doc.text("Score HL", x, y + 26, { width: r * 2, align: "center" });
   };
 
   // =========================
-  // Helpers de layout
-  // =========================
-  const pageW = doc.page.width;
-  const pageH = doc.page.height;
-  const mx = doc.page.margins.left;
-  const mr = doc.page.margins.right;
-  const contentW = pageW - mx - mr;
-
-  function hr(yPad = 10) {
-    const y = doc.y + yPad;
-    doc
-      .moveTo(mx, y)
-      .lineTo(mx + contentW, y)
-      .lineWidth(0.7)
-      .strokeColor(BRAND.line)
-      .stroke();
-    doc.y = y + 10;
-  }
-
-  function cardStart(title, subtitle) {
-    const x = mx;
-    const w = contentW;
-    const y = doc.y;
-
-    // altura mínima; se ajusta “a ojo” con padding
-    const padding = 14;
-
-    // Header del card (texto) primero, para saber cuánto bajar
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(12)
-      .fillColor(BRAND.ink)
-      .text(title, x + padding, y + padding);
-
-    if (subtitle) {
-      doc
-        .font("Helvetica")
-        .fontSize(9)
-        .fillColor(BRAND.muted)
-        .text(subtitle, x + padding, y + padding + 16);
-    }
-
-    // Reservamos un bloque “card” dibujando después con altura dinámica:
-    // usamos doc.y para avanzar y luego pintamos fondo desde yStart.
-    const yContentStart = y + padding + (subtitle ? 34 : 26);
-    doc.y = yContentStart;
-
-    return { x, y, w, padding, yContentStart };
-  }
-
-  function cardEnd(card, yBottomExtra = 10) {
-    const { x, y, w } = card;
-    const yBottom = doc.y + yBottomExtra;
-
-    // Fondo del card detrás
-    doc.save();
-    doc
-      .roundedRect(x, y, w, yBottom - y, 14)
-      .fillColor(BRAND.card)
-      .fill();
-    doc.restore();
-
-    // Borde suave
-    doc
-      .roundedRect(x, y, w, yBottom - y, 14)
-      .lineWidth(0.8)
-      .strokeColor(BRAND.line)
-      .stroke();
-
-    // Reimprimir header arriba del fondo (para que no quede tapado)
-    // (PDFKit dibuja en orden, así que hacemos "repaint" simple)
-    // Nota: no reimprimimos aquí; lo mantenemos por simplicidad visual:
-    // como el fondo se dibujó después, podría tapar textos.
-    // Solución: Dibujar el fondo ANTES de escribir contenido.
-    // Para evitar reescribir todo, usamos otro enfoque: dibujar fondo desde el inicio.
-    // ✅ Para no complicar, dejamos este “cardEnd” SIN fondo.
-    // (Ver: cardDrawBackground y cardBorder)
-  }
-
-  function cardDrawBackground(card, height) {
-    const { x, y, w } = card;
-    doc.save();
-    doc.roundedRect(x, y, w, height, 14).fillColor(BRAND.card).fill();
-    doc.roundedRect(x, y, w, height, 14).lineWidth(0.8).strokeColor(BRAND.line).stroke();
-    doc.restore();
-  }
-
-  function row2(card, label1, value1, label2, value2) {
-    const x = card.x + card.padding;
-    const w = card.w - card.padding * 2;
-    const col = (w - 16) / 2;
-    const y = doc.y;
-
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(9)
-      .fillColor(BRAND.muted)
-      .text(label1, x, y, { width: col });
-
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(12)
-      .fillColor(BRAND.ink)
-      .text(value1, x, y + 12, { width: col });
-
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(9)
-      .fillColor(BRAND.muted)
-      .text(label2, x + col + 16, y, { width: col });
-
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(12)
-      .fillColor(BRAND.ink)
-      .text(value2, x + col + 16, y + 12, { width: col });
-
-    doc.moveDown(2.0);
-  }
-
-  function chip(x, y, text, tone = "muted") {
-    const padX = 10;
-    const padY = 6;
-    const fontSize = 9;
-
-    let bg = BRAND.chipBg;
-    let fg = BRAND.ink;
-
-    if (tone === "good") {
-      bg = "#ECFDF5";
-      fg = BRAND.emeraldDark;
-    } else if (tone === "warn") {
-      bg = "#FFFBEB";
-      fg = "#B45309";
-    } else if (tone === "bad") {
-      bg = "#FFF1F2";
-      fg = "#BE123C";
-    } else if (tone === "info") {
-      bg = "#EFF6FF";
-      fg = "#1D4ED8";
-    }
-
-    doc.save();
-    doc.font("Helvetica-Bold").fontSize(fontSize);
-    const textW = doc.widthOfString(String(text));
-    const w = textW + padX * 2;
-    const h = fontSize + padY * 2;
-
-    doc.roundedRect(x, y, w, h, 999).fillColor(bg).fill();
-    doc.fillColor(fg).text(String(text), x + padX, y + padY - 1);
-    doc.restore();
-
-    return { w, h };
-  }
-
-  function drawScoreCircle(cx, cy, score) {
-    const s = Number(score);
-    const r = 22;
-
-    const tone = scoreTone(s);
-    let ring = BRAND.muted;
-    let fill = "#FFFFFF";
-    let fg = BRAND.ink;
-
-    if (tone === "good") {
-      ring = BRAND.emerald;
-      fill = "#ECFDF5";
-      fg = BRAND.emeraldDark;
-    } else if (tone === "ok") {
-      ring = BRAND.ok;
-      fill = "#F0F9FF";
-      fg = "#0369A1";
-    } else if (tone === "warn") {
-      ring = BRAND.warn;
-      fill = "#FFFBEB";
-      fg = "#B45309";
-    } else if (tone === "bad") {
-      ring = BRAND.danger;
-      fill = "#FFF1F2";
-      fg = "#BE123C";
-    }
-
-    doc.save();
-    doc.circle(cx, cy, r).fillColor(fill).fill();
-    doc.circle(cx, cy, r).lineWidth(2).strokeColor(ring).stroke();
-
-    doc.font("Helvetica-Bold").fontSize(16).fillColor(fg);
-    const txt = Number.isFinite(s) ? String(Math.round(s)) : "-";
-    const tw = doc.widthOfString(txt);
-    doc.text(txt, cx - tw / 2, cy - 8);
-
-    doc.font("Helvetica").fontSize(8).fillColor(BRAND.muted);
-    const lbl = "Score HL";
-    const lw = doc.widthOfString(lbl);
-    doc.text(lbl, cx - lw / 2, cy + 10);
-
-    doc.restore();
-  }
-
-  // =========================
-  // Normalización inputs
+  // Inputs normalization
   // =========================
   const resultado = data?.resultado || null;
   const decision = data?.decision || null;
 
-  const codigoHL = pick(
-    data?.codigo,
-    data?.codigoHL,
-    data?.codigoUnico,
-    data?.codigoUnicoHL
-  );
+  const codigoHL = pick(data?.codigo, data?.codigoHL, data?.codigoUnico, data?.codigoUnicoHL);
+  const fecha = pick(data?.fecha, resultado?._echo?.fecha, resultado?._echo?._fecha);
+  const plaza = pick(data?.plaza, data?.ciudad, data?.ciudadCompra, resultado?.perfil?.ciudadCompra);
 
-  const nombre = pick(data?.nombre);
+  const nombre = pick(data?.nombre, data?.nombreCompleto);
   const telefono = pick(data?.telefono);
   const email = pick(data?.email);
 
@@ -512,36 +352,6 @@ export function generarFichaComercialPDF(res, data) {
     resultado?._echo?.tipo_compra
   );
 
-  // ✅ NUEVO: estado civil
-  const estadoCivil = pick(
-    data?.estadoCivil,
-    data?.estado_civil,
-    data?.civilStatus,
-    resultado?.perfil?.estadoCivil,
-    resultado?.perfil?.estado_civil,
-    resultado?._echo?.estadoCivil,
-    resultado?._echo?.estado_civil
-  );
-
-  // ✅ NUEVO: con codeudor (si es con pareja o si viene explícito)
-  const tipoCompraLower = toLower(tipoCompra);
-  const explicitCodeudor =
-    pick(
-      data?.conCodeudor,
-      data?.con_codeudor,
-      data?.codeudor,
-      data?.coDebtor,
-      resultado?._echo?.conCodeudor,
-      resultado?._echo?.con_codeudor
-    ) ?? null;
-
-  const conCodeudor =
-    typeof explicitCodeudor === "boolean"
-      ? explicitCodeudor
-      : tipoCompraLower === "pareja" || tipoCompraLower === "en_pareja"
-      ? true
-      : null;
-
   const ingresoMensual = pick(
     data?.ingresoMensual,
     data?.ingreso_mensual,
@@ -576,15 +386,37 @@ export function generarFichaComercialPDF(res, data) {
     resultado?._echo?.anios_estabilidad
   );
 
-  // ✅ flags / sinOferta
+  const estadoCivil = pick(
+    data?.estadoCivil,
+    data?.estado_civil,
+    resultado?.perfil?.estadoCivil,
+    resultado?.perfil?.estado_civil
+  );
+
+  const conCodeudor = pick(
+    data?.conCodeudor,
+    data?.con_codeudor,
+    data?.tieneCodeudor,
+    resultado?.perfil?.conCodeudor,
+    resultado?.perfil?.tieneCodeudor
+  );
+
+  // flags / sinOferta
   const sinOferta = (() => {
     const rFlag = resultado?.flags?.sinOferta;
     if (typeof rFlag === "boolean") return rFlag;
     if (typeof resultado?.sinOferta === "boolean") return resultado.sinOferta;
+    if (typeof decision?.sinOferta === "boolean") return decision.sinOferta;
     return null;
   })();
 
-  // ✅ Precalificación robusta
+  // Decision commercial
+  const decisionEstado = pick(decision?.estado, data?.decision_estado);
+  const decisionEtapa = pick(decision?.etapa, data?.decision_etapa);
+  const decisionHeat = pick(decision?.heat, data?.decision_heat);
+  const llamarHoy = pick(decision?.llamarHoy, data?.decision_llamarHoy);
+
+  // Precalif metrics (sin banco)
   const pre = pickPrecalif({ ...data, resultado, decision });
 
   // Si no hay valor declarado, usa precio máximo sugerido
@@ -596,391 +428,274 @@ export function generarFichaComercialPDF(res, data) {
       ? toNum(data.entradaPct)
       : calcEntradaPct(valorViviendaParaMostrar, entradaUSDDeclarado);
 
-  // ✅ decisión / chips
-  const decisionEstado = pick(decision?.estado, data?.decision_estado) || null;
-  const decisionEtapa = pick(decision?.etapa, data?.decision_etapa) || null;
-  const decisionHeat = pick(decision?.heat, data?.decision_heat);
-  const llamarHoy = pick(decision?.llamarHoy, data?.decision_llamarHoy);
-
-  // razones / observaciones (si existen)
-  const razones =
-    pick(
-      decision?.razones,
-      decision?.reasons,
-      decision?.motivos,
-      decision?.observaciones,
-      decision?.porQue
-    ) || null;
+  // DTI base (sin hipoteca) aprox
+  const ingresoNum = toNum(ingresoMensual);
+  const deudaNum = toNum(deudasMensuales);
+  const dtiBase = ingresoNum && ingresoNum > 0 && deudaNum != null ? deudaNum / ingresoNum : null;
 
   // =========================
-  // Fondo (sutil)
+  // Layout constants
   // =========================
+  const X = left();
+  const W = contentW();
+
+  // Background
   doc.save();
-  doc.rect(0, 0, pageW, pageH).fillColor(BRAND.bg).fill();
+  doc.rect(0, 0, pageW(), pageH()).fill(COLOR_BG);
   doc.restore();
 
   // =========================
-  // Header: banda + logo + chips
+  // Brand Header (barra)
   // =========================
-  const headerH = 86;
+  const headerH = 92;
   doc.save();
-  doc.rect(0, 0, pageW, headerH).fillColor(BRAND.emerald).fill();
+  doc.rect(0, 0, pageW(), headerH).fill(COLOR_BRAND);
   doc.restore();
 
-  const logo = getLogoBuffer();
-  if (logo) {
-    // “píldora” blanca detrás del logo
-    doc.save();
-    doc.roundedRect(mx, 18, 118, 44, 14).fillColor("#FFFFFF").fill();
-    doc.restore();
-    doc.image(logo, mx + 10, 26, { width: 98 });
+  // Logo container
+  const logoBox = { x: X, y: 18, w: 64, h: 64, r: 14 };
+  roundRect(logoBox.x, logoBox.y, logoBox.w, logoBox.h, logoBox.r, "#FFFFFF", null);
+
+  // Try to render LOGOHL.png from /public
+  try {
+    const logoPath = path.resolve(process.cwd(), "public", "LOGOHL.png");
+    if (fs.existsSync(logoPath)) {
+      // keep some padding inside the box
+      doc.image(logoPath, logoBox.x + 10, logoBox.y + 10, { fit: [44, 44], align: "center", valign: "center" });
+    } else {
+      // fallback simple HL text
+      doc.font("Helvetica-Bold").fontSize(18).fillColor(COLOR_BRAND_DARK);
+      doc.text("HL", logoBox.x, logoBox.y + 22, { width: logoBox.w, align: "center" });
+    }
+  } catch {
+    // ignore
   }
 
-  // Título
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(18)
-    .fillColor("#FFFFFF")
-    .text("Ficha Comercial", mx + 130, 24);
+  // Title + subtitle
+  const titleX = logoBox.x + logoBox.w + 16;
+  const titleW = W - (logoBox.w + 16);
+  h1("Ficha Comercial", titleX, 20, titleW);
 
-  doc
-    .font("Helvetica")
-    .fontSize(10)
-    .fillColor("#E6FFFA")
-    .text(`HabitaLibre • v1.8`, mx + 130, 46);
+  doc.font("Helvetica").fontSize(10).fillColor("#EAFBF4");
+  doc.text("HabitaLibre • v1.9 (B2B Bancos)", titleX, 44, { width: titleW });
 
-  // Chips derecha (código + estado)
-  const chipY = 26;
-  let chipX = pageW - mr;
+  const metaLine = `Fecha: ${safe(fecha, "-")}  •  Plaza: ${safe(plaza || ciudadCompra, "-")}`;
+  smallWhite(metaLine, titleX, 62, titleW);
 
-  // Código
-  doc.save();
+  // Chips (Estado + Código) on header right
+  const chipsY = 22;
+  let cx = right() - 10;
+
+  // Código chip
+  const codeChipText = `Código: ${safe(codigoHL)}`;
   doc.font("Helvetica-Bold").fontSize(9);
-  const codeTxt = `Código: ${safe(codigoHL)}`;
-  const codeW = doc.widthOfString(codeTxt) + 20;
-  chipX -= codeW;
-  chip(chipX, chipY, codeTxt, "info");
-  chipX -= 10;
+  const codeW = doc.widthOfString(codeChipText) + 20;
+  cx -= codeW;
+  chip(cx, chipsY, codeChipText, "#E0F2FE", "#075985", 10, 20);
 
-  // Estado
-  if (decisionEstado) {
-    const stTone = decisionTone(decisionEstado);
-    const stTxt = String(decisionEstado).replace(/_/g, " ");
-    const stW = doc.widthOfString(stTxt) + 20;
-    chipX -= stW;
-    chip(chipX, chipY, stTxt, stTone === "good" ? "good" : stTone === "warn" ? "warn" : stTone === "info" ? "info" : "muted");
-  }
-  doc.restore();
-
-  // Línea de meta
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor("#E6FFFA")
-    .text(
-      `Fecha: ${safe(data?.fecha)}  •  Plaza: ${safe(data?.plaza)}`,
-      mx + 130,
-      64
-    );
-
-  // Bajamos al contenido
-  doc.y = headerH + 18;
-
-  // =========================
-  // BLOQUE: Resumen + Score Circle
-  // =========================
-  // Card fondo (manual)
-  const summaryY = doc.y;
-  const summaryH = 92;
-
-  doc.save();
-  doc.roundedRect(mx, summaryY, contentW, summaryH, 16).fillColor("#FFFFFF").fill();
-  doc.roundedRect(mx, summaryY, contentW, summaryH, 16).lineWidth(0.8).strokeColor(BRAND.line).stroke();
-  doc.restore();
-
-  // Score circle
-  drawScoreCircle(mx + 50, summaryY + 46, score);
-
-  // Texto resumen
-  const infoX = mx + 100;
-  const infoY = summaryY + 18;
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .fillColor(BRAND.ink)
-    .text(safe(nombre, "Lead"), infoX, infoY, { width: contentW - 120 });
-
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor(BRAND.muted)
-    .text(
-      [telefono ? `Tel: ${telefono}` : null, email ? `Email: ${email}` : null]
-        .filter(Boolean)
-        .join("   •   ") || "—",
-      infoX,
-      infoY + 18,
-      { width: contentW - 120 }
-    );
-
-  // Chips (heat / llamar / etapa / producto)
-  let cx = infoX;
-  let cy = infoY + 44;
-
-  if (decisionEtapa) {
-    const r = chip(cx, cy, `Etapa: ${decisionEtapa}`, "muted");
-    cx += r.w + 8;
+  // Estado chip (si existe)
+  const estadoTxt = safe(decisionEstado, "-");
+  let estadoBg = "#EEF2FF";
+  let estadoFg = "#3730A3";
+  const eLower = String(decisionEstado || "").toLowerCase();
+  if (eLower === "bancable") {
+    estadoBg = "#DCFCE7";
+    estadoFg = "#166534";
+  } else if (eLower === "rescatable") {
+    estadoBg = "#FEF9C3";
+    estadoFg = "#854D0E";
+  } else if (eLower === "descartable") {
+    estadoBg = "#F1F5F9";
+    estadoFg = "#334155";
+  } else if (eLower === "por_calificar") {
+    estadoBg = "#E0E7FF";
+    estadoFg = "#3730A3";
   }
 
-  if (producto) {
-    const r = chip(cx, cy, `Producto: ${producto}`, "info");
-    cx += r.w + 8;
-  }
-
-  if (decisionHeat != null) {
-    const r = chip(cx, cy, `Heat: ${heatLabelSmall(decisionHeat)}`, Number(decisionHeat) >= 2 ? "warn" : "muted");
-    cx += r.w + 8;
-  }
-
-  if (llamarHoy === true) {
-    chip(cx, cy, "Llamar hoy", "bad");
-  }
-
-  doc.y = summaryY + summaryH + 18;
+  const estText = estadoTxt;
+  const estW = doc.widthOfString(estText) + 20;
+  cx -= (estW + 10);
+  chip(cx, chipsY, estText, estadoBg, estadoFg, 10, 20);
 
   // =========================
-  // 1) Core (Card)
+  // Lead Card (principal)
   // =========================
-  const c1Y = doc.y;
-  const c1H = 210;
+  const leadCardY = headerH - 12;
+  const leadCardH = 110;
+  card(X, leadCardY, W, leadCardH, null);
 
-  doc.save();
-  doc.roundedRect(mx, c1Y, contentW, c1H, 16).fillColor("#FFFFFF").fill();
-  doc.roundedRect(mx, c1Y, contentW, c1H, 16).lineWidth(0.8).strokeColor(BRAND.line).stroke();
-  doc.restore();
+  // Score badge
+  const scoreVal = toNum(score);
+  scoreBadge(X + 18, leadCardY + 22, scoreVal != null ? Math.round(scoreVal) : "-");
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .fillColor(BRAND.ink)
-    .text("1) Campos clave (core)", mx + 16, c1Y + 14);
+  // Lead name + contact
+  const leadTextX = X + 18 + 54 + 14; // badge area
+  doc.font("Helvetica-Bold").fontSize(14).fillColor(COLOR_TEXT);
+  doc.text(safe(nombre, "Lead"), leadTextX, leadCardY + 18, { width: W - (leadTextX - X) - 18 });
 
-  doc.y = c1Y + 42;
-  const card1 = { x: mx, y: c1Y, w: contentW, padding: 16 };
+  const contactLine = [
+    telefono ? `Tel: ${safe(telefono)}` : null,
+    email ? `Email: ${safe(email)}` : null,
+  ]
+    .filter(Boolean)
+    .join("   •   ");
 
-  row2(card1, "Edad", edad != null ? String(edad) : "-", "Tipo de ingreso", safe(tipoIngreso));
-  row2(card1, "Estado civil", safe(estadoCivil), "Con codeudor", yesNoDash(conCodeudor === true));
-  row2(
-    card1,
-    "Precio de vivienda (decl.)",
-    valorViviendaDeclarado != null ? money0(valorViviendaDeclarado) : "-",
-    "Entrada (USD)",
-    entradaUSDDeclarado != null ? money0(entradaUSDDeclarado) : "-"
-  );
-  row2(
-    card1,
-    "Entrada (%)",
-    entradaPctCalc != null ? `${Math.round(entradaPctCalc)}%` : "-",
-    "Ciudad compra",
-    safe(ciudadCompra)
-  );
+  doc.font("Helvetica").fontSize(10).fillColor(COLOR_MUTED);
+  doc.text(contactLine || "-", leadTextX, leadCardY + 40, { width: W - (leadTextX - X) - 18 });
 
-  doc.y = c1Y + c1H + 14;
+  // Chips row inside card (Etapa / Producto / Heat / Llamar hoy)
+  let chipX = leadTextX;
+  const chipY2 = leadCardY + 64;
 
-  // =========================
-  // 2) Perfil financiero (Card)
-  // =========================
-  const c2Y = doc.y;
-  const c2H = 150;
+  const etapaText = `Etapa: ${safe(decisionEtapa, "—")}`;
+  chipX += chip(chipX, chipY2, etapaText, "#EEF2FF", "#3730A3", 10, 20) + 8;
 
-  doc.save();
-  doc.roundedRect(mx, c2Y, contentW, c2H, 16).fillColor("#FFFFFF").fill();
-  doc.roundedRect(mx, c2Y, contentW, c2H, 16).lineWidth(0.8).strokeColor(BRAND.line).stroke();
-  doc.restore();
+  const prodText = `Producto: ${safe(producto || pre?.productoSugerido, "—")}`;
+  chipX += chip(chipX, chipY2, prodText, "#E0F2FE", "#075985", 10, 20) + 8;
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .fillColor(BRAND.ink)
-    .text("2) Perfil financiero", mx + 16, c2Y + 14);
+  const heatText =
+    decisionHeat != null
+      ? `Heat: ${safe(String(decisionHeat))} • ${heatLabel(decisionHeat)}`
+      : "Heat: —";
+  chipX += chip(chipX, chipY2, heatText, "#F1F5F9", "#334155", 10, 20) + 8;
 
-  doc.y = c2Y + 42;
-  const card2 = { x: mx, y: c2Y, w: contentW, padding: 16 };
-
-  row2(
-    card2,
-    "Ingreso mensual (decl.)",
-    ingresoMensual != null ? money0(ingresoMensual) : "-",
-    "Deudas mensuales (aprox.)",
-    deudasMensuales != null ? money0(deudasMensuales) : "-"
-  );
-
-  row2(
-    card2,
-    "Afiliado IESS",
-    yesNoDash(afiliadoIess),
-    "Años de estabilidad",
-    aniosEstabilidad != null ? String(aniosEstabilidad) : "-"
-  );
-
-  row2(card2, "Tipo de compra", safe(tipoCompra), "Sin oferta", yesNoDash(sinOferta));
-
-  doc.y = c2Y + c2H + 14;
+  const callText = llamarHoy === true ? "Acción: Llamar hoy" : "Acción: No urgente";
+  const callBg = llamarHoy === true ? "#FFE4E6" : "#F1F5F9";
+  const callFg = llamarHoy === true ? "#9F1239" : "#334155";
+  chip(chipX, chipY2, callText, callBg, callFg, 10, 20);
 
   // =========================
-  // 3) Precalificación (Card)
+  // Cards: Core / Perfil / Precalif / Decision notes
   // =========================
-  const c3Y = doc.y;
-  const c3H = 220;
+  let y = leadCardY + leadCardH + 18;
 
-  doc.save();
-  doc.roundedRect(mx, c3Y, contentW, c3H, 16).fillColor("#FFFFFF").fill();
-  doc.roundedRect(mx, c3Y, contentW, c3H, 16).lineWidth(0.8).strokeColor(BRAND.line).stroke();
-  doc.restore();
+  // --- Card 1: Campos clave (core)
+  const c1H = 150;
+  card(X, y, W, c1H, "1) Campos clave (core)");
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .fillColor(BRAND.ink)
-    .text("3) Precalificación (estimada)", mx + 16, c3Y + 14);
+  const coreItems = [
+    { label: "Edad", value: edad != null ? String(edad) : "-" },
+    { label: "Tipo de ingreso", value: safe(tipoIngreso) },
 
-  doc.y = c3Y + 42;
-  const card3 = { x: mx, y: c3Y, w: contentW, padding: 16 };
+    { label: "Estado civil", value: safe(estadoCivil) },
+    { label: "Con codeudor", value: yesNoDash(conCodeudor) },
 
-  row2(card3, "Banco sugerido", safe(pre?.banco), "Producto sugerido", safe(pre?.productoSugerido));
+    {
+      label: "Precio de vivienda (decl.)",
+      value: valorViviendaDeclarado != null ? money0(valorViviendaDeclarado) : "-",
+    },
+    {
+      label: "Entrada (USD)",
+      value: entradaUSDDeclarado != null ? money0(entradaUSDDeclarado) : "-",
+    },
 
-  row2(
-    card3,
-    "Tasa anual",
-    pre?.tasaAnual != null ? ratePct2(pre.tasaAnual) : "-",
-    "Cuota estimada",
-    pre?.cuotaEstimada != null ? money0(pre.cuotaEstimada) : "-"
-  );
+    { label: "Entrada (%)", value: entradaPctCalc != null ? pct0(entradaPctCalc) : "-" },
+    { label: "Ciudad compra", value: safe(ciudadCompra) },
+  ];
+
+  grid2(X + 18, y + 46, W - 36, coreItems, 12, 18);
+  y += c1H + 14;
+
+  // --- Card 2: Perfil financiero
+  const c2H = 124;
+  card(X, y, W, c2H, "2) Perfil financiero");
+
+  const pfItems = [
+    { label: "Ingreso mensual (decl.)", value: ingresoMensual != null ? money0(ingresoMensual) : "-" },
+    { label: "Deudas mensuales (aprox.)", value: deudasMensuales != null ? money0(deudasMensuales) : "-" },
+
+    { label: "Afiliado IESS", value: yesNoDash(afiliadoIess) },
+    { label: "Años de estabilidad", value: aniosEstabilidad != null ? String(aniosEstabilidad) : "-" },
+
+    { label: "DTI sin hipoteca", value: dtiBase != null ? `${Math.round(dtiBase * 100)}%` : "-" },
+    { label: "Sin oferta", value: yesNoDash(sinOferta) },
+  ];
+  grid2(X + 18, y + 46, W - 36, pfItems, 12, 18);
+  y += c2H + 14;
+
+  // --- Card 3: Precalificación (estimada) - SIN BANCO
+  const c3H = 140;
+  card(X, y, W, c3H, "3) Precalificación (estimada)");
 
   const plazoAnios = pre?.plazoMeses != null ? Math.round(Number(pre.plazoMeses) / 12) : null;
 
-  row2(
-    card3,
-    "Plazo",
-    pre?.plazoMeses != null ? `${numOrDash(pre.plazoMeses)} meses (${plazoAnios ?? "-"} años)` : "-",
-    "Capacidad de pago",
-    pre?.capacidadPago != null ? money0(pre.capacidadPago) : "-"
-  );
+  const preItems = [
+    { label: "Producto sugerido", value: safe(pre?.productoSugerido) },
+    { label: "Tasa anual", value: pre?.tasaAnual != null ? ratePct2(pre.tasaAnual) : "-" },
 
-  row2(
-    card3,
-    "DTI con hipoteca",
-    pre?.dtiConHipoteca != null ? pct0(pre.dtiConHipoteca) : "-",
-    "LTV",
-    pre?.ltv != null ? pct0(pre.ltv) : "-"
-  );
+    {
+      label: "Plazo",
+      value:
+        pre?.plazoMeses != null
+          ? `${numOrDash(pre.plazoMeses)} meses (${plazoAnios ?? "-"} años)`
+          : "-",
+    },
+    { label: "Cuota estimada", value: pre?.cuotaEstimada != null ? money0(pre.cuotaEstimada) : "-" },
 
-  row2(
-    card3,
-    "Cuota stress",
-    pre?.cuotaStress != null ? money0(pre.cuotaStress) : "-",
-    "Precio máx. vivienda",
-    pre?.precioMaxVivienda != null ? money0(pre.precioMaxVivienda) : "-"
-  );
+    { label: "Capacidad de pago", value: pre?.capacidadPago != null ? money0(pre.capacidadPago) : "-" },
+    { label: "Cuota stress", value: pre?.cuotaStress != null ? money0(pre.cuotaStress) : "-" },
 
-  doc.y = c3Y + c3H + 14;
+    { label: "DTI con hipoteca", value: pre?.dtiConHipoteca != null ? pct0(pre.dtiConHipoteca) : "-" },
+    { label: "LTV", value: pre?.ltv != null ? pct0(pre.ltv) : "-" },
+  ];
 
-  // =========================
-  // 4) Decisión comercial (Card)
-  // =========================
-  const c4Y = doc.y;
-  const c4H = 160;
+  grid2(X + 18, y + 46, W - 36, preItems, 12, 18);
+  y += c3H + 14;
 
-  doc.save();
-  doc.roundedRect(mx, c4Y, contentW, c4H, 16).fillColor("#FFFFFF").fill();
-  doc.roundedRect(mx, c4Y, contentW, c4H, 16).lineWidth(0.8).strokeColor(BRAND.line).stroke();
-  doc.restore();
+  // --- Card 4: Decisión comercial (HabitaLibre) - para banca (priorización)
+  const c4H = 138;
+  card(X, y, W, c4H, "4) Priorización comercial (HabitaLibre)");
 
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .fillColor(BRAND.ink)
-    .text("4) Decisión comercial (HabitaLibre)", mx + 16, c4Y + 14);
+  const priItems = [
+    { label: "Estado", value: safe(decisionEstado) },
+    { label: "Etapa", value: safe(decisionEtapa) },
 
-  // Chips en el header del card
-  let dx = mx + 16;
-  const dy = c4Y + 34;
-  if (decisionEstado) {
-    const t = decisionTone(decisionEstado);
-    const r = chip(dx, dy, `Estado: ${String(decisionEstado).replace(/_/g, " ")}`, t);
-    dx += r.w + 8;
-  }
-  if (decisionEtapa) {
-    const r = chip(dx, dy, `Etapa: ${decisionEtapa}`, "muted");
-    dx += r.w + 8;
-  }
-  if (decisionHeat != null) {
-    const r = chip(dx, dy, `Heat: ${heatLabelSmall(decisionHeat)}`, Number(decisionHeat) >= 2 ? "warn" : "muted");
-    dx += r.w + 8;
-  }
-  if (llamarHoy === true) {
-    chip(dx, dy, "Llamar hoy", "bad");
-  }
+    {
+      label: "Heat",
+      value: decisionHeat != null ? `${numOrDash(decisionHeat)} • ${heatLabel(decisionHeat)}` : "-",
+    },
+    { label: "Acción", value: llamarHoy === true ? "Llamar hoy" : "No urgente" },
 
-  // Razones / notas
-  doc.y = c4Y + 66;
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(9)
-    .fillColor(BRAND.muted)
-    .text("Razones / notas (máx. 6)", mx + 16, doc.y);
+    { label: "Tipo de compra", value: safe(tipoCompra) },
+    { label: "Valor vivienda (ref.)", value: valorViviendaParaMostrar != null ? money0(valorViviendaParaMostrar) : "-" },
+  ];
 
-  doc.moveDown(0.6);
-  doc.font("Helvetica").fontSize(10).fillColor(BRAND.ink);
+  // left top of content inside card
+  let afterPriY = grid2(X + 18, y + 46, W - 36, priItems, 12, 18);
+
+  // Notes / razones (máx 5) — estilo “bullet” suave
+  const razones =
+    pick(decision?.razones, decision?.reasons, decision?.motivos, decision?.observaciones, decision?.porQue) || null;
 
   if (Array.isArray(razones) && razones.length) {
-    razones.slice(0, 6).forEach((x) => doc.text(`• ${String(x)}`, mx + 16, doc.y, { width: contentW - 32 }));
-  } else {
-    doc.fillColor(BRAND.muted).text("—", mx + 16, doc.y);
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED);
+    doc.text("Notas operativas", X + 18, afterPriY - 2, { width: W - 36 });
+    doc.moveDown(0.2);
+
+    const startY = doc.y;
+    doc.font("Helvetica").fontSize(10).fillColor(COLOR_TEXT);
+    razones.slice(0, 5).forEach((x) => {
+      doc.text(`• ${String(x)}`, X + 18, doc.y, { width: W - 36 });
+      doc.moveDown(0.1);
+    });
+
+    // ensure it doesn't overflow beyond card; if it does, we simply allow it (PDFKit flows)
+    if (doc.y < y + c4H - 18) {
+      doc.y = Math.min(doc.y, y + c4H - 18);
+    } else {
+      // if overflow, keep going (rare)
+    }
   }
 
-  doc.y = c4Y + c4H + 18;
-
-  // =========================
-  // Footer
-  // =========================
-  const footerY = pageH - 52;
-
-  doc.save();
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(BRAND.muted)
-    .text(
-      "Nota: Información declarada + cálculos estimados. El banco realiza la validación y underwriting final.",
-      mx,
-      footerY,
-      { width: contentW }
-    );
-
-  const genAt = (() => {
-    try {
-      return new Date().toLocaleString("es-EC", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return "";
-    }
-  })();
-
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(BRAND.muted)
-    .text(`Generado: ${genAt}  •  Motor: ${safe(data?.version || "HL")}`, mx, footerY + 16, {
-      width: contentW,
-    });
-  doc.restore();
+  // Footer note (legal + B2B)
+  const footerY = pageH() - 54;
+  doc.font("Helvetica").fontSize(8.5).fillColor(COLOR_MUTED);
+  doc.text(
+    "Nota B2B: HabitaLibre realiza precalificación operativa/comercial con información declarada y cálculos estimados. La aprobación final y underwriting corresponden exclusivamente a la entidad financiera.",
+    X,
+    footerY,
+    { width: W, align: "left" }
+  );
 
   doc.end();
 }
