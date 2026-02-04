@@ -39,7 +39,6 @@ const ratePct2 = (v) => {
   return `${x.toFixed(2)}%`;
 };
 
-// Helpers: calcula entrada %
 function calcEntradaPct(valorVivienda, entradaUSD) {
   const v = Number(valorVivienda);
   const e = Number(entradaUSD);
@@ -47,7 +46,6 @@ function calcEntradaPct(valorVivienda, entradaUSD) {
   return (e / v) * 100;
 }
 
-// Helper: devuelve el primer valor no vacío
 function pick(...vals) {
   for (const v of vals) {
     if (v !== null && v !== undefined && v !== "") return v;
@@ -60,11 +58,6 @@ function toNum(v) {
   return Number.isFinite(x) ? x : null;
 }
 
-function toLower(v) {
-  const s = String(v ?? "").trim().toLowerCase();
-  return s || null;
-}
-
 function heatLabel(h) {
   const x = Number(h);
   if (!Number.isFinite(x)) return "-";
@@ -74,15 +67,9 @@ function heatLabel(h) {
   return "❄️ Frío";
 }
 
-/**
- * ✅ Precalificación “a prueba de balas”
- * (SIN BANCO: orientado a venta B2B a bancos)
- *
- * Prioridad:
- * 1) data.precalificacion (snapshot plano)
- * 2) data.resultado (motor)
- * 3) data.decision.ruta (fallback)
- */
+// =========================
+// Precalif (sin banco)
+// =========================
 function pickPrecalif(data = {}) {
   const snap = data?.precalificacion || null;
 
@@ -160,12 +147,7 @@ function pickPrecalif(data = {}) {
 
 /**
  * =========================================================
- * ✅ PDF “World Class” para VENDER a bancos (B2B)
- * - Header brand (logo + barra color)
- * - Cards con look premium
- * - NO muestra “Top bancos”
- * - Enfatiza eficiencia: Score / Estado / Etapa / Heat / Métricas clave
- * - Incluye: Estado civil + Con codeudor
+ * ✅ PDF “World Class” B2B (sin páginas en blanco)
  * =========================================================
  */
 export function generarFichaComercialPDF(res, data) {
@@ -179,19 +161,18 @@ export function generarFichaComercialPDF(res, data) {
   doc.pipe(res);
 
   // =========================
-  // Theme (HabitaLibre)
+  // Theme
   // =========================
-  const COLOR_BRAND = "#10B981"; // emerald
+  const COLOR_BRAND = "#10B981";
   const COLOR_BRAND_DARK = "#0EA371";
   const COLOR_BG = "#F6F8FB";
   const COLOR_CARD = "#FFFFFF";
   const COLOR_TEXT = "#0F172A";
   const COLOR_MUTED = "#64748B";
   const COLOR_LINE = "#E6ECF5";
-  const COLOR_PILL = "#ECFDF5";
 
   // =========================
-  // Helpers drawing
+  // Geometry
   // =========================
   const pageW = () => doc.page.width;
   const pageH = () => doc.page.height;
@@ -199,28 +180,20 @@ export function generarFichaComercialPDF(res, data) {
   const right = () => doc.page.width - doc.page.margins.right;
   const contentW = () => right() - left();
 
+  const X = left();
+  const W = contentW();
+
+  const FOOTER_H = 52; // reserva inferior
+  const PAGE_SAFE_BOTTOM = () => pageH() - doc.page.margins.bottom - FOOTER_H;
+
+  // =========================
+  // Drawing helpers
+  // =========================
   const roundRect = (x, y, w, h, r = 14, fill = null, stroke = null) => {
     doc.roundedRect(x, y, w, h, r);
     if (fill) doc.fillColor(fill).fill();
     if (stroke) doc.lineWidth(1).strokeColor(stroke).stroke();
   };
-
-  const text = (t, x, y, opts = {}) => {
-    doc.text(t, x, y, opts);
-  };
-
-  const h1 = (t, x, y, w) => {
-    doc.font("Helvetica-Bold").fontSize(18).fillColor("#FFFFFF");
-    text(t, x, y, { width: w });
-  };
-
-  const smallWhite = (t, x, y, w) => {
-    doc.font("Helvetica").fontSize(9).fillColor("#EAFBF4");
-    text(t, x, y, { width: w });
-  };
-
-  const label = (t) => doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED).text(t);
-  const value = (t) => doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT).text(t);
 
   const chip = (x, y, t, bg, fg, padX = 10, h = 18) => {
     doc.font("Helvetica-Bold").fontSize(9);
@@ -233,30 +206,27 @@ export function generarFichaComercialPDF(res, data) {
   };
 
   const card = (x, y, w, h, titleText = null) => {
-    // shadow-ish: draw a faint rect behind
     roundRect(x, y + 2, w, h, 18, "#EEF3FA", null);
     roundRect(x, y, w, h, 18, COLOR_CARD, COLOR_LINE);
-
     if (titleText) {
       doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT);
       doc.text(titleText, x + 18, y + 16, { width: w - 36 });
     }
   };
 
-  const grid2 = (x, y, w, items, rowGap = 14, colGap = 18) => {
+  const grid2 = (x, y, w, items, rowGap = 12, colGap = 18) => {
     const colW = (w - colGap) / 2;
     let cy = y;
+
     for (let i = 0; i < items.length; i += 2) {
       const A = items[i];
       const B = items[i + 1];
 
-      // A
       doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED);
       doc.text(A.label, x, cy, { width: colW });
       doc.font("Helvetica-Bold").fontSize(12).fillColor(COLOR_TEXT);
       doc.text(A.value, x, cy + 12, { width: colW });
 
-      // B
       if (B) {
         doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED);
         doc.text(B.label, x + colW + colGap, cy, { width: colW });
@@ -264,24 +234,115 @@ export function generarFichaComercialPDF(res, data) {
         doc.text(B.value, x + colW + colGap, cy + 12, { width: colW });
       }
 
-      cy += 12 + 12 + rowGap; // label + value + gap
+      cy += 12 + 12 + rowGap;
     }
     return cy;
   };
 
   const scoreBadge = (x, y, score) => {
     const r = 22;
-    // ring
     doc.circle(x + r, y + r, r).lineWidth(2).strokeColor("#F59E0B").stroke();
-    // number
     doc.font("Helvetica-Bold").fontSize(14).fillColor("#B45309");
     doc.text(String(score ?? "-"), x, y + 10, { width: r * 2, align: "center" });
     doc.font("Helvetica-Bold").fontSize(8).fillColor("#B45309");
     doc.text("Score HL", x, y + 26, { width: r * 2, align: "center" });
   };
 
+  // ✅ altura dinámica (para evitar recortes)
+  const GRID_TOP_PAD = 46;
+  const GRID_BOTTOM_PAD = 18;
+  const ROW_GAP = 12;
+  const calcCardHeightForGrid = (itemsCount) => {
+    const rows = Math.ceil(itemsCount / 2);
+    const rowBlock = 12 + 12 + ROW_GAP;
+    const gridH = rows * rowBlock;
+    return GRID_TOP_PAD + gridH + GRID_BOTTOM_PAD;
+  };
+
+  // ✅ Page helpers (evita páginas en blanco)
+  const paintBackground = () => {
+    doc.save();
+    doc.rect(0, 0, pageW(), pageH()).fill(COLOR_BG);
+    doc.restore();
+  };
+
+  const paintMiniHeader = (opts = {}) => {
+    const { codigoHL, decisionEstado } = opts;
+
+    // barra pequeña
+    const h = 34;
+    doc.save();
+    doc.rect(0, 0, pageW(), h).fill(COLOR_BRAND);
+    doc.restore();
+
+    // mini logo
+    const box = { x: X, y: 6, w: 22, h: 22 };
+    roundRect(box.x, box.y, box.w, box.h, 7, "#FFFFFF", null);
+
+    try {
+      const logoPath = path.resolve(process.cwd(), "public", "LOGOHL.png");
+      if (fs.existsSync(logoPath)) {
+        doc.image(logoPath, box.x + 4, box.y + 4, { fit: [14, 14] });
+      } else {
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(COLOR_BRAND_DARK);
+        doc.text("HL", box.x, box.y + 6, { width: box.w, align: "center" });
+      }
+    } catch {}
+
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#FFFFFF");
+    doc.text("Ficha Comercial", box.x + box.w + 10, 10, { width: W - 200 });
+
+    // chips right
+    let cx = right() - 10;
+    doc.font("Helvetica-Bold").fontSize(9);
+
+    const codeTxt = `Código: ${safe(codigoHL)}`;
+    const codeW = doc.widthOfString(codeTxt) + 18;
+    cx -= codeW;
+    chip(cx, 8, codeTxt, "#E0F2FE", "#075985", 9, 18);
+
+    const estadoTxt = safe(decisionEstado, "-");
+    let estadoBg = "#EEF2FF";
+    let estadoFg = "#3730A3";
+    const eLower = String(decisionEstado || "").toLowerCase();
+    if (eLower === "bancable") {
+      estadoBg = "#DCFCE7";
+      estadoFg = "#166534";
+    } else if (eLower === "rescatable") {
+      estadoBg = "#FEF9C3";
+      estadoFg = "#854D0E";
+    } else if (eLower === "descartable") {
+      estadoBg = "#F1F5F9";
+      estadoFg = "#334155";
+    }
+
+    const estW = doc.widthOfString(estadoTxt) + 18;
+    cx -= (estW + 8);
+    chip(cx, 8, estadoTxt, estadoBg, estadoFg, 9, 18);
+  };
+
+  const ensureSpace = (neededH, state) => {
+    if (state.y + neededH <= PAGE_SAFE_BOTTOM()) return;
+
+    doc.addPage();
+    paintBackground();
+    paintMiniHeader(state.headerMini);
+    state.y = 52; // después de mini header
+  };
+
+  const drawFooter = () => {
+    const y = pageH() - 44;
+    doc.font("Helvetica").fontSize(8.5).fillColor(COLOR_MUTED);
+    doc.text(
+      "Nota B2B: HabitaLibre realiza precalificación operativa/comercial con información declarada y cálculos estimados. La aprobación final y underwriting corresponden exclusivamente a la entidad financiera.",
+      X,
+      y,
+      { width: W, align: "left" }
+    );
+  };
+
   // =========================
-  // Inputs normalization
+  // Normalize inputs
   // =========================
   const resultado = data?.resultado || null;
   const decision = data?.decision || null;
@@ -342,7 +403,9 @@ export function generarFichaComercialPDF(res, data) {
     data?.ciudadCompra,
     data?.ciudad_compra,
     data?.ciudad,
-    resultado?.perfil?.ciudadCompra
+    resultado?.perfil?.ciudadCompra,
+    resultado?._echo?.ciudadCompra,
+    resultado?._echo?.ciudad_compra
   );
 
   const tipoCompra = pick(
@@ -401,7 +464,6 @@ export function generarFichaComercialPDF(res, data) {
     resultado?.perfil?.tieneCodeudor
   );
 
-  // flags / sinOferta
   const sinOferta = (() => {
     const rFlag = resultado?.flags?.sinOferta;
     if (typeof rFlag === "boolean") return rFlag;
@@ -410,90 +472,77 @@ export function generarFichaComercialPDF(res, data) {
     return null;
   })();
 
-  // Decision commercial
   const decisionEstado = pick(decision?.estado, data?.decision_estado);
   const decisionEtapa = pick(decision?.etapa, data?.decision_etapa);
   const decisionHeat = pick(decision?.heat, data?.decision_heat);
   const llamarHoy = pick(decision?.llamarHoy, data?.decision_llamarHoy);
 
-  // Precalif metrics (sin banco)
   const pre = pickPrecalif({ ...data, resultado, decision });
 
-  // Si no hay valor declarado, usa precio máximo sugerido
   const valorViviendaParaMostrar = pick(valorViviendaDeclarado, pre?.precioMaxVivienda);
 
-  // Entrada %
-  const entradaPctCalc =
-    data?.entradaPct != null
-      ? toNum(data.entradaPct)
-      : calcEntradaPct(valorViviendaParaMostrar, entradaUSDDeclarado);
+  const entradaPctRaw = pick(
+    data?.entradaPct,
+    data?.entrada_pct,
+    data?.entradaPorcentaje,
+    resultado?._echo?.entradaPct,
+    resultado?._echo?.entrada_pct
+  );
 
-  // DTI base (sin hipoteca) aprox
+  const entradaPctCalc =
+    entradaPctRaw != null ? toNum(entradaPctRaw) : calcEntradaPct(valorViviendaParaMostrar, entradaUSDDeclarado);
+
   const ingresoNum = toNum(ingresoMensual);
   const deudaNum = toNum(deudasMensuales);
   const dtiBase = ingresoNum && ingresoNum > 0 && deudaNum != null ? deudaNum / ingresoNum : null;
 
   // =========================
-  // Layout constants
+  // Paint page 1
   // =========================
-  const X = left();
-  const W = contentW();
+  paintBackground();
 
-  // Background
-  doc.save();
-  doc.rect(0, 0, pageW(), pageH()).fill(COLOR_BG);
-  doc.restore();
-
-  // =========================
-  // Brand Header (barra)
-  // =========================
+  // Header grande (solo página 1)
   const headerH = 92;
   doc.save();
   doc.rect(0, 0, pageW(), headerH).fill(COLOR_BRAND);
   doc.restore();
 
-  // Logo container
   const logoBox = { x: X, y: 18, w: 64, h: 64, r: 14 };
   roundRect(logoBox.x, logoBox.y, logoBox.w, logoBox.h, logoBox.r, "#FFFFFF", null);
 
-  // Try to render LOGOHL.png from /public
   try {
     const logoPath = path.resolve(process.cwd(), "public", "LOGOHL.png");
     if (fs.existsSync(logoPath)) {
-      // keep some padding inside the box
-      doc.image(logoPath, logoBox.x + 10, logoBox.y + 10, { fit: [44, 44], align: "center", valign: "center" });
+      doc.image(logoPath, logoBox.x + 10, logoBox.y + 10, { fit: [44, 44] });
     } else {
-      // fallback simple HL text
       doc.font("Helvetica-Bold").fontSize(18).fillColor(COLOR_BRAND_DARK);
       doc.text("HL", logoBox.x, logoBox.y + 22, { width: logoBox.w, align: "center" });
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // Title + subtitle
   const titleX = logoBox.x + logoBox.w + 16;
   const titleW = W - (logoBox.w + 16);
-  h1("Ficha Comercial", titleX, 20, titleW);
+
+  doc.font("Helvetica-Bold").fontSize(18).fillColor("#FFFFFF");
+  doc.text("Ficha Comercial", titleX, 20, { width: titleW });
 
   doc.font("Helvetica").fontSize(10).fillColor("#EAFBF4");
   doc.text("HabitaLibre • v1.9 (B2B Bancos)", titleX, 44, { width: titleW });
 
   const metaLine = `Fecha: ${safe(fecha, "-")}  •  Plaza: ${safe(plaza || ciudadCompra, "-")}`;
-  smallWhite(metaLine, titleX, 62, titleW);
+  doc.font("Helvetica").fontSize(9).fillColor("#EAFBF4");
+  doc.text(metaLine, titleX, 62, { width: titleW });
 
-  // Chips (Estado + Código) on header right
+  // Chips right
   const chipsY = 22;
   let cx = right() - 10;
 
-  // Código chip
   const codeChipText = `Código: ${safe(codigoHL)}`;
   doc.font("Helvetica-Bold").fontSize(9);
   const codeW = doc.widthOfString(codeChipText) + 20;
   cx -= codeW;
   chip(cx, chipsY, codeChipText, "#E0F2FE", "#075985", 10, 20);
 
-  // Estado chip (si existe)
   const estadoTxt = safe(decisionEstado, "-");
   let estadoBg = "#EEF2FF";
   let estadoFg = "#3730A3";
@@ -507,72 +556,53 @@ export function generarFichaComercialPDF(res, data) {
   } else if (eLower === "descartable") {
     estadoBg = "#F1F5F9";
     estadoFg = "#334155";
-  } else if (eLower === "por_calificar") {
-    estadoBg = "#E0E7FF";
-    estadoFg = "#3730A3";
   }
 
-  const estText = estadoTxt;
-  const estW = doc.widthOfString(estText) + 20;
-  cx -= (estW + 10);
-  chip(cx, chipsY, estText, estadoBg, estadoFg, 10, 20);
+  const estW = doc.widthOfString(estadoTxt) + 20;
+  cx -= estW + 10;
+  chip(cx, chipsY, estadoTxt, estadoBg, estadoFg, 10, 20);
 
-  // =========================
-  // Lead Card (principal)
-  // =========================
+  // Lead card
   const leadCardY = headerH - 12;
   const leadCardH = 110;
   card(X, leadCardY, W, leadCardH, null);
 
-  // Score badge
   const scoreVal = toNum(score);
   scoreBadge(X + 18, leadCardY + 22, scoreVal != null ? Math.round(scoreVal) : "-");
 
-  // Lead name + contact
-  const leadTextX = X + 18 + 54 + 14; // badge area
+  const leadTextX = X + 18 + 54 + 14;
   doc.font("Helvetica-Bold").fontSize(14).fillColor(COLOR_TEXT);
   doc.text(safe(nombre, "Lead"), leadTextX, leadCardY + 18, { width: W - (leadTextX - X) - 18 });
 
-  const contactLine = [
-    telefono ? `Tel: ${safe(telefono)}` : null,
-    email ? `Email: ${safe(email)}` : null,
-  ]
+  const contactLine = [telefono ? `Tel: ${safe(telefono)}` : null, email ? `Email: ${safe(email)}` : null]
     .filter(Boolean)
     .join("   •   ");
 
   doc.font("Helvetica").fontSize(10).fillColor(COLOR_MUTED);
   doc.text(contactLine || "-", leadTextX, leadCardY + 40, { width: W - (leadTextX - X) - 18 });
 
-  // Chips row inside card (Etapa / Producto / Heat / Llamar hoy)
   let chipX = leadTextX;
   const chipY2 = leadCardY + 64;
 
-  const etapaText = `Etapa: ${safe(decisionEtapa, "—")}`;
-  chipX += chip(chipX, chipY2, etapaText, "#EEF2FF", "#3730A3", 10, 20) + 8;
-
-  const prodText = `Producto: ${safe(producto || pre?.productoSugerido, "—")}`;
-  chipX += chip(chipX, chipY2, prodText, "#E0F2FE", "#075985", 10, 20) + 8;
+  chipX += chip(chipX, chipY2, `Etapa: ${safe(decisionEtapa, "—")}`, "#EEF2FF", "#3730A3", 10, 20) + 8;
+  chipX += chip(chipX, chipY2, `Producto: ${safe(producto || pre?.productoSugerido, "—")}`, "#E0F2FE", "#075985", 10, 20) + 8;
 
   const heatText =
-    decisionHeat != null
-      ? `Heat: ${safe(String(decisionHeat))} • ${heatLabel(decisionHeat)}`
-      : "Heat: —";
+    decisionHeat != null ? `Heat: ${safe(String(decisionHeat))} • ${heatLabel(decisionHeat)}` : "Heat: —";
   chipX += chip(chipX, chipY2, heatText, "#F1F5F9", "#334155", 10, 20) + 8;
 
   const callText = llamarHoy === true ? "Acción: Llamar hoy" : "Acción: No urgente";
-  const callBg = llamarHoy === true ? "#FFE4E6" : "#F1F5F9";
-  const callFg = llamarHoy === true ? "#9F1239" : "#334155";
-  chip(chipX, chipY2, callText, callBg, callFg, 10, 20);
+  chip(chipX, chipY2, callText, llamarHoy === true ? "#FFE4E6" : "#F1F5F9", llamarHoy === true ? "#9F1239" : "#334155", 10, 20);
 
   // =========================
-  // Cards: Core / Perfil / Precalif / Decision notes
+  // Content cards with safe pagination
   // =========================
-  let y = leadCardY + leadCardH + 18;
+  const state = {
+    y: leadCardY + leadCardH + 18,
+    headerMini: { codigoHL, decisionEstado },
+  };
 
-  // --- Card 1: Campos clave (core)
-  const c1H = 150;
-  card(X, y, W, c1H, "1) Campos clave (core)");
-
+  // Card 1
   const coreItems = [
     { label: "Edad", value: edad != null ? String(edad) : "-" },
     { label: "Tipo de ingreso", value: safe(tipoIngreso) },
@@ -580,26 +610,19 @@ export function generarFichaComercialPDF(res, data) {
     { label: "Estado civil", value: safe(estadoCivil) },
     { label: "Con codeudor", value: yesNoDash(conCodeudor) },
 
-    {
-      label: "Precio de vivienda (decl.)",
-      value: valorViviendaDeclarado != null ? money0(valorViviendaDeclarado) : "-",
-    },
-    {
-      label: "Entrada (USD)",
-      value: entradaUSDDeclarado != null ? money0(entradaUSDDeclarado) : "-",
-    },
+    { label: "Precio de vivienda (decl.)", value: valorViviendaDeclarado != null ? money0(valorViviendaDeclarado) : "-" },
+    { label: "Entrada (USD)", value: entradaUSDDeclarado != null ? money0(entradaUSDDeclarado) : "-" },
 
     { label: "Entrada (%)", value: entradaPctCalc != null ? pct0(entradaPctCalc) : "-" },
     { label: "Ciudad compra", value: safe(ciudadCompra) },
   ];
+  const c1H = calcCardHeightForGrid(coreItems.length);
+  ensureSpace(c1H + 14, state);
+  card(X, state.y, W, c1H, "1) Campos clave (core)");
+  grid2(X + 18, state.y + GRID_TOP_PAD, W - 36, coreItems, ROW_GAP, 18);
+  state.y += c1H + 14;
 
-  grid2(X + 18, y + 46, W - 36, coreItems, 12, 18);
-  y += c1H + 14;
-
-  // --- Card 2: Perfil financiero
-  const c2H = 124;
-  card(X, y, W, c2H, "2) Perfil financiero");
-
+  // Card 2
   const pfItems = [
     { label: "Ingreso mensual (decl.)", value: ingresoMensual != null ? money0(ingresoMensual) : "-" },
     { label: "Deudas mensuales (aprox.)", value: deudasMensuales != null ? money0(deudasMensuales) : "-" },
@@ -610,26 +633,19 @@ export function generarFichaComercialPDF(res, data) {
     { label: "DTI sin hipoteca", value: dtiBase != null ? `${Math.round(dtiBase * 100)}%` : "-" },
     { label: "Sin oferta", value: yesNoDash(sinOferta) },
   ];
-  grid2(X + 18, y + 46, W - 36, pfItems, 12, 18);
-  y += c2H + 14;
+  const c2H = calcCardHeightForGrid(pfItems.length);
+  ensureSpace(c2H + 14, state);
+  card(X, state.y, W, c2H, "2) Perfil financiero");
+  grid2(X + 18, state.y + GRID_TOP_PAD, W - 36, pfItems, ROW_GAP, 18);
+  state.y += c2H + 14;
 
-  // --- Card 3: Precalificación (estimada) - SIN BANCO
-  const c3H = 140;
-  card(X, y, W, c3H, "3) Precalificación (estimada)");
-
+  // Card 3
   const plazoAnios = pre?.plazoMeses != null ? Math.round(Number(pre.plazoMeses) / 12) : null;
-
   const preItems = [
     { label: "Producto sugerido", value: safe(pre?.productoSugerido) },
     { label: "Tasa anual", value: pre?.tasaAnual != null ? ratePct2(pre.tasaAnual) : "-" },
 
-    {
-      label: "Plazo",
-      value:
-        pre?.plazoMeses != null
-          ? `${numOrDash(pre.plazoMeses)} meses (${plazoAnios ?? "-"} años)`
-          : "-",
-    },
+    { label: "Plazo", value: pre?.plazoMeses != null ? `${numOrDash(pre.plazoMeses)} meses (${plazoAnios ?? "-"} años)` : "-" },
     { label: "Cuota estimada", value: pre?.cuotaEstimada != null ? money0(pre.cuotaEstimada) : "-" },
 
     { label: "Capacidad de pago", value: pre?.capacidadPago != null ? money0(pre.capacidadPago) : "-" },
@@ -638,64 +654,59 @@ export function generarFichaComercialPDF(res, data) {
     { label: "DTI con hipoteca", value: pre?.dtiConHipoteca != null ? pct0(pre.dtiConHipoteca) : "-" },
     { label: "LTV", value: pre?.ltv != null ? pct0(pre.ltv) : "-" },
   ];
+  const c3H = calcCardHeightForGrid(preItems.length);
+  ensureSpace(c3H + 14, state);
+  card(X, state.y, W, c3H, "3) Precalificación (estimada)");
+  grid2(X + 18, state.y + GRID_TOP_PAD, W - 36, preItems, ROW_GAP, 18);
+  state.y += c3H + 14;
 
-  grid2(X + 18, y + 46, W - 36, preItems, 12, 18);
-  y += c3H + 14;
-
-  // --- Card 4: Decisión comercial (HabitaLibre) - para banca (priorización)
-  const c4H = 138;
-  card(X, y, W, c4H, "4) Priorización comercial (HabitaLibre)");
-
+  // Card 4 + Notas (sin overflow)
   const priItems = [
     { label: "Estado", value: safe(decisionEstado) },
     { label: "Etapa", value: safe(decisionEtapa) },
 
-    {
-      label: "Heat",
-      value: decisionHeat != null ? `${numOrDash(decisionHeat)} • ${heatLabel(decisionHeat)}` : "-",
-    },
+    { label: "Heat", value: decisionHeat != null ? `${numOrDash(decisionHeat)} • ${heatLabel(decisionHeat)}` : "-" },
     { label: "Acción", value: llamarHoy === true ? "Llamar hoy" : "No urgente" },
 
     { label: "Tipo de compra", value: safe(tipoCompra) },
     { label: "Valor vivienda (ref.)", value: valorViviendaParaMostrar != null ? money0(valorViviendaParaMostrar) : "-" },
   ];
 
-  // left top of content inside card
-  let afterPriY = grid2(X + 18, y + 46, W - 36, priItems, 12, 18);
-
-  // Notes / razones (máx 5) — estilo “bullet” suave
   const razones =
-    pick(decision?.razones, decision?.reasons, decision?.motivos, decision?.observaciones, decision?.porQue) || null;
+    pick(decision?.razones, decision?.reasons, decision?.motivos, decision?.observaciones, decision?.porQue) || [];
 
-  if (Array.isArray(razones) && razones.length) {
+  // Reservamos espacio para "Notas" (si hay)
+  const notesLinesMax = 3; // evita empujar páginas
+  const notesH = Array.isArray(razones) && razones.length ? 16 + notesLinesMax * 14 + 10 : 0;
+
+  const c4H = calcCardHeightForGrid(priItems.length) + (notesH ? notesH : 0);
+  ensureSpace(c4H + 10, state);
+
+  card(X, state.y, W, c4H, "4) Priorización comercial (HabitaLibre)");
+  const afterGridY = grid2(X + 18, state.y + GRID_TOP_PAD, W - 36, priItems, ROW_GAP, 18);
+
+  if (notesH) {
+    const boxY = Math.min(afterGridY - 6, state.y + c4H - notesH - 16);
+    // título
     doc.font("Helvetica-Bold").fontSize(9).fillColor(COLOR_MUTED);
-    doc.text("Notas operativas", X + 18, afterPriY - 2, { width: W - 36 });
-    doc.moveDown(0.2);
+    doc.text("Notas operativas", X + 18, boxY, { width: W - 36 });
 
-    const startY = doc.y;
+    // bullets (truncate)
     doc.font("Helvetica").fontSize(10).fillColor(COLOR_TEXT);
-    razones.slice(0, 5).forEach((x) => {
-      doc.text(`• ${String(x)}`, X + 18, doc.y, { width: W - 36 });
-      doc.moveDown(0.1);
-    });
-
-    // ensure it doesn't overflow beyond card; if it does, we simply allow it (PDFKit flows)
-    if (doc.y < y + c4H - 18) {
-      doc.y = Math.min(doc.y, y + c4H - 18);
-    } else {
-      // if overflow, keep going (rare)
+    const lines = razones.slice(0, notesLinesMax);
+    let ly = boxY + 14;
+    for (const x of lines) {
+      doc.text(`• ${String(x)}`, X + 18, ly, { width: W - 36 });
+      ly += 14;
+    }
+    if (razones.length > notesLinesMax) {
+      doc.font("Helvetica").fontSize(9).fillColor(COLOR_MUTED);
+      doc.text(`+${razones.length - notesLinesMax} más…`, X + 18, ly + 2, { width: W - 36 });
     }
   }
 
-  // Footer note (legal + B2B)
-  const footerY = pageH() - 54;
-  doc.font("Helvetica").fontSize(8.5).fillColor(COLOR_MUTED);
-  doc.text(
-    "Nota B2B: HabitaLibre realiza precalificación operativa/comercial con información declarada y cálculos estimados. La aprobación final y underwriting corresponden exclusivamente a la entidad financiera.",
-    X,
-    footerY,
-    { width: W, align: "left" }
-  );
+  // Footer en TODAS las páginas sin empujar layout
+  drawFooter();
 
   doc.end();
 }
