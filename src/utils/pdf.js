@@ -278,19 +278,25 @@ function portada(doc, lead, codigoHL) {
   const W = doc.page.width - M * 2;
 
   if (hasLogo) {
-    const logoWidth = 95;
-    const logoX = M;
-    const logoY = 14;
+const logoWidth = 52; // ✅ antes 95 (prueba 48–56)
+const logoX = M;
+const logoY = 18; // un poco más abajo para centrar visualmente
 
-    doc.image(LOGO_PATH, logoX, logoY, { width: logoWidth });
+doc.image(LOGO_PATH, logoX, logoY, { width: logoWidth });
 
-    doc
-      .fillColor("#e5e7eb")
-      .fontSize(11.5)
-      .text("Informe de Precalificación Hipotecaria", logoX + logoWidth + 18, logoY + 30, {
-        width: doc.page.width - (logoX + logoWidth + 18) - M,
-        align: "left",
-      });
+doc
+  .fillColor("#e5e7eb")
+  .fontSize(11.5)
+  .text(
+    "Informe de Precalificación Hipotecaria",
+    logoX + logoWidth + 14, // ✅ reduce gap
+    logoY + 18,             // ✅ alinea vertical con el logo más pequeño
+    {
+      width: doc.page.width - (logoX + logoWidth + 14) - M,
+      align: "left",
+    }
+  );
+
   } else {
     console.warn("[HabitaLibre PDF] Logo no encontrado en:", LOGO_PATH);
     doc.fillColor("#fff").fontSize(22).text("HabitaLibre", M, 32, { continued: true });
