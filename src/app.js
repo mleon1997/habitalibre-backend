@@ -160,6 +160,19 @@ app.get("/__version", (req, res) => {
   });
 });
 
+app.get("/__routes_check", (req, res) => {
+  const paths = (app?._router?.stack || [])
+    .map((l) => l?.route?.path)
+    .filter(Boolean);
+
+  res.json({
+    ok: true,
+    hasWebhookInstagram: paths.includes("/webhooks/instagram"),
+    routesSample: paths.slice(0, 30),
+  });
+});
+
+
 
 // 📩 Leads
 app.use("/api/leads", leadsRoutes);
