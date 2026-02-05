@@ -99,6 +99,40 @@ app.options(/.*/, cors(corsOptions));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 
 /* ================================
+   Instagram Webhook (GET verify)
+================================ */
+app.get("/webhooks/instagram", (req, res) => {
+  const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || "habitalibre_verify";
+
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("✅ Instagram webhook verificado");
+   return res.status(200).type("text/plain").send(String(challenge || ""));
+
+  }
+
+  console.warn("🚫 Instagram webhook verify falló", { mode, token });
+  return res.sendStatus(403);
+});
+
+/* ================================
+   Instagram Webhook (POST events)
+================================ */
+app.post("/webhooks/instagram", (req, res) => {
+  // Meta necesita 200 rápido
+  res.status(200).json({ ok: true });
+
+  // Log mínimo para confirmar que llegan eventos
+  console.log("📩 IG webhook event:", JSON.stringify(req.body).slice(0, 2000));
+
+  // Luego aquí reenviamos a n8n o procesamos (lo hacemos después)
+});
+
+
+/* ================================
    Rutas API
 ================================ */
 
@@ -118,6 +152,14 @@ app.use("/api/diag/mailer", diagMailerRoutes); // 👈 separado para no pisar /a
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
 app.use("/api/health", healthRoutes);
+app.get("/__version", (req, res) => {
+  res.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    renderCommit: process.env.RENDER_GIT_COMMIT || null,
+  });
+});
+
 
 // 📩 Leads
 app.use("/api/leads", leadsRoutes);
