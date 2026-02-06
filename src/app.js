@@ -99,6 +99,26 @@ app.options(/.*/, cors(corsOptions));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 
 /* ================================
+   DEBUG: listar rutas registradas
+================================ */
+app.get("/__routes", (req, res) => {
+  const routes = [];
+
+  const stack = app?._router?.stack || [];
+  for (const layer of stack) {
+    if (layer?.route?.path) {
+      const methods = Object.keys(layer.route.methods || {})
+        .map((m) => m.toUpperCase())
+        .join(",");
+      routes.push({ path: layer.route.path, methods });
+    }
+  }
+
+  res.json({ ok: true, count: routes.length, routes });
+});
+
+
+/* ================================
    Instagram Webhook (GET verify)
 ================================ */
 app.get("/webhooks/instagram", (req, res) => {
