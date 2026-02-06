@@ -180,17 +180,51 @@ app.get("/__version", (req, res) => {
   });
 });
 
-app.get("/__routes_check", (req, res) => {
-  const paths = (app?._router?.stack || [])
-    .map((l) => l?.route?.path)
-    .filter(Boolean);
+/* ================================
+   DEBUG: listar rutas registradas (Express 4/5)
+================================ */
+app.get("/__routes", (req, res) => {
+  const stack =
+    app?._router?.stack ||
+    app?.router?.stack ||
+    [];
+
+  const routes = [];
+
+  for (const layer of stack) {
+    if (!layer) continue;
+
+    // Route directo
+    if (layer.route?.path) {
+      const methods = Object.keys(layer.route.methods || {})
+        .filter((m) => layer.route.methods[m])
+        .map((m) => m.toUpperCase());
+
+      routes.push({ path: layer.route.path, methods });
+      continue;
+    }
+
+    // Router montado (app.use('/api', router))
+    if (layer.name === "router" && layer.handle?.stack) {
+      for (const l2 of layer.handle.stack) {
+        if (!l2?.route?.path) continue;
+
+        const methods = Object.keys(l2.route.methods || {})
+          .filter((m) => l2.route.methods[m])
+          .map((m) => m.toUpperCase());
+
+        routes.push({ path: l2.route.path, methods });
+      }
+    }
+  }
 
   res.json({
     ok: true,
-    hasWebhookInstagram: paths.includes("/webhooks/instagram"),
-    routesSample: paths.slice(0, 30),
+    count: routes.length,
+    routes: routes.sort((a, b) => a.path.localeCompare(b.path)),
   });
 });
+
 
 
 
