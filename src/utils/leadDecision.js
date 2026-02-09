@@ -1,7 +1,17 @@
 // src/lib/leadDecision.js
+
 const n = (v, def = null) => {
   const x = Number(v);
   return Number.isFinite(x) ? x : def;
+};
+
+const b = (v, def = null) => {
+  if (v === true || v === false) return v;
+  if (v == null) return def;
+  const s = String(v).trim().toLowerCase();
+  if (["si", "sí", "true", "1", "yes", "y"].includes(s)) return true;
+  if (["no", "false", "0", "n"].includes(s)) return false;
+  return def;
 };
 
 function normalizeHorizonte(h) {
@@ -13,23 +23,57 @@ function normalizeHorizonte(h) {
   return null;
 }
 
+/**
+ * ✅ Fuente de verdad: resultado.__entrada (o perfilInput)
+ * Fallback: campos legacy del lead
+ */
+function getEntrada(lead) {
+  const r = lead?.resultado || {};
+  const e = r?.__entrada || r?.perfilInput || {};
+
+  return {
+    // compra
+    valorVivienda: n(e?.valorVivienda, n(lead?.valor_vivienda)),
+    entradaDisponible: n(e?.entradaDisponible, n(lead?.entrada_disponible)),
+
+    // datos duros
+    ingresoNetoMensual: n(e?.ingresoNetoMensual, n(lead?.ingreso_mensual)),
+    otrasDeudasMensuales: n(e?.otrasDeudasMensuales, n(lead?.deuda_mensual_aprox)),
+    aniosEstabilidad: n(e?.aniosEstabilidad, n(lead?.anios_estabilidad)),
+
+    // boolean robusto
+    afiliadoIess: b(
+      e?.afiliadoIess,
+      b(lead?.afiliado_iess, null)
+    ),
+  };
+}
+
 function completeness(lead) {
+  const e = getEntrada(lead);
+
   // “datos duros” mínimos para scoring real
-  const hasIngreso = n(lead.ingreso_mensual) != null;
-  const hasDeudas = n(lead.deuda_mensual_aprox) != null;
-  const hasEstab = n(lead.anios_estabilidad) != null;
-  const hasIess = lead.afiliado_iess !== null && lead.afiliado_iess !== undefined;
+  const hasIngreso = n(e.ingresoNetoMensual) != null;
+  const hasDeudas = n(e.otrasDeudasMensuales) != null;
+  const hasEstab = n(e.aniosEstabilidad) != null;
+  const hasIess = e.afiliadoIess !== null && e.afiliadoIess !== undefined;
 
   const hardCount = [hasIngreso, hasDeudas, hasEstab, hasIess].filter(Boolean).length;
 
   // datos de compra
-  const hasValor = n(lead.valor_vivienda) != null;
-  const hasEntrada = n(lead.entrada_disponible) != null;
+  const hasValor = n(e.valorVivienda) != null;
+  const hasEntrada = n(e.entradaDisponible) != null;
 
   const buyCount = [hasValor, hasEntrada].filter(Boolean).length;
 
   return {
-    hasIngreso, hasDeudas, hasEstab, hasIess, hasValor, hasEntrada,
+    e,
+    hasIngreso,
+    hasDeudas,
+    hasEstab,
+    hasIess,
+    hasValor,
+    hasEntrada,
     hardCount,
     buyCount,
     score: Math.round(((hardCount + buyCount) / 6) * 100),
@@ -41,11 +85,15 @@ export function leadDecision(lead) {
   const canal = String(lead.canal || lead?.metadata?.canal || "web").toLowerCase();
 
   const r = lead.resultado || {};
-  const scoreHL = lead.scoreHL ?? r?.scoreHL?.total ?? null; // por si luego guardas scoreHL.total
+
+  // Score HL (si existe en lead.scoreHL o si algún día lo guardas en resultado.scoreHL.total)
+  const scoreHL = lead.scoreHL ?? r?.scoreHL?.total ?? r?.scoreHL ?? null;
+
   const sinOferta = !!(r?.flags?.sinOferta);
 
-  const dti = n(r?.dtiConHipoteca);
-  const ltv = n(r?.ltv);
+  // DTI/LTV: intenta leer del resultado; si no están, quedan null (no rompe nada)
+  const dti = n(r?.dtiConHipoteca ?? r?.precalificacion?.dtiConHipoteca);
+  const ltv = n(r?.ltv ?? r?.precalificacion?.ltv);
 
   const comp = completeness(lead);
 
@@ -122,7 +170,7 @@ export function leadDecision(lead) {
   // Si está incompleto, llamada solo si es caliente (para completar datos)
   if (stage === "necesita_info" && heat >= 75) callToday = true;
 
-  // Descartable (muy raro en tu caso): horizonte explorando + incompleto + frío
+  // Descartable (muy raro): horizonte explorando + incompleto + frío
   if (horizonte === "explorando" && comp.score < 35 && heat < 30) {
     bucket = "descartable";
     reasons.push("Bajo interés + información insuficiente.");
@@ -136,5 +184,8 @@ export function leadDecision(lead) {
     heat,              // 0-100
     missing,           // lista
     reasons,           // por qué
+
+    // (Opcional) útil para debug/QA sin ir a Mongo:
+    // entrada: comp.e,
   };
 }

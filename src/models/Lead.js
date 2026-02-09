@@ -154,19 +154,37 @@ LeadSchema.pre("save", function (next) {
     if (this.isModified("decision")) return next();
 
     const d = leadDecision(this.toObject());
-    this.decision = d;
+
+    const estado = d?.estado ?? d?.bucket ?? null;
+    const etapa = d?.etapa ?? d?.stage ?? null;
+    const llamarHoy = d?.llamarHoy ?? d?.callToday ?? false;
+
+    // ✅ normaliza a formato canónico que tu UI espera
+    this.decision = {
+      ...d,
+      estado,
+      etapa,
+      llamarHoy,
+      faltantes: d?.faltantes ?? d?.missing ?? [],
+      porQue: d?.porQue ?? d?.reasons ?? [],
+      nextActions: d?.nextActions ?? [],
+      ruta: d?.ruta ?? null,
+      bancosTop3: d?.bancosTop3 ?? [],
+    };
+
     this.decisionUpdatedAt = new Date();
 
-    // ✅ set campos planos
-    this.decision_estado = d?.estado || null;
-    this.decision_etapa = d?.etapa || null;
+    // ✅ campos planos indexables
+    this.decision_estado = estado;
+    this.decision_etapa = etapa;
     this.decision_heat = Number.isFinite(Number(d?.heat)) ? Number(d.heat) : 0;
-    this.decision_llamarHoy = d?.llamarHoy === true;
+    this.decision_llamarHoy = llamarHoy === true;
 
     return next();
   } catch {
     return next();
   }
 });
+
 
 export default mongoose.model("Lead", LeadSchema);
