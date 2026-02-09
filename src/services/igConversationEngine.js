@@ -4,13 +4,33 @@ function normalizeText(s) {
   return String(s || "").trim();
 }
 
+/**
+ * inbound puede ser:
+ * - string ("hola")
+ * - objeto: { type: "text|postback|quick_reply", text: "...", payload: "...", title: "..." }
+ *
+ * Regla:
+ * - si hay payload => ese es el input principal (ideal para botones propios)
+ * - si no => usa text
+ */
+function normalizeInbound(inbound) {
+  if (typeof inbound === "string") {
+    return { type: "text", text: normalizeText(inbound), payload: "", title: "" };
+  }
+  const type = inbound?.type || "text";
+  const payload = normalizeText(inbound?.payload || "");
+  const text = normalizeText(inbound?.text || "");
+  const title = normalizeText(inbound?.title || "");
+  return { type, text, payload, title };
+}
+
 function normalizeMoney(input) {
   const s = normalizeText(input)
     .toLowerCase()
     .replace(/usd|dolares|dólares|\$/g, "")
     .replace(/\s/g, "")
-    .replace(/\./g, "")     // "1.200" -> "1200"
-    .replace(/,/g, ".");    // tolera coma decimal
+    .replace(/\./g, "") // "1.200" -> "1200"
+    .replace(/,/g, "."); // tolera coma decimal
 
   const n = Number(s);
   if (!Number.isFinite(n)) return null;
@@ -34,7 +54,8 @@ function normalizeSoloPareja(input) {
     s.includes("yo") ||
     s.includes("individual") ||
     s.includes("una persona")
-  ) return "solo";
+  )
+    return "solo";
 
   if (
     s.includes("pareja") ||
@@ -44,7 +65,8 @@ function normalizeSoloPareja(input) {
     s.includes("los dos") ||
     s === "2" ||
     s.includes("dos")
-  ) return "pareja";
+  )
+    return "pareja";
 
   return null;
 }
@@ -76,7 +98,60 @@ function normalizeYesNo(input) {
   return null;
 }
 
+/**
+ * ✅ Payloads propios (para cuando mandes botones sin ManyChat)
+ * Tip: usa estos strings como payload en Graph API / n8n
+ */
+const IG_PAYLOADS = {
+  BUY_SOLO: "BUY_SOLO",
+  BUY_PAREJA: "BUY_PAREJA",
+
+  INCOME_TYPE_DEP: "INCOME_TYPE_DEP",
+  INCOME_TYPE_IND: "INCOME_TYPE_IND",
+  INCOME_TYPE_MIX: "INCOME_TYPE_MIX",
+
+  YES: "YES",
+  NO: "NO",
+
+  PLAZO_10: "PLAZO_10",
+  PLAZO_15: "PLAZO_15",
+  PLAZO_20: "PLAZO_20",
+  PLAZO_25: "PLAZO_25",
+  PLAZO_30: "PLAZO_30",
+  PLAZO_NOSE: "PLAZO_NOSE",
+};
+
+function mapPayloadToText(payload) {
+  const p = normalizeText(payload);
+  if (!p) return "";
+
+  // Compra
+  if (p === IG_PAYLOADS.BUY_SOLO) return "solo";
+  if (p === IG_PAYLOADS.BUY_PAREJA) return "pareja";
+
+  // Tipo ingreso
+  if (p === IG_PAYLOADS.INCOME_TYPE_DEP) return "dependiente";
+  if (p === IG_PAYLOADS.INCOME_TYPE_IND) return "independiente";
+  if (p === IG_PAYLOADS.INCOME_TYPE_MIX) return "mixto";
+
+  // Sí/No
+  if (p === IG_PAYLOADS.YES) return "sí";
+  if (p === IG_PAYLOADS.NO) return "no";
+
+  // Plazo
+  if (p === IG_PAYLOADS.PLAZO_10) return "10";
+  if (p === IG_PAYLOADS.PLAZO_15) return "15";
+  if (p === IG_PAYLOADS.PLAZO_20) return "20";
+  if (p === IG_PAYLOADS.PLAZO_25) return "25";
+  if (p === IG_PAYLOADS.PLAZO_30) return "30";
+  if (p === IG_PAYLOADS.PLAZO_NOSE) return "no sé";
+
+  // Si no es uno de los nuestros, lo devolvemos tal cual.
+  return p;
+}
+
 const STEPS = {
+  // ✅ FIX: start ahora es ask-only determinístico (siempre responde con el saludo)
   start: {
     ask: () =>
       "Hola 👋 Bienvenido a HabitaLibre.\n\nTe ayudo a saber si podrías comprar casa en Ecuador, sin compromiso.\n\nPara empezar:\n👉 ¿Quieres comprar SOLO o EN PAREJA?",
@@ -84,6 +159,8 @@ const STEPS = {
   },
 
   solo_pareja: {
+    ask: () =>
+      "Para empezar:\n👉 ¿Quieres comprar SOLO o EN PAREJA?\n\nResponde: “solo” o “pareja”.",
     parse: (text) => normalizeSoloPareja(text),
     validate: (v) => v === "solo" || v === "pareja",
     onSuccess: (session, v, rawText) => {
@@ -309,62 +386,67 @@ export function getInitialSessionPatch() {
 
 /**
  * Ejecuta 1 turno:
- * - Usa session.currentStep
- * - Si el step espera input: parse/validate/onSuccess/next
- * - Si el step es “ask-only”: avanza y pregunta
+ * - Soporta inbound string u objeto {type,text,payload,title}
+ * - Si viene payload, lo convierte a "texto lógico" (para parsear botones)
+ * - FIX: start siempre responde con el saludo (ya no cae en "OK")
  */
-export async function runConversationTurn(session, inboundText) {
-  const text = normalizeText(inboundText);
+export async function runConversationTurn(session, inbound) {
+  const inb = normalizeInbound(inbound);
 
-  if (text.toLowerCase().includes("precalificar")) {
+  // Si hay payload, lo usamos como input principal
+  const logicalText = normalizeText(mapPayloadToText(inb.payload) || inb.text);
+
+  if (logicalText.toLowerCase().includes("precalificar")) {
     session.status = "active";
     session.currentStep = "start";
   }
 
   const step = getStep(session.currentStep);
 
-  if (step.parse) {
-    const parsed = step.parse(text);
-    const ok = step.validate ? step.validate(parsed) : parsed != null;
-
-    if (!ok) {
-      session.attempts[session.currentStep] =
-        (session.attempts[session.currentStep] || 0) + 1;
-
-      const msg = step.retry ? step.retry(session) : "No entendí. ¿Puedes repetirlo?";
-      return { session, replyText: msg, shouldRunDecision: false };
-    }
-
-    if (step.onSuccess) step.onSuccess(session, parsed, text);
-
-    const nextId = step.next ? step.next(session) : "start";
+  // ✅ ASK-ONLY step (sin parse): start / run_decision / completed (aunque completed tiene ask-only)
+  if (!step.parse) {
+    const msg = step.ask ? step.ask(session) : "OK";
+    const nextId = step.next ? step.next(session) : session.currentStep;
     session.currentStep = nextId;
 
-    const nextStep = getStep(nextId);
-
-    if (nextId === "run_decision") {
-      return {
-        session,
-        replyText: nextStep.ask(session),
-        shouldRunDecision: true,
-      };
-    }
-
-    return {
-      session,
-      replyText: nextStep.ask ? nextStep.ask(session) : "OK",
-      shouldRunDecision: false,
-    };
+    // Si el step actual era run_decision, disparamos motor
+    const shouldRunDecision = session.currentStep === "result" && step === STEPS.run_decision;
+    return { session, replyText: msg, shouldRunDecision };
   }
 
-  // ask-only step
+  // ✅ step que espera input
+  const parsed = step.parse(logicalText);
+  const ok = step.validate ? step.validate(parsed) : parsed != null;
+
+  if (!ok) {
+    session.attempts[session.currentStep] =
+      (session.attempts[session.currentStep] || 0) + 1;
+
+    const msg = step.retry ? step.retry(session) : "No entendí. ¿Puedes repetirlo?";
+    return { session, replyText: msg, shouldRunDecision: false };
+  }
+
+  if (step.onSuccess) step.onSuccess(session, parsed, logicalText);
+
   const nextId = step.next ? step.next(session) : "start";
   session.currentStep = nextId;
 
   const nextStep = getStep(nextId);
+
+  if (nextId === "run_decision") {
+    return {
+      session,
+      replyText: nextStep.ask(session),
+      shouldRunDecision: true,
+    };
+  }
+
   return {
     session,
     replyText: nextStep.ask ? nextStep.ask(session) : "OK",
     shouldRunDecision: false,
   };
 }
+
+// Export por conveniencia
+export { IG_PAYLOADS };

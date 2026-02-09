@@ -5,14 +5,26 @@ import cors from "cors";
 import mongoose from "mongoose";
 import compression from "compression";
 import helmet from "helmet";
+
 import { reportesRoutes } from "./routes/reportes.routes.js";
 import { verifySmtp } from "./utils/mailer.js";
 
+import Lead from "./models/Lead.js";
+
 // ================================
-// NUEVO: Conversación IG (state machine)
+// Conversación IG (state machine)
 // ================================
 import ConversationSession from "./models/ConversationSession.js";
-import { getInitialSessionPatch, runConversationTurn } from "./services/igConversationEngine.js";
+import {
+  getInitialSessionPatch,
+  runConversationTurn,
+} from "./services/igConversationEngine.js";
+
+// ✅ Motor real (misma lógica que /api/precalificar)
+import { precalificarHL } from "./services/precalificar.service.js";
+
+// ✅ NUEVO: Envío directo por Graph API (IG Messaging)
+import { igSendText } from "./services/igSend.js";
 
 // ================================
 // Rutas
@@ -83,7 +95,7 @@ console.log("🔐 ALLOWED ORIGINS:", allowList);
 ================================ */
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
+    if (!origin) return cb(null, true); // Postman / health checks / server-to-server
     const norm = normalizeOrigin(origin);
     if (allowList.includes(norm)) return cb(null, true);
 
@@ -114,6 +126,7 @@ app.get("/__routes", (req, res) => {
   for (const layer of stack) {
     if (!layer) continue;
 
+    // Route directo
     if (layer.route?.path) {
       const methods = Object.keys(layer.route.methods || {})
         .filter((m) => layer.route.methods[m])
@@ -122,12 +135,15 @@ app.get("/__routes", (req, res) => {
       continue;
     }
 
+    // Router montado (app.use('/api', router))
     if (layer.name === "router" && layer.handle?.stack) {
       for (const l2 of layer.handle.stack) {
         if (!l2?.route?.path) continue;
+
         const methods = Object.keys(l2.route.methods || {})
           .filter((m) => l2.route.methods[m])
           .map((m) => m.toUpperCase());
+
         routes.push({ path: l2.route.path, methods });
       }
     }
@@ -160,12 +176,12 @@ app.get("/webhooks/instagram", (req, res) => {
 });
 
 // ================================
-// NUEVO: Helpers IG webhook
+// Helpers IG webhook
 // ================================
 function shouldIgnoreIgMessage(m) {
   if (m?.message?.is_echo) return true; // mensaje del bot (echo)
-  if (m?.read) return true;            // read receipts
-  if (m?.delivery) return true;        // delivery receipts
+  if (m?.read) return true; // read receipts
+  if (m?.delivery) return true; // delivery receipts
   return false;
 }
 
@@ -174,16 +190,16 @@ function extractUserText(m) {
 }
 
 /**
- * Envío:
- * - Si usas n8n para enviar: define N8N_IG_OUT_WEBHOOK_URL
- * - Si no, por ahora loguea (no rompe nada)
+ * ✅ NUEVO: Envío real a Instagram (Graph API)
+ * - Requiere IG_BUSINESS_ID y PAGE_ACCESS_TOKEN en .env
+ * - Fallback opcional a n8n si defines N8N_IG_OUT_WEBHOOK_URL
  */
 async function sendIgText(toUserId, text) {
-  const url = process.env.N8N_IG_OUT_WEBHOOK_URL;
+  const n8nUrl = process.env.N8N_IG_OUT_WEBHOOK_URL;
 
-  if (url) {
-    // Node 18+ ya trae fetch global
-    await fetch(url, {
+  // Si decides usar n8n para salida, lo respetamos
+  if (n8nUrl) {
+    await fetch(n8nUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ toUserId, text }),
@@ -191,12 +207,139 @@ async function sendIgText(toUserId, text) {
     return;
   }
 
-  console.log("➡️ BOT SHOULD SEND TO", toUserId, ":", text);
+  // Envío directo por Graph API (recomendado)
+  await igSendText({ recipientId: toUserId, text });
+}
+
+/* ================================
+   API: test envío IG
+   POST /api/ig/send-test
+   body: { recipientId, text }
+================================ */
+app.post("/api/ig/send-test", async (req, res) => {
+  try {
+    const { recipientId, text } = req.body || {};
+    if (!recipientId) {
+      return res.status(400).json({ ok: false, error: "recipientId requerido" });
+    }
+
+    const out = await igSendText({
+      recipientId,
+      text: text || "Prueba HabitaLibre ✅",
+    });
+
+    return res.json({ ok: true, out });
+  } catch (err) {
+    console.error("❌ /api/ig/send-test:", err?.stack || err);
+    return res
+      .status(500)
+      .json({ ok: false, error: err?.message || "Error enviando IG" });
+  }
+});
+
+/* ================================
+   Lead helpers (IG)
+================================ */
+function pickScoreHL(respuesta) {
+  const candidates = [
+    respuesta?.puntajeHabitaLibre,
+    respuesta?.scoreHL,
+    respuesta?.score,
+    respuesta?._echo?.scoreHL,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+async function upsertLeadFromInstagram({
+  senderId,
+  precalifInput,
+  respuesta,
+  session,
+}) {
+  const now = new Date();
+
+  // Buscar lead existente por ig senderId guardado en metadata
+  let lead = await Lead.findOne({ "metadata.igSenderId": String(senderId) });
+
+  if (!lead) {
+    lead = new Lead({
+      canal: "instagram",
+      fuente: "manual",
+      metadata: { igSenderId: String(senderId) },
+      fuentesInfo: {
+        web: { seen: false, lastAt: null, completed: false },
+        manychat: { seen: false, lastAt: null, completed: false },
+        manual: { seen: true, lastAt: now, completed: true },
+      },
+    });
+  } else {
+    lead.canal = "instagram";
+    lead.fuente = lead.fuente || "manual";
+    lead.metadata = { ...(lead.metadata || {}), igSenderId: String(senderId) };
+
+    lead.fuentesInfo = lead.fuentesInfo || {};
+    lead.fuentesInfo.manual =
+      lead.fuentesInfo.manual || { seen: false, lastAt: null, completed: false };
+
+    lead.fuentesInfo.manual.seen = true;
+    lead.fuentesInfo.manual.lastAt = now;
+    lead.fuentesInfo.manual.completed = true;
+  }
+
+  // ✅ Mapear campos planos desde precalifInput
+  lead.edad = precalifInput?.edad ?? lead.edad ?? null;
+  lead.tipo_ingreso = precalifInput?.tipoIngreso ?? lead.tipo_ingreso ?? null;
+  lead.valor_vivienda =
+    precalifInput?.valorVivienda ?? lead.valor_vivienda ?? null;
+  lead.entrada_disponible =
+    precalifInput?.entradaDisponible ?? lead.entrada_disponible ?? null;
+
+  lead.afiliado_iess = precalifInput?.afiliadoIess ?? lead.afiliado_iess ?? null;
+  lead.anios_estabilidad =
+    precalifInput?.aniosEstabilidad ?? lead.anios_estabilidad ?? null;
+  lead.ingreso_mensual =
+    precalifInput?.ingresoNetoMensual ?? lead.ingreso_mensual ?? null;
+  lead.deuda_mensual_aprox =
+    precalifInput?.otrasDeudasMensuales ?? lead.deuda_mensual_aprox ?? null;
+
+  // ✅ Resultado completo
+  lead.resultado = respuesta;
+  lead.resultadoUpdatedAt = now;
+
+  const sinOferta = Boolean(respuesta?.flags?.sinOferta);
+  lead.producto = sinOferta
+    ? "Sin oferta viable hoy"
+    : respuesta?.productoSugerido || "Oferta viable (por definir)";
+
+  lead.scoreHL = pickScoreHL(respuesta);
+
+  // ✅ Snapshot precalificación
+  lead.precalificacion = {
+    bancoSugerido: respuesta?.bancoSugerido ?? null,
+    productoSugerido: respuesta?.productoSugerido ?? null,
+    cuotaEstimada: respuesta?.cuotaEstimada ?? null,
+    capacidadPago: respuesta?.capacidadPago ?? null,
+    dtiConHipoteca: respuesta?.dtiConHipoteca ?? null,
+    sinOferta,
+    input: precalifInput,
+    conversationSessionId: session?._id ? String(session._id) : null,
+  };
+
+  lead.precalificacion_banco = respuesta?.bancoSugerido ?? null;
+  lead.precalificacion_cuotaEstimada = respuesta?.cuotaEstimada ?? null;
+
+  // ✅ Save (dispara tu pre-save hook y recalcula decision)
+  await lead.save();
+  return lead;
 }
 
 /* ================================
    Instagram Webhook (POST events)
-   ✅ Estado conversacional + guardado en Mongo
+   ✅ State machine + precalificarHL + Lead upsert
 ================================ */
 app.post("/webhooks/instagram", (req, res) => {
   // ✅ Meta necesita 200 rápido
@@ -235,10 +378,10 @@ app.post("/webhooks/instagram", (req, res) => {
           );
 
           // 2) Turno de conversación
-          const { session: updated, replyText, shouldRunDecision } =
-            await runConversationTurn(session, userText);
+          const turn1 = await runConversationTurn(session, userText);
+          const updated = turn1.session;
 
-          // 3) Guardar estado intermedio
+          // 3) Guardar estado
           await ConversationSession.updateOne(
             { _id: updated._id },
             {
@@ -252,31 +395,37 @@ app.post("/webhooks/instagram", (req, res) => {
             }
           );
 
-          // 4) Responder (primer mensaje post-turno)
-          await sendIgText(senderId, replyText);
+          // 4) Responder primer mensaje
+          await sendIgText(senderId, turn1.replyText);
 
-          // 5) Si toca ejecutar motor /api/precalificar, por ahora dejamos stub.
-          //    (En el siguiente paso lo conectamos a tu motor REAL sin HTTP)
-          if (shouldRunDecision) {
+          // 5) Si toca ejecutar motor real y cerrar
+          if (turn1.shouldRunDecision) {
+            const { input, respuesta } = precalificarHL(updated.data);
+
+            // Guardar snapshot real
             updated.raw = updated.raw || {};
-            updated.raw.precalifResult = {
-              sinOferta: true,
-              cuotaEstimada: null,
-              capacidadPago: null,
-              dtiConHipoteca: null,
-              bancoSugerido: null,
-              productoSugerido: null,
-              _note: "TODO: conectar al motor real /api/precalificar",
-            };
+            updated.raw.precalifInput = input;
+            updated.raw.precalifResult = respuesta;
 
-            // Forzar a RESULT y enviar
+            // Crear/actualizar Lead (bank-ready)
+            const lead = await upsertLeadFromInstagram({
+              senderId,
+              precalifInput: input,
+              respuesta,
+              session: updated,
+            });
+            updated.raw.leadId = String(lead._id);
+
+            // Forzar RESULT
             updated.currentStep = "result";
-            const r2 = await runConversationTurn(updated, ""); // ask result
+            const turn2 = await runConversationTurn(updated, "");
 
+            // Persistir sesión final
             await ConversationSession.updateOne(
               { _id: updated._id },
               {
                 $set: {
+                  status: "completed",
                   currentStep: updated.currentStep,
                   data: updated.data,
                   raw: updated.raw,
@@ -286,7 +435,7 @@ app.post("/webhooks/instagram", (req, res) => {
               }
             );
 
-            await sendIgText(senderId, r2.replyText);
+            await sendIgText(senderId, turn2.replyText);
           }
         }
       }
