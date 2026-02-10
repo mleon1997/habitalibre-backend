@@ -1,44 +1,39 @@
 // src/services/igSend.js
 import "dotenv/config";
 
-// ------------------------------------
-// Config
-// ------------------------------------
-const PAGE_ACCESS_TOKEN =
-  process.env.IG_PAGE_ACCESS_TOKEN ||
-  process.env.PAGE_ACCESS_TOKEN ||
-  process.env.META_PAGE_ACCESS_TOKEN ||
-  null;
-
-// (Opcional) IG Business ID, no se usa para enviar mensajes,
-// pero lo dejamos por consistencia y logs.
-const IG_BUSINESS_ID = process.env.IG_BUSINESS_ID || null;
+const IG_API_VERSION = process.env.IG_API_VERSION || "v21.0";
 
 function assertToken() {
-  if (!PAGE_ACCESS_TOKEN) {
-    const msg =
-      "Falta IG_PAGE_ACCESS_TOKEN en .env (Page Access Token). " +
-      "Agrega: IG_PAGE_ACCESS_TOKEN=xxxx";
-    const err = new Error(msg);
+  const token =
+    process.env.IG_PAGE_ACCESS_TOKEN ||
+    process.env.PAGE_ACCESS_TOKEN ||
+    process.env.IG_PAGE_TOKEN ||
+    "";
+
+  if (!token) {
+    const err = new Error(
+      "Falta IG_PAGE_ACCESS_TOKEN en .env (Page Access Token). Agrega: IG_PAGE_ACCESS_TOKEN=xxxx"
+    );
     err.status = 500;
     throw err;
   }
+  return token;
 }
 
-// ------------------------------------
-// ✅ Named export: igSendText
-// ------------------------------------
-export async function igSendText(toUserId, text) {
-  assertToken();
+export async function igSendText({ toUserId, text }) {
+  const token = assertToken();
 
-  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${encodeURIComponent(
-    PAGE_ACCESS_TOKEN
+  if (!toUserId) throw new Error("Falta toUserId");
+  if (!text) throw new Error("Falta text");
+
+  const url = `https://graph.facebook.com/${IG_API_VERSION}/me/messages?access_token=${encodeURIComponent(
+    token
   )}`;
 
   const payload = {
     recipient: { id: String(toUserId) },
     messaging_type: "RESPONSE",
-    message: { text: String(text || "").slice(0, 1900) }, // límite seguro
+    message: { text: String(text) },
   };
 
   const resp = await fetch(url, {
@@ -50,22 +45,11 @@ export async function igSendText(toUserId, text) {
   const data = await resp.json().catch(() => ({}));
 
   if (!resp.ok) {
-    console.error("❌ IG send error:", {
-      status: resp.status,
-      data,
-      IG_BUSINESS_ID,
-    });
-
-    const err = new Error(
-      data?.error?.message || `Error enviando DM (HTTP ${resp.status})`
-    );
-    err.status = resp.status;
-    err.meta = data;
-    throw err;
+    const msg = data?.error?.message || "Error enviando DM";
+    const code = data?.error?.code;
+    const sub = data?.error?.error_subcode;
+    throw new Error(`${msg} (code=${code}, subcode=${sub})`);
   }
 
-  return { ok: true, data };
+  return data;
 }
-
-// (Opcional) export default, por si luego lo quieres importar default
-export default igSendText;

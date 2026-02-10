@@ -10,6 +10,8 @@ import { reportesRoutes } from "./routes/reportes.routes.js";
 import { verifySmtp } from "./utils/mailer.js";
 
 import Lead from "./models/Lead.js";
+import igRoutes from "./routes/ig.routes.js";
+
 
 // ================================
 // Conversación IG (state machine)
@@ -53,6 +55,8 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use("/api/ig", igRoutes);
+
 
 /* ================================
    Helpers CORS
@@ -208,34 +212,10 @@ async function sendIgText(toUserId, text) {
   }
 
   // Envío directo por Graph API (recomendado)
-  await igSendText({ recipientId: toUserId, text });
+await igSendText({ toUserId, text });
+
 }
 
-/* ================================
-   API: test envío IG
-   POST /api/ig/send-test
-   body: { recipientId, text }
-================================ */
-app.post("/api/ig/send-test", async (req, res) => {
-  try {
-    const { recipientId, text } = req.body || {};
-    if (!recipientId) {
-      return res.status(400).json({ ok: false, error: "recipientId requerido" });
-    }
-
-    const out = await igSendText({
-      recipientId,
-      text: text || "Prueba HabitaLibre ✅",
-    });
-
-    return res.json({ ok: true, out });
-  } catch (err) {
-    console.error("❌ /api/ig/send-test:", err?.stack || err);
-    return res
-      .status(500)
-      .json({ ok: false, error: err?.message || "Error enviando IG" });
-  }
-});
 
 /* ================================
    Lead helpers (IG)
