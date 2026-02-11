@@ -30,22 +30,18 @@ function optionalCustomerAuth(req, _res, next) {
 
     if (!token) return next();
 
-    // OJO: usa el MISMO secret que usas en signCustomerToken()
-    // Ajusta tu env para que exista (recomendado): CUSTOMER_JWT_SECRET
-    const secret =
-      process.env.CUSTOMER_JWT_SECRET ||
-      process.env.JWT_CUSTOMER_SECRET ||
-      process.env.CUSTOMER_AUTH_JWT_SECRET ||
-      process.env.JWT_SECRET ||
-      "";
-
+    // ✅ usa el mismo secret que signCustomerToken()
+    const secret = process.env.CUSTOMER_JWT_SECRET || "";
     if (!secret) return next();
 
     const payload = jwt.verify(token, secret);
-    req.customer = payload;
+
+    // ✅ valida el shape esperado
+    if (!payload?.id || payload?.typ !== "customer") return next();
+
+    req.customer = payload; // { id, email, typ, leadId }
     return next();
   } catch {
-    // token inválido => seguimos como anónimo
     return next();
   }
 }
@@ -90,35 +86,33 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
       cuotaEstimada: Math.round(respuesta.cuotaEstimada || 0),
       capacidadPago: Math.round(respuesta.capacidadPago || 0),
       dtiConHipoteca: respuesta.dtiConHipoteca,
-      customerUserId: req.customer?.userId || null,
+      customerId: req.customer?.id || null, // ✅ FIX
     });
 
     /**
      * ✅ Guardar snapshot financiero en el User (solo si está logueado en CJ)
-     * Esto es lo que alimenta tu dashboard /admin/users con info “tipo quick win”.
+     * Alimenta el dashboard /admin/users (tipo quick win).
      */
-    const userId = req.customer?.userId || null;
+    const userId = req.customer?.id || null; // ✅ FIX: era userId, debe ser id
     if (userId) {
-      // Armamos un output compacto pero suficiente para dashboard + export CSV
+      // output “quick win style” (campos flat)
       const out = {
-        scoreHL: respuesta?.scoreHL ?? respuesta?.output?.scoreHL ?? null,
-        sinOferta:
-          respuesta?.flags?.sinOferta ??
-          respuesta?.sinOferta ??
-          respuesta?.output?.sinOferta ??
-          null,
-        bancoSugerido: respuesta?.bancoSugerido ?? respuesta?.output?.bancoSugerido ?? null,
-        productoSugerido:
-          respuesta?.productoSugerido ?? respuesta?.output?.productoSugerido ?? null,
-        capacidadPago: respuesta?.capacidadPago ?? respuesta?.output?.capacidadPago ?? null,
-        cuotaEstimada: respuesta?.cuotaEstimada ?? respuesta?.output?.cuotaEstimada ?? null,
-        dtiConHipoteca: respuesta?.dtiConHipoteca ?? respuesta?.output?.dtiConHipoteca ?? null,
+        scoreHL: respuesta?.scoreHL ?? null,
+        sinOferta: respuesta?.flags?.sinOferta ?? null,
+        bancoSugerido: respuesta?.bancoSugerido ?? null,
+        productoSugerido: respuesta?.productoSugerido ?? null,
+        capacidadPago: respuesta?.capacidadPago ?? null,
+        cuotaEstimada: respuesta?.cuotaEstimada ?? null,
+        dtiConHipoteca: respuesta?.dtiConHipoteca ?? null,
       };
 
       await User.updateOne(
         { _id: userId },
         {
           $set: {
+            // ✅ opcional: si no tienes ciudad en User, la llenamos con input
+            ciudad: input?.ciudad || input?.ciudadCompra || undefined,
+
             ultimoSnapshotHL: {
               input,
               output: out,
@@ -142,4 +136,3 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
 });
 
 export default router;
-

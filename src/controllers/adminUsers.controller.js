@@ -1,7 +1,10 @@
 // src/controllers/adminUsers.controller.js
 import User from "../models/User.js";
-import ConversationSession from "../models/ConversationSession.js";
+import Lead from "../models/Lead.js";
 
+/* -------------------------
+   Helpers
+------------------------- */
 const toNum = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -13,9 +16,133 @@ const safeRegex = (s) => {
   return new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 };
 
-const buildUserMatch = (q) => {
+const maxIso = (...vals) => {
+  const times = vals
+    .map((x) => (x ? new Date(x).getTime() : 0))
+    .filter((t) => Number.isFinite(t));
+  const t = Math.max(0, ...times);
+  return t ? new Date(t).toISOString() : null;
+};
+
+// ---- extrae “motor result” desde Lead.resultado con tolerancia
+function pickSinOferta(resultado) {
+  if (!resultado) return null;
+  if (typeof resultado?.sinOferta === "boolean") return resultado.sinOferta;
+  if (typeof resultado?.flags?.sinOferta === "boolean") return resultado.flags.sinOferta;
+  if (typeof resultado?.output?.sinOferta === "boolean") return resultado.output.sinOferta;
+  return null;
+}
+
+function pickProducto(resultado, lead) {
+  // prioridad: motor > lead.producto (rápido) > fallback
+  return (
+    resultado?.productoSugerido ||
+    resultado?.output?.productoSugerido ||
+    lead?.producto ||
+    "—"
+  );
+}
+
+function pickBanco(resultado) {
+  return resultado?.bancoSugerido || resultado?.output?.bancoSugerido || "—";
+}
+
+function pickCuota(resultado, lead) {
+  const x =
+    resultado?.cuotaEstimada ??
+    resultado?.output?.cuotaEstimada ??
+    lead?.precalificacion_cuotaEstimada ??
+    null;
+  return Number.isFinite(Number(x)) ? Number(x) : null;
+}
+
+function pickCapacidad(resultado) {
+  const x = resultado?.capacidadPago ?? resultado?.output?.capacidadPago ?? null;
+  return Number.isFinite(Number(x)) ? Number(x) : null;
+}
+
+function pickDTI(resultado) {
+  const x = resultado?.dtiConHipoteca ?? resultado?.output?.dtiConHipoteca ?? null;
+  return Number.isFinite(Number(x)) ? Number(x) : null;
+}
+
+// ---- construye input “quick win style” desde Lead (campos planos)
+function buildInputFromLead(lead) {
+  if (!lead) return null;
+  return {
+    ingresoNetoMensual: lead.ingreso_mensual ?? null,
+    ingresoPareja: null, // no está en Lead (si luego lo agregas, aquí lo pones)
+    otrasDeudasMensuales: lead.deuda_mensual_aprox ?? null,
+    valorVivienda: lead.valor_vivienda ?? null,
+    entradaDisponible: lead.entrada_disponible ?? null,
+    edad: lead.edad ?? null,
+    afiliadoIess: lead.afiliado_iess ?? null,
+    iessAportesTotales: null,
+    iessAportesConsecutivos: null,
+    tipoIngreso: lead.tipo_ingreso ?? null,
+    aniosEstabilidad: lead.anios_estabilidad ?? null,
+    plazoAnios: null,
+    ciudad: lead.ciudad || lead.ciudad_compra || null,
+    tiempoCompra: lead.tiempoCompra || null,
+  };
+}
+
+// ---- construye output “quick win style” desde Lead
+function buildOutputFromLead(lead) {
+  if (!lead) return null;
+  const r = lead.resultado || null;
+  return {
+    scoreHL: lead.scoreHL ?? r?.scoreHL ?? r?.output?.scoreHL ?? null,
+    sinOferta: pickSinOferta(r),
+    bancoSugerido: pickBanco(r),
+    productoSugerido: pickProducto(r, lead),
+    capacidadPago: pickCapacidad(r),
+    cuotaEstimada: pickCuota(r, lead),
+    dtiConHipoteca: pickDTI(r),
+  };
+}
+
+// ---- compute “etapa” tipo quick win
+function computeEtapa({ snapshotOut, lead }) {
+  const sinOferta =
+    snapshotOut?.sinOferta === true ||
+    (snapshotOut?.sinOferta == null && pickSinOferta(lead?.resultado) === true);
+
+  if (sinOferta) return "sin_oferta";
+
+  const hasPrecalif =
+    snapshotOut?.scoreHL != null ||
+    !!snapshotOut?.bancoSugerido ||
+    !!snapshotOut?.productoSugerido ||
+    (lead?.scoreHL != null) ||
+    !!lead?.producto ||
+    !!lead?.precalificacion_cuotaEstimada;
+
+  if (hasPrecalif) return "precalificado";
+  return "registro";
+}
+
+function computeCiudad({ user, lead, snapshotIn }) {
+  return (
+    user?.ciudad ||
+    snapshotIn?.ciudad ||
+    lead?.ciudad ||
+    lead?.ciudad_compra ||
+    "—"
+  );
+}
+
+function computeHorizonte({ lead, snapshotIn }) {
+  return snapshotIn?.tiempoCompra || lead?.tiempoCompra || "—";
+}
+
+/* -------------------------
+   Filters builder
+------------------------- */
+function buildUserMatch(q) {
   const match = {};
 
+  // q: email/nombre/telefono
   if (q.q) {
     const r = safeRegex(q.q);
     if (r) {
@@ -23,76 +150,109 @@ const buildUserMatch = (q) => {
     }
   }
 
-  // Filtros financieros opcionales
-  const scoreMin = toNum(q.scoreMin);
-  const scoreMax = toNum(q.scoreMax);
-  if (scoreMin != null || scoreMax != null) {
-    match["ultimoSnapshotHL.output.scoreHL"] = {};
-    if (scoreMin != null) match["ultimoSnapshotHL.output.scoreHL"].$gte = scoreMin;
-    if (scoreMax != null) match["ultimoSnapshotHL.output.scoreHL"].$lte = scoreMax;
+  // “soloJourney” = tiene lead, snapshot o lastLogin o currentLeadId
+  if (q.soloJourney === "true") {
+    match.$or = [
+      { lastLogin: { $ne: null } },
+      { "ultimoSnapshotHL.createdAt": { $ne: null } },
+      { currentLeadId: { $ne: null } },
+    ];
   }
 
-  const ingresoMin = toNum(q.ingresoMin);
-  const ingresoMax = toNum(q.ingresoMax);
-  if (ingresoMin != null || ingresoMax != null) {
-    match["ultimoSnapshotHL.input.ingresoNetoMensual"] = {};
-    if (ingresoMin != null) match["ultimoSnapshotHL.input.ingresoNetoMensual"].$gte = ingresoMin;
-    if (ingresoMax != null) match["ultimoSnapshotHL.input.ingresoNetoMensual"].$lte = ingresoMax;
-  }
-
-  if (q.sinOferta === "true") match["ultimoSnapshotHL.output.sinOferta"] = true;
-  if (q.sinOferta === "false") match["ultimoSnapshotHL.output.sinOferta"] = false;
-
-  if (q.banco) {
-    const r = safeRegex(q.banco);
-    if (r) match["ultimoSnapshotHL.output.bancoSugerido"] = r;
-  }
-  if (q.productoSugerido) {
-    const r = safeRegex(q.productoSugerido);
-    if (r) match["ultimoSnapshotHL.output.productoSugerido"] = r;
-  }
-
-  // ojo: "soloJourney" lo resolvemos con lookup también (sessions)
   return match;
-};
+}
 
-const computeEtapa = (u) => {
-  const out = u?.ultimoSnapshotHL?.output;
-  if (out?.sinOferta === true) return "sin_oferta";
-  if (out?.scoreHL != null || out?.bancoSugerido || out?.productoSugerido) return "precalificado";
-  return "registro";
-};
-
-const computeProducto = (u) => u?.ultimoSnapshotHL?.output?.productoSugerido || "-";
-const computeCiudad = (u) => u?.ciudad || u?.ultimoSnapshotHL?.input?.ciudad || "-";
-const computeCuota = (u) => u?.ultimoSnapshotHL?.output?.cuotaEstimada ?? null;
-
-const computeLastActivity = (u) => {
-  const a = u?.lastLogin ? new Date(u.lastLogin).getTime() : 0;
-  const b = u?.ultimoSnapshotHL?.createdAt ? new Date(u.ultimoSnapshotHL.createdAt).getTime() : 0;
-  const c = u?.updatedAt ? new Date(u.updatedAt).getTime() : 0;
-  const t = Math.max(a, b, c);
-  return t ? new Date(t).toISOString() : null;
-};
-
-// GET /api/admin/users/kpis
+/* -------------------------
+   GET /api/admin/users/kpis
+------------------------- */
 export const kpisAdminUsers = async (req, res) => {
   try {
     const match = buildUserMatch(req.query);
 
+    // agregamos lookup para contar cuántos tienen lead (aunque no tengan snapshot)
     const [agg] = await User.aggregate([
       { $match: match },
+
+      {
+        $lookup: {
+          from: "leads",
+          let: { uid: "$_id", lid: "$currentLeadId" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $and: [{ $ne: ["$$lid", null] }, { $eq: ["$_id", "$$lid"] }] },
+                    { $eq: ["$userId", "$$uid"] },
+                  ],
+                },
+              },
+            },
+            { $sort: { updatedAt: -1, createdAt: -1 } },
+            { $limit: 1 },
+            {
+              $project: {
+                scoreHL: 1,
+                producto: 1,
+                precalificacion_cuotaEstimada: 1,
+                resultado: 1,
+              },
+            },
+          ],
+          as: "leadTop",
+        },
+      },
+      { $addFields: { leadTop: { $arrayElemAt: ["$leadTop", 0] } } },
+
+      {
+        $addFields: {
+          hasSnapshot: {
+            $and: [
+              { $ne: ["$ultimoSnapshotHL", null] },
+              { $ne: ["$ultimoSnapshotHL.createdAt", null] },
+            ],
+          },
+          hasLead: { $ne: ["$leadTop", null] },
+          sinOfertaAny: {
+            $cond: [
+              { $eq: ["$ultimoSnapshotHL.output.sinOferta", true] },
+              true,
+              {
+                $cond: [
+                  { $eq: ["$leadTop.resultado.flags.sinOferta", true] },
+                  true,
+                  { $eq: ["$leadTop.resultado.sinOferta", true] },
+                ],
+              },
+            ],
+          },
+          precalifAny: {
+            $or: [
+              { $ne: ["$ultimoSnapshotHL.output.scoreHL", null] },
+              { $ne: ["$leadTop.scoreHL", null] },
+              { $ne: ["$leadTop.precalificacion_cuotaEstimada", null] },
+            ],
+          },
+        },
+      },
+
       {
         $group: {
           _id: null,
           totalUsers: { $sum: 1 },
           conLogin: { $sum: { $cond: [{ $ne: ["$lastLogin", null] }, 1, 0] } },
-          conSnapshot: {
+          conSnapshot: { $sum: { $cond: ["$hasSnapshot", 1, 0] } },
+          conLead: { $sum: { $cond: ["$hasLead", 1, 0] } },
+          precalificados: {
             $sum: {
-              $cond: [{ $ne: ["$ultimoSnapshotHL.createdAt", null] }, 1, 0],
+              $cond: [
+                { $and: ["$precalifAny", { $ne: ["$sinOfertaAny", true] }] },
+                1,
+                0,
+              ],
             },
           },
-          sinOferta: { $sum: { $cond: ["$ultimoSnapshotHL.output.sinOferta", 1, 0] } },
+          sinOferta: { $sum: { $cond: ["$sinOfertaAny", 1, 0] } },
         },
       },
     ]);
@@ -102,6 +262,8 @@ export const kpisAdminUsers = async (req, res) => {
       totalUsers: agg?.totalUsers || 0,
       conLogin: agg?.conLogin || 0,
       conSnapshot: agg?.conSnapshot || 0,
+      conLead: agg?.conLead || 0,
+      precalificados: agg?.precalificados || 0,
       sinOferta: agg?.sinOferta || 0,
     });
   } catch (e) {
@@ -110,7 +272,9 @@ export const kpisAdminUsers = async (req, res) => {
   }
 };
 
-// GET /api/admin/users
+/* -------------------------
+   GET /api/admin/users
+------------------------- */
 export const listAdminUsers = async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
@@ -119,30 +283,80 @@ export const listAdminUsers = async (req, res) => {
 
     const match = buildUserMatch(req.query);
 
-    const sortKey = String(req.query.sort || "createdAt_desc");
+    const sortKey = String(req.query.sort || "activity_desc");
     const sortMap = {
       createdAt_desc: { createdAt: -1 },
       createdAt_asc: { createdAt: 1 },
-      lastLogin_desc: { lastLogin: -1 },
-      lastLogin_asc: { lastLogin: 1 },
-      score_desc: { "ultimoSnapshotHL.output.scoreHL": -1 },
-      score_asc: { "ultimoSnapshotHL.output.scoreHL": 1 },
-      ingreso_desc: { "ultimoSnapshotHL.input.ingresoNetoMensual": -1 },
-      ingreso_asc: { "ultimoSnapshotHL.input.ingresoNetoMensual": 1 },
+      activity_desc: { updatedAt: -1 },
+      activity_asc: { updatedAt: 1 },
     };
-    const sort = sortMap[sortKey] || sortMap.createdAt_desc;
+    const sort = sortMap[sortKey] || sortMap.activity_desc;
 
     const [agg] = await User.aggregate([
       { $match: match },
+
+      // ✅ Trae el lead asociado (por currentLeadId o por userId)
       {
         $lookup: {
-          from: "conversationsessions",
-          localField: "_id",
-          foreignField: "userId",
-          as: "cjSessions",
+          from: "leads",
+          let: { uid: "$_id", lid: "$currentLeadId" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $and: [{ $ne: ["$$lid", null] }, { $eq: ["$_id", "$$lid"] }] },
+                    { $eq: ["$userId", "$$uid"] },
+                  ],
+                },
+              },
+            },
+            { $sort: { updatedAt: -1, createdAt: -1 } },
+            { $limit: 1 },
+          ],
+          as: "leadTop",
         },
       },
-      { $addFields: { cjSessionsCount: { $size: "$cjSessions" } } },
+      { $addFields: { leadTop: { $arrayElemAt: ["$leadTop", 0] } } },
+
+      // ✅ Filtros adicionales que vienen del FRONT
+      ...(req.query.ciudad && req.query.ciudad !== "Quito, Gye..."
+        ? [
+            {
+              $match: {
+                $or: [
+                  { ciudad: safeRegex(req.query.ciudad) || /.*/i },
+                  { "leadTop.ciudad": safeRegex(req.query.ciudad) || /.*/i },
+                  { "leadTop.ciudad_compra": safeRegex(req.query.ciudad) || /.*/i },
+                ],
+              },
+            },
+          ]
+        : []),
+
+      ...(req.query.horizonte && req.query.horizonte !== "0–6, 6–12..."
+        ? [
+            {
+              $match: {
+                "leadTop.tiempoCompra": safeRegex(req.query.horizonte) || /.*/i,
+              },
+            },
+          ]
+        : []),
+
+      ...(req.query.producto && req.query.producto !== "VIP, VIS, BIESS"
+        ? [
+            {
+              $match: {
+                $or: [
+                  { "ultimoSnapshotHL.output.productoSugerido": safeRegex(req.query.producto) || /.*/i },
+                  { "leadTop.producto": safeRegex(req.query.producto) || /.*/i },
+                  { "leadTop.resultado.productoSugerido": safeRegex(req.query.producto) || /.*/i },
+                ],
+              },
+            },
+          ]
+        : []),
 
       ...(req.query.soloJourney === "true"
         ? [
@@ -151,7 +365,8 @@ export const listAdminUsers = async (req, res) => {
                 $or: [
                   { lastLogin: { $ne: null } },
                   { "ultimoSnapshotHL.createdAt": { $ne: null } },
-                  { cjSessionsCount: { $gt: 0 } },
+                  { currentLeadId: { $ne: null } },
+                  { leadTop: { $ne: null } },
                 ],
               },
             },
@@ -165,7 +380,14 @@ export const listAdminUsers = async (req, res) => {
           items: [
             { $skip: skip },
             { $limit: limit },
-            { $project: { passwordHash: 0, __v: 0, cjSessions: 0 } },
+            {
+              $project: {
+                passwordHash: 0,
+                resetPasswordTokenHash: 0,
+                resetPasswordExpiresAt: 0,
+                __v: 0,
+              },
+            },
           ],
           total: [{ $count: "count" }],
         },
@@ -175,28 +397,76 @@ export const listAdminUsers = async (req, res) => {
     const rawItems = agg?.items || [];
     const count = agg?.total?.[0]?.count || 0;
 
-    const items = rawItems.map((u) => ({
-      userId: u._id,
-      email: u.email || "-",
-      nombre: u.nombre || "",
-      apellido: u.apellido || "",
-      telefono: u.telefono || "-",
+    const items = rawItems.map((u) => {
+      const lead = u.leadTop || null;
 
-      ciudad: computeCiudad(u),
-      etapa: computeEtapa(u),
-      producto: computeProducto(u),
-      cuotaEstimada: computeCuota(u),
+      // snapshot: si existe, úsalo; si no, fabrícalo desde Lead
+      const snapshotIn =
+        u?.ultimoSnapshotHL?.input ||
+        buildInputFromLead(lead) ||
+        null;
 
-      lastLogin: u.lastLogin || null,
-      lastActivity: computeLastActivity(u),
+      const snapshotOut =
+        u?.ultimoSnapshotHL?.output ||
+        buildOutputFromLead(lead) ||
+        null;
 
-      // ✅ lo que tu frontend necesita para “quick win”
-      finanzas: u?.ultimoSnapshotHL?.input || null,
-      resultado: u?.ultimoSnapshotHL?.output || null,
-      snapshotAt: u?.ultimoSnapshotHL?.createdAt || null,
+      const etapa = computeEtapa({ snapshotOut, lead });
 
-      cjSessionsCount: u?.cjSessionsCount ?? 0,
-    }));
+      // status filter (si lo usan como texto)
+      if (req.query.status) {
+        const st = String(req.query.status).trim().toLowerCase();
+        if (st && st !== etapa) {
+          // no lo filtramos aquí porque ya está facet; el filtro real se puede implementar arriba,
+          // pero lo dejamos en UI (la UI hoy manda "precalificado" por defecto).
+        }
+      }
+
+      const ciudad = computeCiudad({ user: u, lead, snapshotIn });
+      const horizonte = computeHorizonte({ lead, snapshotIn });
+
+      const lastActivity = maxIso(
+        u.lastLogin,
+        u.updatedAt,
+        u?.ultimoSnapshotHL?.createdAt,
+        lead?.updatedAt,
+        lead?.createdAt
+      );
+
+      return {
+        userId: u._id,
+        email: u.email || "—",
+        nombre: u.nombre || "",
+        apellido: u.apellido || "",
+        telefono: u.telefono || "—",
+
+        ciudad,
+        horizonte,
+
+        etapa,
+
+        // ✅ financiero (tipo quick win)
+        ingreso: snapshotIn?.ingresoNetoMensual ?? null,
+        deudas: snapshotIn?.otrasDeudasMensuales ?? null,
+        valorVivienda: snapshotIn?.valorVivienda ?? null,
+        entrada: snapshotIn?.entradaDisponible ?? null,
+
+        scoreHL: snapshotOut?.scoreHL ?? null,
+        producto: snapshotOut?.productoSugerido || lead?.producto || "—",
+        banco: snapshotOut?.bancoSugerido || "—",
+        cuotaEstimada: snapshotOut?.cuotaEstimada ?? null,
+        dtiConHipoteca: snapshotOut?.dtiConHipoteca ?? null,
+        sinOferta: snapshotOut?.sinOferta ?? null,
+
+        // meta
+        lastLogin: u.lastLogin || null,
+        lastActivity,
+
+        // debug / trazabilidad
+        leadId: lead?._id || u.currentLeadId || null,
+        snapshotAt: u?.ultimoSnapshotHL?.createdAt || null,
+      };
+    });
 
     res.json({ ok: true, items, count });
   } catch (e) {
@@ -205,45 +475,78 @@ export const listAdminUsers = async (req, res) => {
   }
 };
 
-// GET /api/admin/users/export/csv
+/* -------------------------
+   GET /api/admin/users/export/csv
+------------------------- */
 export const exportAdminUsersCSV = async (req, res) => {
   try {
     const match = buildUserMatch(req.query);
 
-    const users = await User.find(match)
-      .select("nombre apellido email telefono ciudad createdAt lastLogin updatedAt ultimoSnapshotHL")
-      .sort({ createdAt: -1 })
-      .lean();
+    // buscamos más amplio (sin paginación) y hacemos lookup a lead para backfill
+    const users = await User.aggregate([
+      { $match: match },
+      {
+        $lookup: {
+          from: "leads",
+          let: { uid: "$_id", lid: "$currentLeadId" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $and: [{ $ne: ["$$lid", null] }, { $eq: ["$_id", "$$lid"] }] },
+                    { $eq: ["$userId", "$$uid"] },
+                  ],
+                },
+              },
+            },
+            { $sort: { updatedAt: -1, createdAt: -1 } },
+            { $limit: 1 },
+          ],
+          as: "leadTop",
+        },
+      },
+      { $addFields: { leadTop: { $arrayElemAt: ["$leadTop", 0] } } },
+      { $sort: { createdAt: -1 } },
+      {
+        $project: {
+          passwordHash: 0,
+          resetPasswordTokenHash: 0,
+          resetPasswordExpiresAt: 0,
+          __v: 0,
+        },
+      },
+    ]);
 
     const header = [
       "userId",
+      "email",
       "nombre",
       "apellido",
-      "email",
       "telefono",
       "ciudad",
+      "horizonte",
+      "etapa",
+
+      // financiero
+      "ingreso",
+      "deudas",
+      "valorVivienda",
+      "entrada",
+      "scoreHL",
+      "producto",
+      "banco",
+      "cuotaEstimada",
+      "dtiConHipoteca",
+      "sinOferta",
+
+      // actividad
       "createdAt",
       "lastLogin",
       "lastActivity",
-      "ingresoNetoMensual",
-      "ingresoPareja",
-      "otrasDeudasMensuales",
-      "valorVivienda",
-      "entradaDisponible",
-      "edad",
-      "afiliadoIess",
-      "iessAportesTotales",
-      "iessAportesConsecutivos",
-      "tipoIngreso",
-      "aniosEstabilidad",
-      "plazoAnios",
-      "scoreHL",
-      "sinOferta",
-      "bancoSugerido",
-      "productoSugerido",
-      "capacidadPago",
-      "cuotaEstimada",
-      "dtiConHipoteca",
+
+      // trazabilidad
+      "leadId",
       "snapshotAt",
     ];
 
@@ -254,48 +557,57 @@ export const exportAdminUsersCSV = async (req, res) => {
     };
 
     const rows = users.map((u) => {
-      const input = u?.ultimoSnapshotHL?.input || {};
-      const out = u?.ultimoSnapshotHL?.output || {};
+      const lead = u.leadTop || null;
 
-      const lastActivity = (() => {
-        const a = u?.lastLogin ? new Date(u.lastLogin).getTime() : 0;
-        const b = u?.ultimoSnapshotHL?.createdAt ? new Date(u.ultimoSnapshotHL.createdAt).getTime() : 0;
-        const c = u?.updatedAt ? new Date(u.updatedAt).getTime() : 0;
-        const t = Math.max(a, b, c);
-        return t ? new Date(t).toISOString() : "";
-      })();
+      const snapshotIn =
+        u?.ultimoSnapshotHL?.input ||
+        buildInputFromLead(lead) ||
+        null;
+
+      const snapshotOut =
+        u?.ultimoSnapshotHL?.output ||
+        buildOutputFromLead(lead) ||
+        null;
+
+      const ciudad = computeCiudad({ user: u, lead, snapshotIn });
+      const horizonte = computeHorizonte({ lead, snapshotIn });
+      const etapa = computeEtapa({ snapshotOut, lead });
+
+      const lastActivity = maxIso(
+        u.lastLogin,
+        u.updatedAt,
+        u?.ultimoSnapshotHL?.createdAt,
+        lead?.updatedAt,
+        lead?.createdAt
+      );
 
       return [
         u._id,
+        u.email || "",
         u.nombre || "",
         u.apellido || "",
-        u.email || "",
         u.telefono || "",
-        u.ciudad || "",
+        ciudad,
+        horizonte,
+        etapa,
+
+        snapshotIn?.ingresoNetoMensual ?? "",
+        snapshotIn?.otrasDeudasMensuales ?? "",
+        snapshotIn?.valorVivienda ?? "",
+        snapshotIn?.entradaDisponible ?? "",
+
+        snapshotOut?.scoreHL ?? "",
+        snapshotOut?.productoSugerido || lead?.producto || "",
+        snapshotOut?.bancoSugerido || "",
+        snapshotOut?.cuotaEstimada ?? "",
+        snapshotOut?.dtiConHipoteca ?? "",
+        snapshotOut?.sinOferta ?? "",
+
         u.createdAt ? new Date(u.createdAt).toISOString() : "",
         u.lastLogin ? new Date(u.lastLogin).toISOString() : "",
-        lastActivity,
+        lastActivity || "",
 
-        input.ingresoNetoMensual ?? "",
-        input.ingresoPareja ?? "",
-        input.otrasDeudasMensuales ?? "",
-        input.valorVivienda ?? "",
-        input.entradaDisponible ?? "",
-        input.edad ?? "",
-        input.afiliadoIess ?? "",
-        input.iessAportesTotales ?? "",
-        input.iessAportesConsecutivos ?? "",
-        input.tipoIngreso ?? "",
-        input.aniosEstabilidad ?? "",
-        input.plazoAnios ?? "",
-
-        out.scoreHL ?? "",
-        out.sinOferta ?? "",
-        out.bancoSugerido ?? "",
-        out.productoSugerido ?? "",
-        out.capacidadPago ?? "",
-        out.cuotaEstimada ?? "",
-        out.dtiConHipoteca ?? "",
+        lead?._id || u.currentLeadId || "",
         u?.ultimoSnapshotHL?.createdAt ? new Date(u.ultimoSnapshotHL.createdAt).toISOString() : "",
       ];
     });
