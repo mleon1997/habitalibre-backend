@@ -1,214 +1,336 @@
 // src/controllers/adminUsers.controller.js
 import User from "../models/User.js";
-import CustomerLead from "../models/CustomerLead.js";
 
-// Helpers
-function pickStr(v) {
-  return String(v ?? "").trim();
-}
-function contains(a, b) {
-  return pickStr(a).toLowerCase().includes(pickStr(b).toLowerCase());
-}
-function toISO(d) {
-  try {
-    return new Date(d).toISOString();
-  } catch {
-    return null;
+const toNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+const safeRegex = (s) => {
+  const t = String(s || "").trim();
+  if (!t) return null;
+  return new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+};
+
+const buildUserMatch = (q) => {
+  const match = {};
+
+  // 🔎 q (frontend manda ?q=...)
+  if (q.q) {
+    const r = safeRegex(q.q);
+    if (r) {
+      match.$or = [{ nombre: r }, { apellido: r }, { email: r }, { telefono: r }];
+    }
   }
-}
 
-// ✅ KPI simple: total de users
-export async function kpisAdminUsers(req, res) {
-  try {
-    const totalUsers = await User.countDocuments({});
-    return res.json({ ok: true, totalUsers });
-  } catch (err) {
-    console.error("[kpisAdminUsers]", err);
-    return res.status(500).json({ ok: false, message: "Error cargando KPIs" });
+  // ✅ Solo journey (usuarios que sí han entrado al CJ)
+  if (q.soloJourney === "true") {
+    match.$or = [{ lastLogin: { $ne: null } }, { "ultimoSnapshotHL.createdAt": { $ne: null } }];
   }
-}
 
-/**
- * GET /api/admin/users
- * Query params:
- * - page, limit
- * - q (email/nombre/telefono)
- * - status (precalificado | sin_journey | etc)
- * - producto (VIP|VIS|BIESS)
- * - ciudad
- * - horizonte
- * - soloJourney (true/false)
- */
-export async function listAdminUsers(req, res) {
+  // scoreHL range
+  const scoreMin = toNum(q.scoreMin);
+  const scoreMax = toNum(q.scoreMax);
+  if (scoreMin != null || scoreMax != null) {
+    match["ultimoSnapshotHL.output.scoreHL"] = {};
+    if (scoreMin != null) match["ultimoSnapshotHL.output.scoreHL"].$gte = scoreMin;
+    if (scoreMax != null) match["ultimoSnapshotHL.output.scoreHL"].$lte = scoreMax;
+  }
+
+  // ingreso range
+  const ingresoMin = toNum(q.ingresoMin);
+  const ingresoMax = toNum(q.ingresoMax);
+  if (ingresoMin != null || ingresoMax != null) {
+    match["ultimoSnapshotHL.input.ingresoNetoMensual"] = {};
+    if (ingresoMin != null) match["ultimoSnapshotHL.input.ingresoNetoMensual"].$gte = ingresoMin;
+    if (ingresoMax != null) match["ultimoSnapshotHL.input.ingresoNetoMensual"].$lte = ingresoMax;
+  }
+
+  // sinOferta
+  if (q.sinOferta === "true") match["ultimoSnapshotHL.output.sinOferta"] = true;
+  if (q.sinOferta === "false") match["ultimoSnapshotHL.output.sinOferta"] = false;
+
+  // banco / producto sugerido (del motor)
+  if (q.banco) {
+    const r = safeRegex(q.banco);
+    if (r) match["ultimoSnapshotHL.output.bancoSugerido"] = r;
+  }
+  if (q.productoSugerido) {
+    const r = safeRegex(q.productoSugerido);
+    if (r) match["ultimoSnapshotHL.output.productoSugerido"] = r;
+  }
+
+  return match;
+};
+
+const computeEtapa = (u) => {
+  const out = u?.ultimoSnapshotHL?.output;
+  if (out?.sinOferta === true) return "sin_oferta";
+  if (out?.scoreHL != null || out?.bancoSugerido || out?.productoSugerido) return "precalificado";
+  return "registro";
+};
+
+const computeProducto = (u) => {
+  const out = u?.ultimoSnapshotHL?.output;
+  return out?.productoSugerido || "-";
+};
+
+const computeCiudad = (u) => {
+  return u?.ciudad || u?.ultimoSnapshotHL?.input?.ciudad || "-";
+};
+
+const computeCuota = (u) => {
+  const out = u?.ultimoSnapshotHL?.output;
+  return out?.cuotaEstimada ?? null;
+};
+
+const computeLastActivity = (u) => {
+  const a = u?.lastLogin ? new Date(u.lastLogin).getTime() : 0;
+  const b = u?.ultimoSnapshotHL?.createdAt ? new Date(u.ultimoSnapshotHL.createdAt).getTime() : 0;
+  const c = u?.updatedAt ? new Date(u.updatedAt).getTime() : 0;
+  const t = Math.max(a, b, c);
+  return t ? new Date(t).toISOString() : null;
+};
+
+// GET /api/admin/users/kpis
+export const kpisAdminUsers = async (req, res) => {
   try {
-    const page = Math.max(1, Number(req.query.page || 1));
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 20)));
-    const skip = (page - 1) * limit;
+    const match = buildUserMatch(req.query);
 
-    const q = pickStr(req.query.q);
-    const statusFilter = pickStr(req.query.status);
-    const productoFilter = pickStr(req.query.producto);
-    const ciudadFilter = pickStr(req.query.ciudad);
-    const horizonteFilter = pickStr(req.query.horizonte);
-    const soloJourney = String(req.query.soloJourney || "").toLowerCase() === "true";
-
-    // 1) Users base (paginados)
-    const [totalUsers, users] = await Promise.all([
-      User.countDocuments({}),
-      User.find({})
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+    const [agg] = await User.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalUsers: { $sum: 1 },
+          conLogin: { $sum: { $cond: [{ $ne: ["$lastLogin", null] }, 1, 0] } },
+          conSnapshot: {
+            $sum: {
+              $cond: [
+                { $and: [{ $ne: ["$ultimoSnapshotHL", null] }, { $ne: ["$ultimoSnapshotHL.createdAt", null] }] },
+                1,
+                0,
+              ],
+            },
+          },
+          sinOferta: { $sum: { $cond: ["$ultimoSnapshotHL.output.sinOferta", 1, 0] } },
+        },
+      },
     ]);
 
-    // 2) Buscar customer leads por esos users
-    const userIds = users.map((u) => u._id);
-    const userIdStrings = userIds.map((id) => String(id));
+    res.json({
+      ok: true,
+      totalUsers: agg?.totalUsers || 0,
+      conLogin: agg?.conLogin || 0,
+      conSnapshot: agg?.conSnapshot || 0,
+      sinOferta: agg?.sinOferta || 0,
+    });
+  } catch (e) {
+    console.error("kpisAdminUsers error:", e);
+    res.status(500).json({ ok: false, message: "No se pudo cargar KPIs" });
+  }
+};
 
-    const leads = await CustomerLead.find({
-      $or: [
-        { customerId: { $in: userIds } },       // si quedó ObjectId
-        { customerId: { $in: userIdStrings } }, // si quedó string
-      ],
-    })
-      .sort({ updatedAt: -1 })
+// GET /api/admin/users
+export const listAdminUsers = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "20", 10)));
+    const skip = (page - 1) * limit;
+
+    const match = buildUserMatch(req.query);
+
+    const sortKey = String(req.query.sort || "createdAt_desc");
+    const sortMap = {
+      createdAt_desc: { createdAt: -1 },
+      createdAt_asc: { createdAt: 1 },
+      lastLogin_desc: { lastLogin: -1 },
+      lastLogin_asc: { lastLogin: 1 },
+      score_desc: { "ultimoSnapshotHL.output.scoreHL": -1 },
+      score_asc: { "ultimoSnapshotHL.output.scoreHL": 1 },
+      ingreso_desc: { "ultimoSnapshotHL.input.ingresoNetoMensual": -1 },
+      ingreso_asc: { "ultimoSnapshotHL.input.ingresoNetoMensual": 1 },
+    };
+    const sort = sortMap[sortKey] || sortMap.createdAt_desc;
+
+    const [agg] = await User.aggregate([
+      { $match: match },
+
+      // “soloJourney” incluye sesiones aunque no tenga lastLogin ni snapshot
+      {
+        $lookup: {
+          from: "conversationsessions",
+          localField: "_id",
+          foreignField: "userId",
+          as: "cjSessions",
+        },
+      },
+      { $addFields: { cjSessionsCount: { $size: "$cjSessions" } } },
+      ...(req.query.soloJourney === "true"
+        ? [
+            {
+              $match: {
+                $or: [
+                  { lastLogin: { $ne: null } },
+                  { "ultimoSnapshotHL.createdAt": { $ne: null } },
+                  { cjSessionsCount: { $gt: 0 } },
+                ],
+              },
+            },
+          ]
+        : []),
+
+      { $sort: sort },
+
+      {
+        $facet: {
+          items: [
+            { $skip: skip },
+            { $limit: limit },
+            {
+              $project: {
+                password: 0,
+                __v: 0,
+                cjSessions: 0,
+              },
+            },
+          ],
+          total: [{ $count: "count" }],
+        },
+      },
+    ]);
+
+    const rawItems = agg?.items || [];
+    const count = agg?.total?.[0]?.count || 0;
+
+    const items = rawItems.map((u) => ({
+      userId: u._id,
+      email: u.email || "-",
+      nombre: u.nombre || "",
+      apellido: u.apellido || "",
+      telefono: u.telefono || "-",
+
+      ciudad: computeCiudad(u),
+      etapa: computeEtapa(u),
+      producto: computeProducto(u),
+      cuotaEstimada: computeCuota(u),
+
+      lastLogin: u.lastLogin || null,
+      lastActivity: computeLastActivity(u),
+
+      finanzas: u?.ultimoSnapshotHL?.input || null,
+      resultado: u?.ultimoSnapshotHL?.output || null,
+      snapshotAt: u?.ultimoSnapshotHL?.createdAt || null,
+
+      cjSessionsCount: u?.cjSessionsCount ?? 0,
+    }));
+
+    res.json({ ok: true, items, count });
+  } catch (e) {
+    console.error("listAdminUsers error:", e);
+    res.status(500).json({ ok: false, message: "No se pudo cargar usuarios" });
+  }
+};
+
+// GET /api/admin/users/export/csv
+export const exportAdminUsersCSV = async (req, res) => {
+  try {
+    const match = buildUserMatch(req.query);
+
+    const users = await User.find(match)
+      .select("nombre apellido email telefono ciudad createdAt lastLogin updatedAt ultimoSnapshotHL")
+      .sort({ createdAt: -1 })
       .lean();
 
-    // 3) Map: latest lead por user
-    const latestLeadByUser = new Map();
-    for (const l of leads) {
-      const key = String(l.customerId);
-      const cur = latestLeadByUser.get(key);
-      if (!cur) {
-        latestLeadByUser.set(key, l);
-        continue;
-      }
-      const curTime = new Date(cur.updatedAt || cur.createdAt || 0).getTime();
-      const newTime = new Date(l.updatedAt || l.createdAt || 0).getTime();
-      if (newTime > curTime) latestLeadByUser.set(key, l);
-    }
-
-    // 4) Construir items enriquecidos
-    let items = users.map((u) => {
-      const lead = latestLeadByUser.get(String(u._id)) || null;
-
-      const entrada = lead?.entrada || lead?.input || lead?.metadata?.input || {};
-      const resultado = lead?.resultado || {};
-
-      const ciudad = pickStr(entrada?.ciudad || entrada?.city || "");
-      const horizonte = pickStr(entrada?.horizonte || entrada?.horizonteCompra || "");
-      const producto = pickStr(resultado?.productoSugerido || resultado?.producto || "");
-      const cuotaEstimada = Number(resultado?.cuotaEstimada || 0) || 0;
-      const scoreHL = resultado?.scoreHL ?? resultado?.score ?? null;
-
-      const status = lead ? pickStr(lead.status || "precalificado") : "sin_journey";
-      const etapa = lead ? (resultado?.etapa || resultado?.stage || "califica") : "sin_journey";
-      const lastActivity = lead?.updatedAt || u.updatedAt || u.createdAt;
-
-      return {
-        userId: String(u._id),
-        email: pickStr(u.email),
-        nombre: pickStr(u.nombre),
-        apellido: pickStr(u.apellido),
-        telefono: pickStr(u.telefono),
-
-        hasJourney: !!lead,
-        status,
-        etapa,
-
-        ciudad,
-        horizonte,
-        producto: producto || "-",
-        cuotaEstimada: cuotaEstimada || "",
-        scoreHL,
-
-        lastActivity: toISO(lastActivity),
-        createdAt: toISO(u.createdAt),
-      };
-    });
-
-    // 5) Filtros en memoria
-    if (soloJourney) items = items.filter((x) => x.hasJourney);
-
-    if (q) {
-      items = items.filter((x) =>
-        [x.email, `${x.nombre} ${x.apellido}`.trim(), x.telefono].some((v) => contains(v, q))
-      );
-    }
-
-    if (statusFilter) items = items.filter((x) => String(x.status) === statusFilter);
-    if (productoFilter) items = items.filter((x) => contains(x.producto, productoFilter));
-    if (ciudadFilter) items = items.filter((x) => contains(x.ciudad, ciudadFilter));
-    if (horizonteFilter) items = items.filter((x) => contains(x.horizonte, horizonteFilter));
-
-    return res.json({
-      ok: true,
-      page,
-      limit,
-      totalUsers,
-      count: items.length,
-      items,
-    });
-  } catch (err) {
-    console.error("[listAdminUsers]", err);
-    return res.status(500).json({ ok: false, message: "Error listando usuarios" });
-  }
-}
-
-/**
- * GET /api/admin/users/export/csv
- */
-export async function exportAdminUsersCSV(req, res) {
-  try {
-    // Reusar listAdminUsers con límite alto
-    const fakeReq = { ...req, query: { ...req.query, page: 1, limit: 200 } };
-
-    let payload = null;
-    const fakeRes = {
-      status: () => fakeRes,
-      json: (j) => {
-        payload = j;
-        return j;
-      },
-    };
-
-    await listAdminUsers(fakeReq, fakeRes);
-
-    if (!payload?.ok) {
-      return res.status(500).json({ ok: false, message: "No se pudo generar CSV" });
-    }
-
-    const rows = payload.items || [];
-    const cols = [
+    const header = [
       "userId",
-      "email",
       "nombre",
       "apellido",
+      "email",
       "telefono",
       "ciudad",
-      "horizonte",
-      "hasJourney",
-      "status",
-      "etapa",
-      "producto",
-      "cuotaEstimada",
-      "scoreHL",
-      "lastActivity",
       "createdAt",
+      "lastLogin",
+      "lastActivity",
+      "ingresoNetoMensual",
+      "ingresoPareja",
+      "otrasDeudasMensuales",
+      "valorVivienda",
+      "entradaDisponible",
+      "edad",
+      "afiliadoIess",
+      "iessAportesTotales",
+      "iessAportesConsecutivos",
+      "tipoIngreso",
+      "aniosEstabilidad",
+      "plazoAnios",
+      "scoreHL",
+      "sinOferta",
+      "bancoSugerido",
+      "productoSugerido",
+      "capacidadPago",
+      "cuotaEstimada",
+      "dtiConHipoteca",
+      "snapshotAt",
     ];
 
-    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const csv =
-      cols.join(",") +
-      "\n" +
-      rows.map((r) => cols.map((c) => esc(r[c])).join(",")).join("\n");
+    const escape = (v) => {
+      const s = String(v ?? "");
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replaceAll('"', '""')}"`;
+      return s;
+    };
+
+    const rows = users.map((u) => {
+      const input = u?.ultimoSnapshotHL?.input || {};
+      const out = u?.ultimoSnapshotHL?.output || {};
+      const lastActivity = (() => {
+        const a = u?.lastLogin ? new Date(u.lastLogin).getTime() : 0;
+        const b = u?.ultimoSnapshotHL?.createdAt ? new Date(u.ultimoSnapshotHL.createdAt).getTime() : 0;
+        const c = u?.updatedAt ? new Date(u.updatedAt).getTime() : 0;
+        const t = Math.max(a, b, c);
+        return t ? new Date(t).toISOString() : "";
+      })();
+
+      return [
+        u._id,
+        u.nombre || "",
+        u.apellido || "",
+        u.email || "",
+        u.telefono || "",
+        u.ciudad || "",
+        u.createdAt ? new Date(u.createdAt).toISOString() : "",
+        u.lastLogin ? new Date(u.lastLogin).toISOString() : "",
+        lastActivity,
+        input.ingresoNetoMensual ?? "",
+        input.ingresoPareja ?? "",
+        input.otrasDeudasMensuales ?? "",
+        input.valorVivienda ?? "",
+        input.entradaDisponible ?? "",
+        input.edad ?? "",
+        input.afiliadoIess ?? "",
+        input.iessAportesTotales ?? "",
+        input.iessAportesConsecutivos ?? "",
+        input.tipoIngreso ?? "",
+        input.aniosEstabilidad ?? "",
+        input.plazoAnios ?? "",
+        out.scoreHL ?? "",
+        out.sinOferta ?? "",
+        out.bancoSugerido ?? "",
+        out.productoSugerido ?? "",
+        out.capacidadPago ?? "",
+        out.cuotaEstimada ?? "",
+        out.dtiConHipoteca ?? "",
+        u?.ultimoSnapshotHL?.createdAt ? new Date(u.ultimoSnapshotHL.createdAt).toISOString() : "",
+      ];
+    });
+
+    const csv = [header.join(","), ...rows.map((r) => r.map(escape).join(","))].join("\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="hl-users-${Date.now()}.csv"`);
-    return res.status(200).send(csv);
-  } catch (err) {
-    console.error("[exportAdminUsersCSV]", err);
-    return res.status(500).json({ ok: false, message: "Error exportando CSV" });
+    res.setHeader("Content-Disposition", `attachment; filename="hl-customer-journey-users.csv"`);
+    res.status(200).send(csv);
+  } catch (e) {
+    console.error("exportAdminUsersCSV error:", e);
+    res.status(500).json({ ok: false, message: "No se pudo exportar CSV" });
   }
-}
+};

@@ -5,7 +5,6 @@ import User from "../models/User.js";
 import { signCustomerToken } from "../utils/jwtCustomer.js"; // ✅ ajusta si tu path/nombre es distinto
 import { enviarCorreoResetPasswordCustomer } from "../utils/mailerCustomerAuth.js";
 
-
 function normEmail(email) {
   return String(email || "").toLowerCase().trim();
 }
@@ -84,6 +83,9 @@ export async function registerCustomer(req, res) {
       apellido: apellidoTrim,
       telefono: telClean,
       currentLeadId: null, // ✅ journey independiente
+
+      // ✅ primera actividad (para dashboard CJ)
+      lastLogin: new Date(),
     });
 
     // 3) Token
@@ -135,6 +137,10 @@ export async function loginCustomer(req, res) {
     if (!ok) {
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
+
+    // ✅ Marca actividad (para dashboard CJ)
+    user.lastLogin = new Date();
+    await user.save();
 
     const token = signCustomerToken({
       userId: user._id,
@@ -245,7 +251,6 @@ export async function forgotPasswordCustomer(req, res) {
     });
   }
 }
-
 
 /* =========================
    POST /api/customer-auth/reset-password

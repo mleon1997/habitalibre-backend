@@ -44,6 +44,8 @@ import precalificarRoutes from "./routes/precalificar.routes.js";
 import leadsRoutes from "./routes/leads.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 
+
+
 // ================================
 // App
 // ================================
@@ -56,6 +58,7 @@ app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/api/ig", igRoutes);
+
 
 
 /* ================================
