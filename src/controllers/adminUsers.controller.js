@@ -1,5 +1,6 @@
 // src/controllers/adminUsers.controller.js
 import User from "../models/User.js";
+import ConversationSession from "../models/ConversationSession.js";
 
 const toNum = (v) => {
   const n = Number(v);
@@ -15,7 +16,6 @@ const safeRegex = (s) => {
 const buildUserMatch = (q) => {
   const match = {};
 
-  // 🔎 q (frontend manda ?q=...)
   if (q.q) {
     const r = safeRegex(q.q);
     if (r) {
@@ -23,12 +23,7 @@ const buildUserMatch = (q) => {
     }
   }
 
-  // ✅ Solo journey (usuarios que sí han entrado al CJ)
-  if (q.soloJourney === "true") {
-    match.$or = [{ lastLogin: { $ne: null } }, { "ultimoSnapshotHL.createdAt": { $ne: null } }];
-  }
-
-  // scoreHL range
+  // Filtros financieros opcionales
   const scoreMin = toNum(q.scoreMin);
   const scoreMax = toNum(q.scoreMax);
   if (scoreMin != null || scoreMax != null) {
@@ -37,7 +32,6 @@ const buildUserMatch = (q) => {
     if (scoreMax != null) match["ultimoSnapshotHL.output.scoreHL"].$lte = scoreMax;
   }
 
-  // ingreso range
   const ingresoMin = toNum(q.ingresoMin);
   const ingresoMax = toNum(q.ingresoMax);
   if (ingresoMin != null || ingresoMax != null) {
@@ -46,11 +40,9 @@ const buildUserMatch = (q) => {
     if (ingresoMax != null) match["ultimoSnapshotHL.input.ingresoNetoMensual"].$lte = ingresoMax;
   }
 
-  // sinOferta
   if (q.sinOferta === "true") match["ultimoSnapshotHL.output.sinOferta"] = true;
   if (q.sinOferta === "false") match["ultimoSnapshotHL.output.sinOferta"] = false;
 
-  // banco / producto sugerido (del motor)
   if (q.banco) {
     const r = safeRegex(q.banco);
     if (r) match["ultimoSnapshotHL.output.bancoSugerido"] = r;
@@ -60,6 +52,7 @@ const buildUserMatch = (q) => {
     if (r) match["ultimoSnapshotHL.output.productoSugerido"] = r;
   }
 
+  // ojo: "soloJourney" lo resolvemos con lookup también (sessions)
   return match;
 };
 
@@ -70,19 +63,9 @@ const computeEtapa = (u) => {
   return "registro";
 };
 
-const computeProducto = (u) => {
-  const out = u?.ultimoSnapshotHL?.output;
-  return out?.productoSugerido || "-";
-};
-
-const computeCiudad = (u) => {
-  return u?.ciudad || u?.ultimoSnapshotHL?.input?.ciudad || "-";
-};
-
-const computeCuota = (u) => {
-  const out = u?.ultimoSnapshotHL?.output;
-  return out?.cuotaEstimada ?? null;
-};
+const computeProducto = (u) => u?.ultimoSnapshotHL?.output?.productoSugerido || "-";
+const computeCiudad = (u) => u?.ciudad || u?.ultimoSnapshotHL?.input?.ciudad || "-";
+const computeCuota = (u) => u?.ultimoSnapshotHL?.output?.cuotaEstimada ?? null;
 
 const computeLastActivity = (u) => {
   const a = u?.lastLogin ? new Date(u.lastLogin).getTime() : 0;
@@ -106,11 +89,7 @@ export const kpisAdminUsers = async (req, res) => {
           conLogin: { $sum: { $cond: [{ $ne: ["$lastLogin", null] }, 1, 0] } },
           conSnapshot: {
             $sum: {
-              $cond: [
-                { $and: [{ $ne: ["$ultimoSnapshotHL", null] }, { $ne: ["$ultimoSnapshotHL.createdAt", null] }] },
-                1,
-                0,
-              ],
+              $cond: [{ $ne: ["$ultimoSnapshotHL.createdAt", null] }, 1, 0],
             },
           },
           sinOferta: { $sum: { $cond: ["$ultimoSnapshotHL.output.sinOferta", 1, 0] } },
@@ -155,8 +134,6 @@ export const listAdminUsers = async (req, res) => {
 
     const [agg] = await User.aggregate([
       { $match: match },
-
-      // “soloJourney” incluye sesiones aunque no tenga lastLogin ni snapshot
       {
         $lookup: {
           from: "conversationsessions",
@@ -166,6 +143,7 @@ export const listAdminUsers = async (req, res) => {
         },
       },
       { $addFields: { cjSessionsCount: { $size: "$cjSessions" } } },
+
       ...(req.query.soloJourney === "true"
         ? [
             {
@@ -187,13 +165,7 @@ export const listAdminUsers = async (req, res) => {
           items: [
             { $skip: skip },
             { $limit: limit },
-            {
-              $project: {
-                password: 0,
-                __v: 0,
-                cjSessions: 0,
-              },
-            },
+            { $project: { passwordHash: 0, __v: 0, cjSessions: 0 } },
           ],
           total: [{ $count: "count" }],
         },
@@ -218,6 +190,7 @@ export const listAdminUsers = async (req, res) => {
       lastLogin: u.lastLogin || null,
       lastActivity: computeLastActivity(u),
 
+      // ✅ lo que tu frontend necesita para “quick win”
       finanzas: u?.ultimoSnapshotHL?.input || null,
       resultado: u?.ultimoSnapshotHL?.output || null,
       snapshotAt: u?.ultimoSnapshotHL?.createdAt || null,
@@ -283,6 +256,7 @@ export const exportAdminUsersCSV = async (req, res) => {
     const rows = users.map((u) => {
       const input = u?.ultimoSnapshotHL?.input || {};
       const out = u?.ultimoSnapshotHL?.output || {};
+
       const lastActivity = (() => {
         const a = u?.lastLogin ? new Date(u.lastLogin).getTime() : 0;
         const b = u?.ultimoSnapshotHL?.createdAt ? new Date(u.ultimoSnapshotHL.createdAt).getTime() : 0;
@@ -301,6 +275,7 @@ export const exportAdminUsersCSV = async (req, res) => {
         u.createdAt ? new Date(u.createdAt).toISOString() : "",
         u.lastLogin ? new Date(u.lastLogin).toISOString() : "",
         lastActivity,
+
         input.ingresoNetoMensual ?? "",
         input.ingresoPareja ?? "",
         input.otrasDeudasMensuales ?? "",
@@ -313,6 +288,7 @@ export const exportAdminUsersCSV = async (req, res) => {
         input.tipoIngreso ?? "",
         input.aniosEstabilidad ?? "",
         input.plazoAnios ?? "",
+
         out.scoreHL ?? "",
         out.sinOferta ?? "",
         out.bancoSugerido ?? "",
