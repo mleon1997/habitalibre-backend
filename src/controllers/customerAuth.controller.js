@@ -2,7 +2,8 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import User from "../models/User.js";
-import { signCustomerToken } from "../utils/jwtCustomer.js"; // ✅ ajusta si tu path/nombre es distinto
+import Lead from "../models/Lead.js";
+import { signCustomerToken } from "../utils/jwtCustomer.js";
 import { enviarCorreoResetPasswordCustomer } from "../utils/mailerCustomerAuth.js";
 
 function normEmail(email) {
@@ -26,7 +27,47 @@ function safeUser(u) {
     nombre: u.nombre || "",
     apellido: u.apellido || "",
     telefono: u.telefono || "",
+    ciudad: u.ciudad || "",
+    lastLogin: u.lastLogin || null,
   };
+}
+
+/**
+ * Intenta encontrar un Lead existente por email o teléfono
+ * y devolver su _id para linkear currentLeadId.
+ */
+async function findLeadIdForUser({ emailNorm, telClean }) {
+  // 1) por email normalizado en identidades
+  if (emailNorm) {
+    const byEmail = await Lead.findOne({
+      $or: [
+        { "identidades.emailNorm": emailNorm },
+        { email: emailNorm },
+      ],
+    })
+      .sort({ updatedAt: -1 })
+      .select({ _id: 1 })
+      .lean();
+
+    if (byEmail?._id) return byEmail._id;
+  }
+
+  // 2) por teléfono normalizado
+  if (telClean) {
+    const byPhone = await Lead.findOne({
+      $or: [
+        { "identidades.telefonoNorm": telClean },
+        { telefono: telClean },
+      ],
+    })
+      .sort({ updatedAt: -1 })
+      .select({ _id: 1 })
+      .lean();
+
+    if (byPhone?._id) return byPhone._id;
+  }
+
+  return null;
 }
 
 /* =========================
@@ -50,12 +91,8 @@ export async function registerCustomer(req, res) {
     const nombreTrim = String(nombre || "").trim();
     const apellidoTrim = String(apellido || "").trim();
 
-    if (!nombreTrim) {
-      return res.status(400).json({ error: "Nombre es obligatorio" });
-    }
-    if (!apellidoTrim) {
-      return res.status(400).json({ error: "Apellido es obligatorio" });
-    }
+    if (!nombreTrim) return res.status(400).json({ error: "Nombre es obligatorio" });
+    if (!apellidoTrim) return res.status(400).json({ error: "Apellido es obligatorio" });
 
     const telClean = cleanPhone(telefono);
     if (!isValidEcPhone(telClean)) {
@@ -64,7 +101,6 @@ export async function registerCustomer(req, res) {
         .json({ error: "Teléfono inválido (formato: 09XXXXXXXX)" });
     }
 
-    // 1) Si ya existe usuario -> error claro
     const exists = await User.findOne({ email: emailNorm });
     if (exists) {
       return res.status(409).json({
@@ -73,8 +109,10 @@ export async function registerCustomer(req, res) {
       });
     }
 
-    // 2) Crear usuario
     const passwordHash = await bcrypt.hash(String(password), 10);
+
+    // ✅ intenta linkear con lead existente si ya lo capturaste antes
+    const leadId = await findLeadIdForUser({ emailNorm, telClean });
 
     const user = await User.create({
       email: emailNorm,
@@ -82,23 +120,20 @@ export async function registerCustomer(req, res) {
       nombre: nombreTrim,
       apellido: apellidoTrim,
       telefono: telClean,
-      currentLeadId: null, // ✅ journey independiente
-
-      // ✅ primera actividad (para dashboard CJ)
+      currentLeadId: leadId || null,
       lastLogin: new Date(),
     });
 
-    // 3) Token
     const token = signCustomerToken({
       userId: user._id,
       email: user.email,
-      leadId: null,
+      leadId: user.currentLeadId || null,
     });
 
     return res.json({
       token,
       user: safeUser(user),
-      leadId: null,
+      leadId: user.currentLeadId || null,
       registerMethod: "password",
     });
   } catch (err) {
@@ -129,17 +164,23 @@ export async function loginCustomer(req, res) {
     }
 
     const user = await User.findOne({ email: emailNorm });
-    if (!user) {
-      return res.status(401).json({ error: "Credenciales inválidas" });
-    }
+    if (!user) return res.status(401).json({ error: "Credenciales inválidas" });
 
     const ok = await bcrypt.compare(String(password), user.passwordHash);
-    if (!ok) {
-      return res.status(401).json({ error: "Credenciales inválidas" });
+    if (!ok) return res.status(401).json({ error: "Credenciales inválidas" });
+
+    // ✅ actualiza lastLogin y trata de linkear lead si estaba vacío
+    let currentLeadId = user.currentLeadId || null;
+    if (!currentLeadId) {
+      const leadId = await findLeadIdForUser({
+        emailNorm,
+        telClean: cleanPhone(user.telefono),
+      });
+      if (leadId) currentLeadId = leadId;
     }
 
-    // ✅ Marca actividad (para dashboard CJ)
     user.lastLogin = new Date();
+    user.currentLeadId = currentLeadId;
     await user.save();
 
     const token = signCustomerToken({
@@ -165,23 +206,19 @@ export async function loginCustomer(req, res) {
 
 /* =========================
    GET /api/customer-auth/me
-   Requiere middleware que decodifique token y ponga userId en req
 ========================= */
 export async function meCustomer(req, res) {
   try {
-    // soporta diferentes middlewares: req.customer, req.user, req.usuario
     const payload = req.customer || req.user || req.usuario || req.auth || null;
 
-    const userId = payload?.userId || payload?.id || payload?._id || null;
+    // ✅ soporta token payload { id } o { userId }
+    const userId =
+      payload?.id || payload?.userId || payload?._id || null;
 
-    if (!userId) {
-      return res.status(401).json({ error: "No autorizado" });
-    }
+    if (!userId) return res.status(401).json({ error: "No autorizado" });
 
     const user = await User.findById(userId);
-    if (!user) {
-      return res.status(401).json({ error: "No autorizado" });
-    }
+    if (!user) return res.status(401).json({ error: "No autorizado" });
 
     return res.json({
       user: safeUser(user),
@@ -198,41 +235,33 @@ export async function meCustomer(req, res) {
 
 /* =========================
    POST /api/customer-auth/forgot-password
-   body: { email }
-   - Devuelve SIEMPRE ok=true para no filtrar si el email existe.
 ========================= */
 export async function forgotPasswordCustomer(req, res) {
   try {
     const { email } = req.body || {};
     const emailNorm = normEmail(email);
 
-    // Respuesta genérica siempre (anti-enumeración)
     const generic = {
       ok: true,
       message:
         "Si ese email existe, te enviamos un enlace para recuperar tu contraseña.",
     };
 
-    if (!emailNorm || !emailNorm.includes("@")) {
-      return res.json(generic);
-    }
+    if (!emailNorm || !emailNorm.includes("@")) return res.json(generic);
 
     const user = await User.findOne({ email: emailNorm });
     if (!user) return res.json(generic);
 
-    // token raw + hash
     const rawToken = crypto.randomBytes(32).toString("hex");
     const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
 
     user.resetPasswordTokenHash = tokenHash;
-    user.resetPasswordExpiresAt = new Date(Date.now() + 1000 * 60 * 20); // 20 min
+    user.resetPasswordExpiresAt = new Date(Date.now() + 1000 * 60 * 20);
     await user.save();
 
-    // ✅ URL del frontend (HashRouter)
     const APP_URL = process.env.APP_URL || "http://localhost:5173";
     const resetUrl = `${APP_URL}/#/reset-password?token=${rawToken}`;
 
-    // ✅ Enviar con tu mailer dedicado (NO usa mailer.js del quick win)
     await enviarCorreoResetPasswordCustomer({
       to: emailNorm,
       nombre: user.nombre || "",
@@ -243,7 +272,6 @@ export async function forgotPasswordCustomer(req, res) {
     return res.json(generic);
   } catch (err) {
     console.error("🔥 forgotPasswordCustomer error FULL:", err);
-    // Genérico siempre (anti-enumeración)
     return res.json({
       ok: true,
       message:
@@ -254,7 +282,6 @@ export async function forgotPasswordCustomer(req, res) {
 
 /* =========================
    POST /api/customer-auth/reset-password
-   body: { token, newPassword }
 ========================= */
 export async function resetPasswordCustomer(req, res) {
   try {
@@ -263,9 +290,7 @@ export async function resetPasswordCustomer(req, res) {
     const rawToken = String(token || "").trim();
     const pass = String(newPassword || "");
 
-    if (!rawToken) {
-      return res.status(400).json({ error: "Token inválido" });
-    }
+    if (!rawToken) return res.status(400).json({ error: "Token inválido" });
     if (!pass || pass.trim().length < 6) {
       return res
         .status(400)
@@ -286,14 +311,9 @@ export async function resetPasswordCustomer(req, res) {
       });
     }
 
-    // Generar nuevo hash y guardar
-    const newHash = await bcrypt.hash(pass, 10);
-    user.passwordHash = newHash;
-
-    // Invalida token (un solo uso)
+    user.passwordHash = await bcrypt.hash(pass, 10);
     user.resetPasswordTokenHash = null;
     user.resetPasswordExpiresAt = null;
-
     await user.save();
 
     return res.json({

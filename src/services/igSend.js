@@ -12,7 +12,7 @@ function assertToken() {
 
   if (!token) {
     const err = new Error(
-      "Falta IG_PAGE_ACCESS_TOKEN en .env (Page Access Token). Agrega: IG_PAGE_ACCESS_TOKEN=xxxx"
+      "Falta IG_PAGE_ACCESS_TOKEN en .env (Page Access Token)."
     );
     err.status = 500;
     throw err;
@@ -20,18 +20,20 @@ function assertToken() {
   return token;
 }
 
-export async function igSendText({ toUserId, text }) {
+export async function igSendText({ toUserId, recipientId, text }) {
   const token = assertToken();
 
-  if (!toUserId) throw new Error("Falta toUserId");
+  const finalTo = toUserId || recipientId;
+  if (!finalTo) throw new Error("Falta toUserId/recipientId");
   if (!text) throw new Error("Falta text");
 
-  const url = `https://graph.facebook.com/${IG_API_VERSION}/me/messages?access_token=${encodeURIComponent(
+  const pageId = process.env.IG_PAGE_ID || "me"; // recomendado setear IG_PAGE_ID
+  const url = `https://graph.facebook.com/${IG_API_VERSION}/${pageId}/messages?access_token=${encodeURIComponent(
     token
   )}`;
 
   const payload = {
-    recipient: { id: String(toUserId) },
+    recipient: { id: String(finalTo) },
     messaging_type: "RESPONSE",
     message: { text: String(text) },
   };

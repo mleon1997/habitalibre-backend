@@ -8,11 +8,10 @@ const router = Router();
 
 /**
  * Auth opcional (NO bloquea precalificar).
- * Si viene token del Customer Journey, pone req.customer = payload.
- *
- * Soporta:
- *  - Authorization: Bearer <customer_token>
- *  - Cookie: customer_token=<token> (por si lo usas)
+ * Si viene token Customer Journey:
+ *  - valida secret CUSTOMER_JWT_SECRET
+ *  - requiere typ === "customer"
+ *  - pone req.customer = { id, email, leadId, typ }
  */
 function optionalCustomerAuth(req, _res, next) {
   try {
@@ -30,16 +29,21 @@ function optionalCustomerAuth(req, _res, next) {
 
     if (!token) return next();
 
-    // ✅ usa el mismo secret que signCustomerToken()
     const secret = process.env.CUSTOMER_JWT_SECRET || "";
     if (!secret) return next();
 
     const payload = jwt.verify(token, secret);
 
-    // ✅ valida el shape esperado
+    // ✅ SOLO tokens customer
     if (!payload?.id || payload?.typ !== "customer") return next();
 
-    req.customer = payload; // { id, email, typ, leadId }
+    req.customer = {
+      id: String(payload.id),
+      email: payload.email || "",
+      leadId: payload.leadId || null,
+      typ: "customer",
+    };
+
     return next();
   } catch {
     return next();
@@ -60,10 +64,9 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
   try {
     const body = req.body || {};
 
-    // ✅ Toda la lógica vive en el service
+    // ✅ toda la lógica vive en el service
     const { input, respuesta } = precalificarHL(body);
 
-    // ✅ Logs
     console.log("➡️ POST /api/precalificar (normalizado):", {
       ingresoNetoMensual: input.ingresoNetoMensual,
       ingresoPareja: input.ingresoPareja,
@@ -86,33 +89,41 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
       cuotaEstimada: Math.round(respuesta.cuotaEstimada || 0),
       capacidadPago: Math.round(respuesta.capacidadPago || 0),
       dtiConHipoteca: respuesta.dtiConHipoteca,
-      customerId: req.customer?.id || null, // ✅ FIX
+      customerId: req.customer?.id || null,
     });
 
     /**
-     * ✅ Guardar snapshot financiero en el User (solo si está logueado en CJ)
-     * Alimenta el dashboard /admin/users (tipo quick win).
+     * ✅ Guardar snapshot financiero en User si está logueado (Customer Journey)
+     * ESTE snapshot alimenta /admin/users “tipo quick win”.
      */
-    const userId = req.customer?.id || null; // ✅ FIX: era userId, debe ser id
+    const userId = req.customer?.id || null;
+
     if (userId) {
-      // output “quick win style” (campos flat)
       const out = {
-        scoreHL: respuesta?.scoreHL ?? null,
-        sinOferta: respuesta?.flags?.sinOferta ?? null,
-        bancoSugerido: respuesta?.bancoSugerido ?? null,
-        productoSugerido: respuesta?.productoSugerido ?? null,
-        capacidadPago: respuesta?.capacidadPago ?? null,
-        cuotaEstimada: respuesta?.cuotaEstimada ?? null,
-        dtiConHipoteca: respuesta?.dtiConHipoteca ?? null,
+        scoreHL: respuesta?.scoreHL ?? respuesta?.output?.scoreHL ?? null,
+        sinOferta:
+          respuesta?.flags?.sinOferta ??
+          respuesta?.sinOferta ??
+          respuesta?.output?.sinOferta ??
+          null,
+        bancoSugerido:
+          respuesta?.bancoSugerido ?? respuesta?.output?.bancoSugerido ?? null,
+        productoSugerido:
+          respuesta?.productoSugerido ??
+          respuesta?.output?.productoSugerido ??
+          null,
+        capacidadPago:
+          respuesta?.capacidadPago ?? respuesta?.output?.capacidadPago ?? null,
+        cuotaEstimada:
+          respuesta?.cuotaEstimada ?? respuesta?.output?.cuotaEstimada ?? null,
+        dtiConHipoteca:
+          respuesta?.dtiConHipoteca ?? respuesta?.output?.dtiConHipoteca ?? null,
       };
 
       await User.updateOne(
         { _id: userId },
         {
           $set: {
-            // ✅ opcional: si no tienes ciudad en User, la llenamos con input
-            ciudad: input?.ciudad || input?.ciudadCompra || undefined,
-
             ultimoSnapshotHL: {
               input,
               output: out,
@@ -121,7 +132,6 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
           },
         }
       ).catch((e) => {
-        // No rompemos la respuesta al usuario por fallo de snapshot
         console.error("⚠️ No se pudo guardar ultimoSnapshotHL:", e?.message || e);
       });
     }
