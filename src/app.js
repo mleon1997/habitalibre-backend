@@ -107,11 +107,24 @@ console.log("🔐 ALLOWED ORIGINS:", allowList);
 ================================ */
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // Postman / health checks / server-to-server
+    if (!origin) return cb(null, true);
+
     const norm = normalizeOrigin(origin);
+
+    console.log("🌐 ORIGIN:", origin, "NORM:", norm);
+
+    // Capacitor / Ionic
+    if (norm === "capacitor://localhost") return cb(null, true);
+    if (norm === "ionic://localhost") return cb(null, true);
+
+    // Android WebView localhost con puerto
+    if (norm.startsWith("http://localhost")) return cb(null, true);
+    if (norm.startsWith("https://localhost")) return cb(null, true);
+
+    // allowList normal
     if (allowList.includes(norm)) return cb(null, true);
 
-    console.warn(`🚫 CORS bloqueado para: ${origin} (norm: ${norm})`);
+    console.warn(`🚫 CORS bloqueado para: ${origin}`);
     return cb(new Error(`CORS bloqueado para origen: ${origin}`), false);
   },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
