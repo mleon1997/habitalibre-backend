@@ -90,6 +90,11 @@ const allowList = [
   "https://habitalibre.com",
   "https://www.habitalibre.com",
   "https://habitalibre-web.onrender.com",
+
+  // 👇 AGREGA ESTO PARA LA APP MÓVIL
+  "http://localhost",
+  "capacitor://localhost",
+
   ...parseOrigins(process.env.CORS_ORIGIN),
 ]
   .map(normalizeOrigin)
