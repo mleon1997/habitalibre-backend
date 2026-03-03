@@ -1,5 +1,6 @@
 // src/app.js
 import "dotenv/config";
+import snapshotsRoutes from "./routes/snapshots.routes.js";
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
@@ -61,6 +62,7 @@ app.use("/api/ig", igRoutes);
 
 
 
+
 /* ================================
    Helpers CORS
 ================================ */
@@ -79,6 +81,7 @@ function normalizeOrigin(origin) {
     return origin;
   }
 }
+
 
 /* ================================
    Allowed Origins
@@ -135,6 +138,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
+app.use("/api/snapshots", snapshotsRoutes);
 
 /* ================================
    Healthcheck (Render)
@@ -177,7 +181,7 @@ app.get("/__routes", (req, res) => {
   res.json({
     ok: true,
     count: routes.length,
-    routes: routes.sort((a, b) => a.path.localeCompare(b.path)),
+    routes: routes.sort((a, b) => String(a.path).localeCompare(String(b.path))),
   });
 });
 
