@@ -50,13 +50,55 @@ function optionalCustomerAuth(req, _res, next) {
   }
 }
 
-/* --------- DEBUG --------- */
+/* --------- DEBUG / HEALTH --------- */
 router.get("/ping", (req, res) => {
+  // útil para ver CORS/origin en Android WebView
+  res.setHeader("Cache-Control", "no-store");
   res.json({
     ok: true,
     message: "precalificar OK",
     origin: req.headers.origin || null,
+    now: new Date().toISOString(),
+    hasCustomer: !!req.customer,
   });
+});
+
+/* --------- GET /api/precalificar/last --------- */
+router.get("/last", optionalCustomerAuth, async (req, res) => {
+  try {
+    const userId = req.customer?.id || null;
+    if (!userId) {
+      return res.status(401).json({
+        ok: false,
+        error: "No autenticado (customer token requerido).",
+      });
+    }
+
+    const u = await User.findById(userId)
+      .select("ultimoSnapshotHL")
+      .lean();
+
+    const snap = u?.ultimoSnapshotHL || null;
+
+    if (!snap) {
+      return res.json({
+        ok: true,
+        hasSnapshot: false,
+        snapshot: null,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      hasSnapshot: true,
+      snapshot: snap,
+    });
+  } catch (err) {
+    console.error("❌ Error en GET /precalificar/last:", err?.stack || err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Error interno al cargar snapshot" });
+  }
 });
 
 /* --------- POST /api/precalificar --------- */
@@ -94,30 +136,25 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
 
     /**
      * ✅ Guardar snapshot financiero en User si está logueado (Customer Journey)
-     * ESTE snapshot alimenta /admin/users “tipo quick win”.
+     * Mejor: guarda el output completo (no solo campos recortados),
+     * así Home puede mostrar más cosas de valor luego.
      */
     const userId = req.customer?.id || null;
 
     if (userId) {
-      const out = {
-        scoreHL: respuesta?.scoreHL ?? respuesta?.output?.scoreHL ?? null,
-        sinOferta:
-          respuesta?.flags?.sinOferta ??
-          respuesta?.sinOferta ??
-          respuesta?.output?.sinOferta ??
-          null,
-        bancoSugerido:
-          respuesta?.bancoSugerido ?? respuesta?.output?.bancoSugerido ?? null,
-        productoSugerido:
-          respuesta?.productoSugerido ??
-          respuesta?.output?.productoSugerido ??
-          null,
-        capacidadPago:
-          respuesta?.capacidadPago ?? respuesta?.output?.capacidadPago ?? null,
-        cuotaEstimada:
-          respuesta?.cuotaEstimada ?? respuesta?.output?.cuotaEstimada ?? null,
-        dtiConHipoteca:
-          respuesta?.dtiConHipoteca ?? respuesta?.output?.dtiConHipoteca ?? null,
+      const output = {
+        // guarda lo que ya tenías + deja el output completo si quieres
+        scoreHL: respuesta?.scoreHL ?? null,
+        flags: respuesta?.flags ?? null,
+        bancoSugerido: respuesta?.bancoSugerido ?? null,
+        productoSugerido: respuesta?.productoSugerido ?? null,
+        capacidadPago: respuesta?.capacidadPago ?? null,
+        cuotaEstimada: respuesta?.cuotaEstimada ?? null,
+        dtiConHipoteca: respuesta?.dtiConHipoteca ?? null,
+
+        // 👇 extra: deja el objeto entero por si tu service ya trae más
+        // (si no quieres esto, bórralo)
+        raw: respuesta,
       };
 
       await User.updateOne(
@@ -126,7 +163,7 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
           $set: {
             ultimoSnapshotHL: {
               input,
-              output: out,
+              output,
               createdAt: new Date(),
             },
           },
@@ -136,7 +173,15 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
       });
     }
 
-    return res.json(respuesta);
+    /**
+     * ✅ Respuesta consistente hacia el frontend
+     * (Tu frontend ya soporta data.output, pero esto ayuda mucho)
+     */
+    return res.json({
+      ok: true,
+      input,
+      output: respuesta,
+    });
   } catch (err) {
     console.error("❌ Error en /precalificar:", err?.stack || err);
     return res
