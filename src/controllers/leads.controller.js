@@ -549,7 +549,7 @@ export async function crearLead(req, res) {
       resultadoSanitizado
     );
 // ✅ BACKEND-FIRST: recalcula sinOferta/producto/banco desde motor real
-let respuestaMotor = null;
+let respuesta = null; // 👈 IMPORTANTÍSIMO: fuera del try
 
 try {
   const e =
@@ -570,34 +570,32 @@ try {
     tipoIngreso: e.tipoIngreso ?? tipoIngreso ?? "Dependiente",
     aniosEstabilidad: e.aniosEstabilidad ?? aniosEstabilidad ?? 0,
     plazoAnios: null,
+
+    nacionalidad: e.nacionalidad,
+    estadoCivil: e.estadoCivil,
+    declaracionBuro: e.declaracionBuro,
+    primeraVivienda: e.primeraVivienda,
+    viviendaUsada: e.viviendaUsada,
+    viviendaEstrenar: e.viviendaEstrenar,
+    sustentoIndependiente: e.sustentoIndependiente,
   };
 
-  const { respuesta } = precalificarHL(bodyMotor);
-  respuestaMotor = respuesta || null;
+  const rMotor = precalificarHL(bodyMotor);
+  respuesta = rMotor?.respuesta || null;
 
-  // ✅ sobreeescribe flags “duros”
   resultadoNormalizado.flags = { ...(resultadoNormalizado.flags || {}) };
-  resultadoNormalizado.flags.sinOferta = respuestaMotor?.flags?.sinOferta === true;
+  resultadoNormalizado.flags.sinOferta = respuesta?.flags?.sinOferta === true;
 
-  // ✅ sugeridos desde motor
-  resultadoNormalizado.productoSugerido = respuestaMotor?.productoSugerido ?? null;
-  resultadoNormalizado.bancoSugerido = respuestaMotor?.bancoSugerido ?? null;
-
-  // ✅ opcional: enriquecer para dashboard / debug
-  if (respuestaMotor?.bancosTop3) resultadoNormalizado.bancosTop3 = respuestaMotor.bancosTop3;
-  if (respuestaMotor?.mejorBanco) resultadoNormalizado.mejorBanco = respuestaMotor.mejorBanco;
-  if (respuestaMotor?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuestaMotor.rutaRecomendada;
-
+  resultadoNormalizado.productoSugerido = respuesta?.productoSugerido ?? null;
+  resultadoNormalizado.bancoSugerido = respuesta?.bancoSugerido ?? null;
 } catch (e) {
   console.warn("⚠️ No se pudo recalcular backend-first:", e?.message || e);
 }
 
-// (opcional) si precalificarHL ya devuelve bancosTop3/mejorBanco, guárdalos también:
+// ✅ ahora sí, porque respuesta existe (null o object)
 if (respuesta?.bancosTop3) resultadoNormalizado.bancosTop3 = respuesta.bancosTop3;
 if (respuesta?.mejorBanco) resultadoNormalizado.mejorBanco = respuesta.mejorBanco;
 if (respuesta?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuesta.rutaRecomendada;
-
-
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
     const sinOferta = resultadoNormalizado?.flags?.sinOferta === true;
