@@ -588,6 +588,30 @@ try {
 
   resultadoNormalizado.productoSugerido = respuesta?.productoSugerido ?? null;
   resultadoNormalizado.bancoSugerido = respuesta?.bancoSugerido ?? null;
+
+  // ✅ IMPORTANTÍSIMO: copiar también los numéricos que consume mailer/PDF
+if (respuesta) {
+  // métricas core
+  if (respuesta.cuotaEstimada != null) resultadoNormalizado.cuotaEstimada = respuesta.cuotaEstimada;
+  if (respuesta.capacidadPago != null) resultadoNormalizado.capacidadPago = respuesta.capacidadPago;
+  if (respuesta.dtiConHipoteca != null) resultadoNormalizado.dtiConHipoteca = respuesta.dtiConHipoteca;
+
+  // límites
+  if (respuesta.montoMaximo != null) resultadoNormalizado.montoMaximo = respuesta.montoMaximo;
+  if (respuesta.precioMaxVivienda != null) resultadoNormalizado.precioMaxVivienda = respuesta.precioMaxVivienda;
+
+  // extras que también salen en el email/PDF
+  if (respuesta.cuotaStress != null) resultadoNormalizado.cuotaStress = respuesta.cuotaStress;
+  if (respuesta.ltv != null) resultadoNormalizado.ltv = respuesta.ltv;
+
+  // si tu motor los trae
+  if (respuesta.tasaAnual != null) resultadoNormalizado.tasaAnual = respuesta.tasaAnual;
+  if (respuesta.plazoMeses != null) resultadoNormalizado.plazoMeses = respuesta.plazoMeses;
+
+  // ✅ para que el PDF tenga inputs consistentes (si tus utils leen __entrada)
+  resultadoNormalizado.__entrada = resultadoNormalizado.__entrada || bodyMotor;
+}
+
 } catch (e) {
   console.warn("⚠️ No se pudo recalcular backend-first:", e?.message || e);
 }
