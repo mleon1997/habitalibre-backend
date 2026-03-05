@@ -548,6 +548,53 @@ export async function crearLead(req, res) {
     const resultadoNormalizado = normalizeResultadoParaSalida(
       resultadoSanitizado
     );
+// ✅ BACKEND-FIRST: recalcula sinOferta/producto/banco desde motor real
+// (no confiamos en lo que venga del front)
+try {
+  const e = resultadoNormalizado?.__entrada || resultadoNormalizado?.perfilInput || {};
+
+  const bodyMotor = {
+    ingresoNetoMensual: e.ingresoNetoMensual ?? ingresoNetoMensual ?? 0,
+    ingresoPareja: e.ingresoPareja ?? 0,
+    otrasDeudasMensuales: e.otrasDeudasMensuales ?? otrasDeudasMensuales ?? 0,
+    valorVivienda: e.valorVivienda ?? valorVivienda ?? 0,
+    entradaDisponible: e.entradaDisponible ?? entradaDisponible ?? 0,
+    edad: e.edad ?? edad ?? null,
+    afiliadoIess: e.afiliadoIess ?? afiliadoIess ?? null,
+    iessAportesTotales: e.iessAportesTotales ?? 0,
+    iessAportesConsecutivos: e.iessAportesConsecutivos ?? 0,
+    tipoIngreso: e.tipoIngreso ?? tipoIngreso ?? "Dependiente",
+    aniosEstabilidad: e.aniosEstabilidad ?? aniosEstabilidad ?? 0,
+    plazoAnios: null,
+    // opcional si lo mandas:
+    nacionalidad: e.nacionalidad,
+    estadoCivil: e.estadoCivil,
+    declaracionBuro: e.declaracionBuro,
+    primeraVivienda: e.primeraVivienda,
+    viviendaUsada: e.viviendaUsada,
+    viviendaEstrenar: e.viviendaEstrenar,
+    sustentoIndependiente: e.sustentoIndependiente,
+  };
+
+  const { respuesta } = precalificarHL(bodyMotor);
+
+  // ✅ sobreeescribe flags “duros”
+  resultadoNormalizado.flags = { ...(resultadoNormalizado.flags || {}) };
+  resultadoNormalizado.flags.sinOferta = respuesta?.flags?.sinOferta === true;
+
+  // ✅ sobreeescribe sugeridos
+  resultadoNormalizado.productoSugerido = respuesta?.productoSugerido ?? null;
+  resultadoNormalizado.bancoSugerido = respuesta?.bancoSugerido ?? null;
+
+} catch (e) {
+  console.warn("⚠️ No se pudo recalcular backend-first:", e?.message || e);
+}
+
+// (opcional) si precalificarHL ya devuelve bancosTop3/mejorBanco, guárdalos también:
+if (respuesta?.bancosTop3) resultadoNormalizado.bancosTop3 = respuesta.bancosTop3;
+if (respuesta?.mejorBanco) resultadoNormalizado.mejorBanco = respuesta.mejorBanco;
+if (respuesta?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuesta.rutaRecomendada;
+
 
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
