@@ -809,6 +809,8 @@ if (respuesta?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuesta
         ...(resultadoNormalizado.flags || {}),
         sinOferta: resultadoNormalizado?.flags?.sinOferta === true,
       },
+
+      
       productoElegido:
         producto ||
         resultadoNormalizado.productoElegido ||
@@ -823,6 +825,16 @@ if (respuesta?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuesta
       bancoSugerido: resultadoNormalizado.bancoSugerido || null,
       productoSugerido: resultadoNormalizado.productoSugerido || null,
     };
+
+    console.log("🧪 MAIL DEBUG =>", {
+  cuota: resultadoConCodigo?.cuotaEstimada,
+  capacidad: resultadoConCodigo?.capacidadPago,
+  monto: resultadoConCodigo?.montoMaximo,
+  precio: resultadoConCodigo?.precioMaxVivienda,
+  banco: resultadoConCodigo?.bancoSugerido,
+  producto: resultadoConCodigo?.productoSugerido,
+  sinOferta: resultadoConCodigo?.flags?.sinOferta,
+});
 
     try {
       await Promise.all([
