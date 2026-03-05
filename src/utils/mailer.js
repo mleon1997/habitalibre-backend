@@ -854,7 +854,7 @@ export async function enviarCorreoCliente(lead, resultadoRaw, pdfBuffer = null) 
     to: lead.email,
     replyTo: FINAL_REPLY_TO,
     subject: "Tu precalificación HabitaLibre está lista 🏡",
-    html: htmlResumenCliente(lead, resultado),
+    html: htmlResumenCliente(lead, resultadoRaw),
     text:
       "Gracias por usar el simulador de HabitaLibre. " +
       "Adjuntamos un PDF con el resumen detallado de tu precalificación.",
@@ -888,7 +888,7 @@ export async function enviarCorreoLead(lead, resultadoRaw, pdfBuffer = null) {
     from: FINAL_FROM,
     to: INTERNAL_RECIPIENTS.join(","),
     subject: `Nuevo lead: ${lead?.nombre || "Cliente"} (${lead?.canal || "—"})`,
-    html: htmlInterno(lead, resultado),
+    html: htmlInterno(lead, resultadoRaw),
     replyTo: lead?.email
       ? `"${lead?.nombre || "Cliente"}" <${lead.email}>`
       : undefined,
