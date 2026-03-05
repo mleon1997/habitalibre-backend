@@ -549,9 +549,13 @@ export async function crearLead(req, res) {
       resultadoSanitizado
     );
 // ✅ BACKEND-FIRST: recalcula sinOferta/producto/banco desde motor real
-// (no confiamos en lo que venga del front)
+let respuestaMotor = null;
+
 try {
-  const e = resultadoNormalizado?.__entrada || resultadoNormalizado?.perfilInput || {};
+  const e =
+    resultadoNormalizado?.__entrada ||
+    resultadoNormalizado?.perfilInput ||
+    {};
 
   const bodyMotor = {
     ingresoNetoMensual: e.ingresoNetoMensual ?? ingresoNetoMensual ?? 0,
@@ -566,25 +570,23 @@ try {
     tipoIngreso: e.tipoIngreso ?? tipoIngreso ?? "Dependiente",
     aniosEstabilidad: e.aniosEstabilidad ?? aniosEstabilidad ?? 0,
     plazoAnios: null,
-    // opcional si lo mandas:
-    nacionalidad: e.nacionalidad,
-    estadoCivil: e.estadoCivil,
-    declaracionBuro: e.declaracionBuro,
-    primeraVivienda: e.primeraVivienda,
-    viviendaUsada: e.viviendaUsada,
-    viviendaEstrenar: e.viviendaEstrenar,
-    sustentoIndependiente: e.sustentoIndependiente,
   };
 
   const { respuesta } = precalificarHL(bodyMotor);
+  respuestaMotor = respuesta || null;
 
   // ✅ sobreeescribe flags “duros”
   resultadoNormalizado.flags = { ...(resultadoNormalizado.flags || {}) };
-  resultadoNormalizado.flags.sinOferta = respuesta?.flags?.sinOferta === true;
+  resultadoNormalizado.flags.sinOferta = respuestaMotor?.flags?.sinOferta === true;
 
-  // ✅ sobreeescribe sugeridos
-  resultadoNormalizado.productoSugerido = respuesta?.productoSugerido ?? null;
-  resultadoNormalizado.bancoSugerido = respuesta?.bancoSugerido ?? null;
+  // ✅ sugeridos desde motor
+  resultadoNormalizado.productoSugerido = respuestaMotor?.productoSugerido ?? null;
+  resultadoNormalizado.bancoSugerido = respuestaMotor?.bancoSugerido ?? null;
+
+  // ✅ opcional: enriquecer para dashboard / debug
+  if (respuestaMotor?.bancosTop3) resultadoNormalizado.bancosTop3 = respuestaMotor.bancosTop3;
+  if (respuestaMotor?.mejorBanco) resultadoNormalizado.mejorBanco = respuestaMotor.mejorBanco;
+  if (respuestaMotor?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuestaMotor.rutaRecomendada;
 
 } catch (e) {
   console.warn("⚠️ No se pudo recalcular backend-first:", e?.message || e);
