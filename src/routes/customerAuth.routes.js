@@ -6,6 +6,7 @@ import {
   meCustomer,
   forgotPasswordCustomer,
   resetPasswordCustomer,
+  deleteAccountCustomer,
 } from "../controllers/customerAuth.controller.js";
 import { verificarCustomer } from "../middlewares/customerAuth.js";
 
@@ -43,5 +44,11 @@ router.post("/forgot-password", forgotPasswordCustomer);
  * body: { token, newPassword }
  */
 router.post("/reset-password", resetPasswordCustomer);
+
+/**
+ * DELETE /api/customer-auth/delete-account
+ * header: Authorization: Bearer <token>
+ */
+router.delete("/delete-account", verificarCustomer, deleteAccountCustomer);
 
 export default router;

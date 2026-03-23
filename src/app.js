@@ -1,18 +1,17 @@
-// src/app.js
 import "dotenv/config";
-import snapshotsRoutes from "./routes/snapshots.routes.js";
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
 import compression from "compression";
 import helmet from "helmet";
 
+import snapshotsRoutes from "./routes/snapshots.routes.js";
+import mortgageRoutes from "./routes/mortgage.routes.js";
 import { reportesRoutes } from "./routes/reportes.routes.js";
 import { verifySmtp } from "./utils/mailer.js";
 
 import Lead from "./models/Lead.js";
 import igRoutes from "./routes/ig.routes.js";
-
 
 // ================================
 // Conversación IG (state machine)
@@ -45,8 +44,6 @@ import precalificarRoutes from "./routes/precalificar.routes.js";
 import leadsRoutes from "./routes/leads.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 
-
-
 // ================================
 // App
 // ================================
@@ -54,14 +51,17 @@ const app = express();
 
 app.set("trust proxy", true);
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-app.use(compression());
+// ✅ BODY PARSERS PRIMERO
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use("/api/ig", igRoutes);
 
-
-
+// ✅ MIDDLEWARES GENERALES
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+app.use(compression());
 
 /* ================================
    Helpers CORS
@@ -82,7 +82,6 @@ function normalizeOrigin(origin) {
   }
 }
 
-
 /* ================================
    Allowed Origins
 ================================ */
@@ -90,13 +89,18 @@ const allowList = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:4173",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:4173",
   "https://habitalibre.com",
   "https://www.habitalibre.com",
   "https://habitalibre-web.onrender.com",
 
-  // 👇 AGREGA ESTO PARA LA APP MÓVIL
+  // Capacitor / app móvil
   "http://localhost",
+  "http://127.0.0.1",
   "capacitor://localhost",
+  "ionic://localhost",
 
   ...parseOrigins(process.env.CORS_ORIGIN),
 ]
@@ -120,9 +124,11 @@ const corsOptions = {
     if (norm === "capacitor://localhost") return cb(null, true);
     if (norm === "ionic://localhost") return cb(null, true);
 
-    // Android WebView localhost con puerto
-    if (norm.startsWith("http://localhost")) return cb(null, true);
-    if (norm.startsWith("https://localhost")) return cb(null, true);
+    // localhost / 127.0.0.1 con cualquier puerto
+    if (origin.startsWith("http://localhost")) return cb(null, true);
+    if (origin.startsWith("https://localhost")) return cb(null, true);
+    if (origin.startsWith("http://127.0.0.1")) return cb(null, true);
+    if (origin.startsWith("https://127.0.0.1")) return cb(null, true);
 
     // allowList normal
     if (allowList.includes(norm)) return cb(null, true);
@@ -138,7 +144,6 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
-app.use("/api/snapshots", snapshotsRoutes);
 
 /* ================================
    Healthcheck (Render)
@@ -155,16 +160,15 @@ app.get("/__routes", (req, res) => {
   for (const layer of stack) {
     if (!layer) continue;
 
-    // Route directo
     if (layer.route?.path) {
       const methods = Object.keys(layer.route.methods || {})
         .filter((m) => layer.route.methods[m])
         .map((m) => m.toUpperCase());
+
       routes.push({ path: layer.route.path, methods });
       continue;
     }
 
-    // Router montado (app.use('/api', router))
     if (layer.name === "router" && layer.handle?.stack) {
       for (const l2 of layer.handle.stack) {
         if (!l2?.route?.path) continue;
@@ -181,7 +185,9 @@ app.get("/__routes", (req, res) => {
   res.json({
     ok: true,
     count: routes.length,
-    routes: routes.sort((a, b) => String(a.path).localeCompare(String(b.path))),
+    routes: routes.sort((a, b) =>
+      String(a.path).localeCompare(String(b.path))
+    ),
   });
 });
 
@@ -208,9 +214,9 @@ app.get("/webhooks/instagram", (req, res) => {
 // Helpers IG webhook
 // ================================
 function shouldIgnoreIgMessage(m) {
-  if (m?.message?.is_echo) return true; // mensaje del bot (echo)
-  if (m?.read) return true; // read receipts
-  if (m?.delivery) return true; // delivery receipts
+  if (m?.message?.is_echo) return true;
+  if (m?.read) return true;
+  if (m?.delivery) return true;
   return false;
 }
 
@@ -226,7 +232,6 @@ function extractUserText(m) {
 async function sendIgText(toUserId, text) {
   const n8nUrl = process.env.N8N_IG_OUT_WEBHOOK_URL;
 
-  // Si decides usar n8n para salida, lo respetamos
   if (n8nUrl) {
     await fetch(n8nUrl, {
       method: "POST",
@@ -236,11 +241,8 @@ async function sendIgText(toUserId, text) {
     return;
   }
 
-  // Envío directo por Graph API (recomendado)
-await igSendText({ toUserId, text });
-
+  await igSendText({ toUserId, text });
 }
-
 
 /* ================================
    Lead helpers (IG)
@@ -252,10 +254,12 @@ function pickScoreHL(respuesta) {
     respuesta?.score,
     respuesta?._echo?.scoreHL,
   ];
+
   for (const c of candidates) {
     const n = Number(c);
     if (Number.isFinite(n)) return n;
   }
+
   return null;
 }
 
@@ -267,7 +271,6 @@ async function upsertLeadFromInstagram({
 }) {
   const now = new Date();
 
-  // Buscar lead existente por ig senderId guardado en metadata
   let lead = await Lead.findOne({ "metadata.igSenderId": String(senderId) });
 
   if (!lead) {
@@ -288,14 +291,17 @@ async function upsertLeadFromInstagram({
 
     lead.fuentesInfo = lead.fuentesInfo || {};
     lead.fuentesInfo.manual =
-      lead.fuentesInfo.manual || { seen: false, lastAt: null, completed: false };
+      lead.fuentesInfo.manual || {
+        seen: false,
+        lastAt: null,
+        completed: false,
+      };
 
     lead.fuentesInfo.manual.seen = true;
     lead.fuentesInfo.manual.lastAt = now;
     lead.fuentesInfo.manual.completed = true;
   }
 
-  // ✅ Mapear campos planos desde precalifInput
   lead.edad = precalifInput?.edad ?? lead.edad ?? null;
   lead.tipo_ingreso = precalifInput?.tipoIngreso ?? lead.tipo_ingreso ?? null;
   lead.valor_vivienda =
@@ -303,7 +309,8 @@ async function upsertLeadFromInstagram({
   lead.entrada_disponible =
     precalifInput?.entradaDisponible ?? lead.entrada_disponible ?? null;
 
-  lead.afiliado_iess = precalifInput?.afiliadoIess ?? lead.afiliado_iess ?? null;
+  lead.afiliado_iess =
+    precalifInput?.afiliadoIess ?? lead.afiliado_iess ?? null;
   lead.anios_estabilidad =
     precalifInput?.aniosEstabilidad ?? lead.anios_estabilidad ?? null;
   lead.ingreso_mensual =
@@ -311,7 +318,6 @@ async function upsertLeadFromInstagram({
   lead.deuda_mensual_aprox =
     precalifInput?.otrasDeudasMensuales ?? lead.deuda_mensual_aprox ?? null;
 
-  // ✅ Resultado completo
   lead.resultado = respuesta;
   lead.resultadoUpdatedAt = now;
 
@@ -322,7 +328,6 @@ async function upsertLeadFromInstagram({
 
   lead.scoreHL = pickScoreHL(respuesta);
 
-  // ✅ Snapshot precalificación
   lead.precalificacion = {
     bancoSugerido: respuesta?.bancoSugerido ?? null,
     productoSugerido: respuesta?.productoSugerido ?? null,
@@ -337,17 +342,14 @@ async function upsertLeadFromInstagram({
   lead.precalificacion_banco = respuesta?.bancoSugerido ?? null;
   lead.precalificacion_cuotaEstimada = respuesta?.cuotaEstimada ?? null;
 
-  // ✅ Save (dispara tu pre-save hook y recalcula decision)
   await lead.save();
   return lead;
 }
 
 /* ================================
    Instagram Webhook (POST events)
-   ✅ State machine + precalificarHL + Lead upsert
 ================================ */
 app.post("/webhooks/instagram", (req, res) => {
-  // ✅ Meta necesita 200 rápido
   res.status(200).json({ ok: true });
 
   (async () => {
@@ -366,7 +368,6 @@ app.post("/webhooks/instagram", (req, res) => {
           const userText = extractUserText(m);
           if (!userText) continue;
 
-          // 1) Load/upsert sesión
           const base = getInitialSessionPatch();
 
           const session = await ConversationSession.findOneAndUpdate(
@@ -382,11 +383,9 @@ app.post("/webhooks/instagram", (req, res) => {
             { new: true, upsert: true }
           );
 
-          // 2) Turno de conversación
           const turn1 = await runConversationTurn(session, userText);
           const updated = turn1.session;
 
-          // 3) Guardar estado
           await ConversationSession.updateOne(
             { _id: updated._id },
             {
@@ -400,32 +399,27 @@ app.post("/webhooks/instagram", (req, res) => {
             }
           );
 
-          // 4) Responder primer mensaje
           await sendIgText(senderId, turn1.replyText);
 
-          // 5) Si toca ejecutar motor real y cerrar
           if (turn1.shouldRunDecision) {
             const { input, respuesta } = precalificarHL(updated.data);
 
-            // Guardar snapshot real
             updated.raw = updated.raw || {};
             updated.raw.precalifInput = input;
             updated.raw.precalifResult = respuesta;
 
-            // Crear/actualizar Lead (bank-ready)
             const lead = await upsertLeadFromInstagram({
               senderId,
               precalifInput: input,
               respuesta,
               session: updated,
             });
-            updated.raw.leadId = String(lead._id);
 
-            // Forzar RESULT
+            updated.raw.leadId = String(lead._id);
             updated.currentStep = "result";
+
             const turn2 = await runConversationTurn(updated, "");
 
-            // Persistir sesión final
             await ConversationSession.updateOne(
               { _id: updated._id },
               {
@@ -463,11 +457,22 @@ app.use("/api/customer-auth", customerAuthRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/customer/leads", customerLeadsRoutes);
 
-// Diagnóstico / Precalificación
+// Diagnóstico / Precalificación / Mortgage
 app.use("/api/diag/mailer", diagMailerRoutes);
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
+app.use("/api/mortgage", mortgageRoutes);
+app.use("/api/snapshots", snapshotsRoutes);
 app.use("/api/health", healthRoutes);
+
+// IG
+app.use("/api/ig", igRoutes);
+
+// Leads
+app.use("/api/leads", leadsRoutes);
+
+// Reportes
+app.use("/api/reportes", reportesRoutes);
 
 app.get("/__version", (req, res) => {
   res.json({
@@ -477,12 +482,6 @@ app.get("/__version", (req, res) => {
   });
 });
 
-// 📩 Leads
-app.use("/api/leads", leadsRoutes);
-
-// 📄 Reportes (Ficha Comercial / PDFs)
-app.use("/api/reportes", reportesRoutes);
-
 /* ================================
    MongoDB
 ================================ */
@@ -491,7 +490,9 @@ const mongoUri = process.env.MONGODB_URI;
 mongoose
   .connect(mongoUri)
   .then(() => console.log("✅ Conectado a MongoDB"))
-  .catch((err) => console.error("❌ Error conectando a MongoDB:", err.message));
+  .catch((err) =>
+    console.error("❌ Error conectando a MongoDB:", err.message)
+  );
 
 /* ================================
    404
@@ -516,10 +517,12 @@ app.use((err, req, res, next) => {
 });
 
 /* ================================
-   Verificación SMTP (no bloquea server)
+   Verificación SMTP
 ================================ */
 verifySmtp()
   .then(() => console.log("📧 SMTP verificado correctamente"))
-  .catch((err) => console.error("❌ Error verificando SMTP:", err.message));
+  .catch((err) =>
+    console.error("❌ Error verificando SMTP:", err.message)
+  );
 
 export default app;

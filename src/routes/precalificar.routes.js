@@ -6,13 +6,6 @@ import { precalificarHL } from "../services/precalificar.service.js";
 
 const router = Router();
 
-/**
- * Auth opcional (NO bloquea precalificar).
- * Si viene token Customer Journey:
- *  - valida secret CUSTOMER_JWT_SECRET
- *  - requiere typ === "customer"
- *  - pone req.customer = { id, email, leadId, typ }
- */
 function optionalCustomerAuth(req, _res, next) {
   try {
     const auth = String(req.headers.authorization || "");
@@ -34,7 +27,6 @@ function optionalCustomerAuth(req, _res, next) {
 
     const payload = jwt.verify(token, secret);
 
-    // ✅ SOLO tokens customer
     if (!payload?.id || payload?.typ !== "customer") return next();
 
     req.customer = {
@@ -50,9 +42,78 @@ function optionalCustomerAuth(req, _res, next) {
   }
 }
 
+/* =========================
+   Helpers para enriquecer bancos
+========================= */
+function getEscenarioPorTipo(tipoProducto, escenariosHL = {}) {
+  const tipo = String(tipoProducto || "").toUpperCase();
+
+  if (tipo === "VIS") return escenariosHL?.vis || null;
+  if (tipo === "VIP") return escenariosHL?.vip || null;
+
+  if (tipo === "BIESS") {
+    return (
+      escenariosHL?.biess ||
+      escenariosHL?.biess_pref ||
+      escenariosHL?.biess_std ||
+      null
+    );
+  }
+
+  if (
+    tipo === "NORMAL" ||
+    tipo === "PRIVADA" ||
+    tipo === "COMERCIAL"
+  ) {
+    return escenariosHL?.comercial || null;
+  }
+
+  return null;
+}
+
+function enrichBanco(banco, escenariosHL = {}) {
+  const esc = getEscenarioPorTipo(banco?.tipoProducto, escenariosHL);
+
+  return {
+    ...banco,
+    tasaAnual: esc?.tasaAnual ?? banco?.tasaAnual ?? null,
+    cuota: esc?.cuota ?? banco?.cuota ?? null,
+    montoPrestamo: esc?.montoPrestamo ?? banco?.montoPrestamo ?? null,
+    plazoMeses: esc?.plazoMeses ?? banco?.plazoMeses ?? null,
+    ltvMax: esc?.ltvMax ?? banco?.ltvMax ?? null,
+    precioMaxVivienda: esc?.precioMaxVivienda ?? banco?.precioMaxVivienda ?? null,
+  };
+}
+
+function enrichRespuestaBancos(respuesta = {}) {
+  const escenariosHL = respuesta?.escenariosHL || respuesta?.escenarios || {};
+
+  const bancosProbabilidadRaw = Array.isArray(respuesta?.bancosProbabilidad)
+    ? respuesta.bancosProbabilidad
+    : [];
+
+  const bancosProbabilidad = bancosProbabilidadRaw.map((b) =>
+    enrichBanco(b, escenariosHL)
+  );
+
+  const bancosTop3Raw =
+    Array.isArray(respuesta?.bancosTop3) && respuesta.bancosTop3.length
+      ? respuesta.bancosTop3
+      : bancosProbabilidad.slice(0, 3);
+
+  const bancosTop3 = bancosTop3Raw.map((b) => enrichBanco(b, escenariosHL));
+  const mejorBanco = bancosTop3[0] || respuesta?.mejorBanco || null;
+
+  return {
+    ...respuesta,
+    bancosProbabilidad,
+    bancosTop3,
+    mejorBanco,
+  };
+}
+
 /* --------- DEBUG / HEALTH --------- */
 router.get("/ping", (req, res) => {
-  // útil para ver CORS/origin en Android WebView
   res.setHeader("Cache-Control", "no-store");
   res.json({
     ok: true,
@@ -106,8 +167,8 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
   try {
     const body = req.body || {};
 
-    // ✅ toda la lógica vive en el service
-    const { input, respuesta } = precalificarHL(body);
+    const { input, respuesta: respuestaBase } = precalificarHL(body);
+    const respuesta = enrichRespuestaBancos(respuestaBase);
 
     console.log("➡️ POST /api/precalificar (normalizado):", {
       ingresoNetoMensual: input.ingresoNetoMensual,
@@ -134,16 +195,12 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
       customerId: req.customer?.id || null,
     });
 
-    /**
-     * ✅ Guardar snapshot financiero en User si está logueado (Customer Journey)
-     * Mejor: guarda el output completo (no solo campos recortados),
-     * así Home puede mostrar más cosas de valor luego.
-     */
+    console.log("✅ bancosTop3 final:", respuesta?.bancosTop3);
+
     const userId = req.customer?.id || null;
 
     if (userId) {
       const output = {
-        // guarda lo que ya tenías + deja el output completo si quieres
         scoreHL: respuesta?.scoreHL ?? null,
         flags: respuesta?.flags ?? null,
         bancoSugerido: respuesta?.bancoSugerido ?? null,
@@ -151,9 +208,6 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
         capacidadPago: respuesta?.capacidadPago ?? null,
         cuotaEstimada: respuesta?.cuotaEstimada ?? null,
         dtiConHipoteca: respuesta?.dtiConHipoteca ?? null,
-
-        // 👇 extra: deja el objeto entero por si tu service ya trae más
-        // (si no quieres esto, bórralo)
         raw: respuesta,
       };
 
@@ -173,10 +227,6 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
       });
     }
 
-    /**
-     * ✅ Respuesta consistente hacia el frontend
-     * (Tu frontend ya soporta data.output, pero esto ayuda mucho)
-     */
     return res.json({
       ok: true,
       input,

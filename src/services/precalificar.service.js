@@ -72,16 +72,48 @@ const normString = (v, def = null) => {
 const normTipoIngreso = (v) => {
   const s = String(v ?? "").trim();
   if (!s) return null;
-  // normalización suave (sin forzar demasiado)
   return s;
 };
+
+function enrichBancoConEscenario(banco, escenariosHL = {}) {
+  const tipo = String(banco?.tipoProducto || "").toUpperCase();
+
+  let esc = null;
+
+  if (tipo === "VIP") {
+    esc = escenariosHL?.vip || null;
+  } else if (tipo === "VIS") {
+    esc = escenariosHL?.vis || null;
+  } else if (tipo === "BIESS") {
+    esc =
+      escenariosHL?.biess ||
+      escenariosHL?.biess_pref ||
+      escenariosHL?.biess_std ||
+      null;
+  } else if (
+    tipo === "NORMAL" ||
+    tipo === "PRIVADA" ||
+    tipo === "COMERCIAL"
+  ) {
+    esc = escenariosHL?.comercial || null;
+  }
+
+  return {
+    ...banco,
+    tasaAnual: esc?.tasaAnual ?? null,
+    cuota: esc?.cuota ?? null,
+    montoPrestamo: esc?.montoPrestamo ?? null,
+    plazoMeses: esc?.plazoMeses ?? null,
+    ltvMax: esc?.ltvMax ?? null,
+    precioMaxVivienda: esc?.precioMaxVivienda ?? null,
+  };
+}
 
 /**
  * ✅ Normalizador PRO de input
  * Acepta input nuevo, legacy y campos planos del Lead (snake_case)
  */
 export function normalizarInputHL(body = {}) {
-  // ✅ Afiliación IESS: puede venir como boolean, string, 0/1, etc.
   const afiliadoRaw = pickFirstNonNull(
     body.afiliadoIess,
     body.afiliadoIESS,
@@ -93,7 +125,6 @@ export function normalizarInputHL(body = {}) {
     body?.metadata?.perfil?.afiliadoIess
   );
 
-  // ✅ IESS aportes (si existen)
   const iessAportesTotales = toNum(
     pickFirstNonNull(
       body.iessAportesTotales,
@@ -118,7 +149,6 @@ export function normalizarInputHL(body = {}) {
     0
   );
 
-  // ✅ Ingreso / deudas (camelCase + snake_case + legacy)
   const ingresoNetoMensual = toNum(
     pickFirstNonNull(
       body.ingresoNetoMensual,
@@ -154,7 +184,6 @@ export function normalizarInputHL(body = {}) {
     0
   );
 
-  // ✅ Valor vivienda / entrada (camelCase + snake_case + legacy)
   const valorVivienda = toNum(
     pickFirstNonNull(
       body.valorVivienda,
@@ -181,7 +210,6 @@ export function normalizarInputHL(body = {}) {
     0
   );
 
-  // ✅ Edad / tipo ingreso / estabilidad (camelCase + snake_case)
   const edad = toNum(
     pickFirstNonNull(
       body.edad,
@@ -213,7 +241,6 @@ export function normalizarInputHL(body = {}) {
     0
   );
 
-  // ✅ Otros campos (se mantienen)
   const primeraVivienda = pickFirstDefined(body.primeraVivienda, null);
   const viviendaUsada = pickFirstDefined(body.viviendaUsada, null);
   const viviendaEstrenar = pickFirstDefined(
@@ -236,8 +263,6 @@ export function normalizarInputHL(body = {}) {
 
   return {
     ...body,
-
-    // ✅ numéricos limpios
     ingresoNetoMensual,
     ingresoPareja,
     otrasDeudasMensuales,
@@ -246,15 +271,9 @@ export function normalizarInputHL(body = {}) {
     edad,
     tipoIngreso,
     aniosEstabilidad,
-
-    // ✅ boolean/null
     afiliadoIess: afiliadoRaw == null ? null : toBoolOrNull(afiliadoRaw),
-
-    // ✅ iess
     iessAportesTotales,
     iessAportesConsecutivos,
-
-    // ✅ otros
     primeraVivienda,
     viviendaUsada,
     viviendaEstrenar,
@@ -319,13 +338,11 @@ export function calcularSinOfertaHard(resultado = {}) {
 
   if (noSignals) return !hayViable;
 
-  // Reglas duras globales (solo si NO hay viable)
   if (!hayViable) {
     if (isNum(dti) && dti > 0.5) return true;
     if (isNum(ltv) && ltv > 0.9) return true;
   }
 
-  // Regla cuota > capacidad (solo en privada/comercial) si NO hay viable
   const tipo = String(tipoRuta || "").toLowerCase();
   const aplicaReglaFlujo = tipo.includes("priv") || tipo.includes("comercial");
 
@@ -342,7 +359,7 @@ export function calcularSinOfertaHard(resultado = {}) {
  * - Corre motor (scoring)
  * - Normaliza resultado
  * - Aplica sinOfertaHard
- * - Devuelve respuesta final (misma forma que tu /api/precalificar)
+ * - Devuelve respuesta final
  */
 export function precalificarHL(body = {}) {
   const input = normalizarInputHL(body);
@@ -350,12 +367,10 @@ export function precalificarHL(body = {}) {
   const resultadoRaw = evaluarProbabilidadPorBanco(input);
   const resultado = normalizeResultadoParaSalida(resultadoRaw);
 
-  // ✅ flags object
   if (!resultado.flags || typeof resultado.flags !== "object") {
     resultado.flags = {};
   }
 
-  // compat legacy
   const sinOfertaEngine = pickBool(
     resultado?.flags?.sinOferta,
     resultado?.sinOferta
@@ -363,20 +378,21 @@ export function precalificarHL(body = {}) {
 
   const sinOfertaHard = calcularSinOfertaHard(resultado);
 
-  // sinOfertaFinal = engine OR hard (hard puede elevar)
   const sinOfertaFinal =
     (typeof sinOfertaEngine === "boolean" ? sinOfertaEngine : false) ||
     sinOfertaHard;
 
   resultado.flags.sinOferta = sinOfertaFinal;
-  resultado.sinOferta = sinOfertaFinal; // compat legacy
+  resultado.sinOferta = sinOfertaFinal;
 
-  // Bancos
-  const bancosProbabilidad = resultado.bancosProbabilidad || [];
-  const bancosTop3 = resultado.bancosTop3 || [];
-  const mejorBanco = resultado.mejorBanco || null;
+  const bancosProbabilidadRaw = resultado.bancosProbabilidad || [];
+  const bancosProbabilidad = bancosProbabilidadRaw.map((b) =>
+    enrichBancoConEscenario(b, resultado.escenariosHL)
+  );
 
-  // Flat sugeridos (para Progreso.jsx / PDF / Mailer)
+  const bancosTop3 = bancosProbabilidad.slice(0, 3);
+  const mejorBanco = bancosTop3[0] || null;
+
   const productoSugerido = sinOfertaFinal
     ? null
     : resultado.productoSugerido || null;
@@ -389,7 +405,6 @@ export function precalificarHL(body = {}) {
   const respuesta = {
     ok: resultado.ok,
 
-    // métricas base
     productoElegido: resultado.productoElegido,
     tasaAnual: resultado.tasaAnual,
     plazoMeses: resultado.plazoMeses,
@@ -401,10 +416,8 @@ export function precalificarHL(body = {}) {
     montoMaximo: resultado.montoMaximo,
     precioMaxVivienda: resultado.precioMaxVivienda,
 
-    // flags
     flags: resultado.flags,
 
-    // scoring avanzado
     riesgoHabitaLibre: resultado.riesgoHabitaLibre,
     scoreHL: resultado.scoreHL,
     stressTest: resultado.stressTest,
@@ -415,24 +428,20 @@ export function precalificarHL(body = {}) {
     perfil: resultado.perfil,
     requeridos: resultado.requeridos,
 
-    // escenarios
     escenariosHL: resultado.escenariosHL,
     rutasViables: resultado.rutasViables || [],
     rutaRecomendada: resultado.rutaRecomendada || null,
+    eligibilityProducts: resultado.eligibilityProducts || {},
 
-    // bancos
     bancosProbabilidad,
     bancosTop3,
     mejorBanco,
 
-    // 👇 lo que usa UI/PDF/Correo
     productoSugerido,
     bancoSugerido,
 
-    // echo limpio
     _echo: resultado._echo || {},
 
-    // ✅ debug (puedes borrar luego)
     _debugSinOferta: {
       sinOfertaEngine,
       sinOfertaHard,

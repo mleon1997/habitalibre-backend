@@ -1,6 +1,10 @@
 // src/lib/scoring.js
-// 👇 Import default
+
+import { getCatalogProductsForScoring } from "./mortgageCatalogAdapter.js";
+import evaluateMortgageProduct from "./evaluateMortgageProduct.js";
 import scoreHabitaLibre from "./scoreHabitaLibre.js";
+
+console.log("✅ SCORING NUEVO CARGADO");
 
 /* ===========================================================
    Helpers numéricos/financieros (con sanitización)
@@ -9,6 +13,7 @@ const n = (v, def = 0) => {
   const x = Number(v);
   return Number.isFinite(x) ? x : def;
 };
+
 function pmt(rate, nper, pv) {
   const r = n(rate, 0);
   const N = n(nper, 1);
@@ -16,6 +21,7 @@ function pmt(rate, nper, pv) {
   if (r === 0) return PV / N;
   return (PV * r) / (1 - Math.pow(1 + r, -N));
 }
+
 function pvFromPayment(rate, nper, payment) {
   const r = n(rate, 0);
   const N = n(nper, 1);
@@ -23,31 +29,61 @@ function pvFromPayment(rate, nper, payment) {
   if (r === 0) return PMT * N;
   return (PMT * (1 - Math.pow(1 + r, -N))) / r;
 }
+
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 /* ===========================================================
    Tabla escalonada BIESS estándar (no VIS/VIP)
-   Tasas más realistas vs banca privada hoy
 =========================================================== */
 function tasaBiessEstandar(monto, plazoAnios) {
   const loan = n(monto);
   const years = n(plazoAnios, 20);
 
-  // Tramo bajo: montos pequeños y plazos ≤ 20 años
-  if (loan <= 90000 && years <= 20) return 0.073; // 7.3%
-
-  // Tramo medio
-  if (loan <= 150000) return 0.078; // 7.8%
-
-  // Tramo alto
-  if (loan <= 200000) return 0.082; // 8.2%
-
-  // Montos más grandes: tasa máxima
-  return 0.088; // 8.8%
+  if (loan <= 90000 && years <= 20) return 0.073;
+  if (loan <= 150000) return 0.078;
+  if (loan <= 200000) return 0.082;
+  return 0.088;
 }
 
 /* ===========================================================
-   Reglas mock de bancos (para afinidad rápida legacy)
+   Helpers para enriquecer bancos con métricas hipotecarias
+=========================================================== */
+function getEscenarioPorTipo(tipoProducto, escenarios = {}) {
+  const tipo = String(tipoProducto || "").toUpperCase();
+
+  if (tipo === "VIS") return escenarios?.vis || null;
+  if (tipo === "VIP") return escenarios?.vip || null;
+  if (tipo === "BIESS") {
+    return (
+      escenarios?.biess ||
+      escenarios?.biess_pref ||
+      escenarios?.biess_std ||
+      null
+    );
+  }
+  if (tipo === "NORMAL" || tipo === "PRIVADA" || tipo === "COMERCIAL") {
+    return escenarios?.comercial || null;
+  }
+
+  return null;
+}
+
+function enrichBancoResultado(bancoBase, escenarios = {}) {
+  const esc = getEscenarioPorTipo(bancoBase?.tipoProducto, escenarios);
+
+  return {
+    ...bancoBase,
+    tasaAnual: esc?.tasaAnual ?? null,
+    cuota: esc?.cuota ?? null,
+    montoPrestamo: esc?.montoPrestamo ?? null,
+    plazoMeses: esc?.plazoMeses ?? null,
+    ltvMax: esc?.ltvMax ?? null,
+    precioMaxVivienda: esc?.precioMaxVivienda ?? null,
+  };
+}
+
+/* ===========================================================
+   Reglas mock de bancos (legacy)
 =========================================================== */
 const BANK_RULES = [
   {
@@ -87,12 +123,8 @@ const BANK_RULES = [
 
 /* ===========================================================
    Bancos reales para probabilidad de aprobación
-   (basado en info de tu analista)
 =========================================================== */
 const BANK_PROFILES = [
-  // ----------------------------------------------
-  // VIP bancos privados
-  // ----------------------------------------------
   {
     id: "pichincha_vip",
     nombre: "Banco Pichincha (VIP)",
@@ -146,9 +178,6 @@ const BANK_PROFILES = [
     minAniosRucInd: 2,
   },
 
-  // ----------------------------------------------
-  // VIS bancos privados (mismos bancos que VIP pero etiquetados VIS)
-  // ----------------------------------------------
   {
     id: "pichincha_vis",
     nombre: "Banco Pichincha (VIS)",
@@ -202,9 +231,6 @@ const BANK_PROFILES = [
     minAniosRucInd: 2,
   },
 
-  // ----------------------------------------------
-  // BIESS
-  // ----------------------------------------------
   {
     id: "biess",
     nombre: "BIESS",
@@ -214,21 +240,18 @@ const BANK_PROFILES = [
     ltvMax: 0.95,
     requiereIESS: true,
     requiereAportes: true,
-    tasaRef: 0.0599, // se ajusta internamente en el producto, aquí es referencial
+    tasaRef: 0.0599,
     minAniosEstDep: 1,
     minAniosRucInd: 2,
   },
 
-  // ----------------------------------------------
-  // Bancos / IFIs con tasa normal
-  // ----------------------------------------------
   {
     id: "produbanco_normal",
     nombre: "Produbanco (normal)",
     tipo: "NORMAL",
     dtiMaxDependiente: 0.45,
     dtiMaxIndependiente: 0.45,
-    ltvMaxAAA: 0.8, // si cliente es bueno en buró
+    ltvMaxAAA: 0.8,
     ltvMaxDefault: 0.7,
     requiereIESS: false,
     requiereAportes: false,
@@ -253,9 +276,7 @@ const BANK_PROFILES = [
 ];
 
 /* ===========================================================
-   Parámetros VIS/VIP/BIESS (referenciales y consistentes)
-   ⬇️ Ahora incluyen minIngreso y BIESS escalonado
-   ⬇️ Y rangos de plazo en AÑOS (para que el usuario juegue)
+   Parámetros VIS/VIP/BIESS (legacy)
 =========================================================== */
 const LIMITES = {
   VIS: {
@@ -263,9 +284,9 @@ const LIMITES = {
     incomeCap: 2070,
     minIngreso: 600,
     firstHomeOnly: true,
-    requireNewBuild: true, // vivienda por estrenar
+    requireNewBuild: true,
     tasaAnual: 0.0499,
-    plazoMeses: 240, // default: 20 años
+    plazoMeses: 240,
     plazoMinAnios: 5,
     plazoMaxAnios: 25,
     ltvMax: 0.95,
@@ -277,16 +298,15 @@ const LIMITES = {
     incomeCap: 2900,
     minIngreso: 800,
     firstHomeOnly: true,
-    requireNewBuild: true, // vivienda por estrenar
+    requireNewBuild: true,
     tasaAnual: 0.0499,
-    plazoMeses: 300, // default: 25 años
+    plazoMeses: 300,
     plazoMinAnios: 5,
     plazoMaxAnios: 25,
     ltvMax: 0.95,
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
   },
-  // BIESS VIP / preferencial
   BIESS_PREF: {
     priceCap: 107630,
     incomeCap: 2900,
@@ -296,14 +316,13 @@ const LIMITES = {
     requireIESS: true,
     requireContribs: true,
     tasaAnual: 0.0599,
-    plazoMeses: 300, // default: 25 años
+    plazoMeses: 300,
     plazoMinAnios: 5,
     plazoMaxAnios: 25,
     ltvMax: 0.95,
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
   },
-  // BIESS estándar (con tabla de tasas por monto)
   BIESS_STD: {
     priceCap: 460000,
     incomeCap: Infinity,
@@ -311,25 +330,22 @@ const LIMITES = {
     firstHomeOnly: false,
     requireIESS: true,
     requireContribs: true,
-    // La tasa se calculará dinámicamente con tasaBiessEstandar(monto, plazo)
     tasaAnual: null,
-    plazoMeses: 300, // default: 25 años
+    plazoMeses: 300,
     plazoMinAnios: 5,
     plazoMaxAnios: 25,
     ltvMax: 0.9,
     dtiMax: 0.45,
     ignoreCapacityPenalties: true,
-    // 👇 flag para usar tabla escalonada de tasas
     tieredStdBiess: true,
   },
-
   COMERCIAL: {
     priceCap: Infinity,
     incomeCap: Infinity,
     minIngreso: 800,
     firstHomeOnly: false,
     tasaAnual: 0.075,
-    plazoMeses: 240, // default: 20 años
+    plazoMeses: 240,
     plazoMinAnios: 5,
     plazoMaxAnios: 25,
     ltvMax: 0.85,
@@ -338,60 +354,181 @@ const LIMITES = {
   },
 };
 
-// Requisitos mínimos BIESS (aportes)
-const MIN_IESS_TOTALES = 36; // meses
-const MIN_IESS_CONSEC = 13; // meses
+const MIN_IESS_TOTALES = 36;
+const MIN_IESS_CONSEC = 13;
+
+/* ===========================================================
+   Eligibility products para frontend / marketplace (legacy)
+=========================================================== */
+function buildEligibilityProducts({
+  evalVIS,
+  evalVIP,
+  evalBPREF,
+  evalBSTD,
+  evalCOM,
+}) {
+  return {
+    VIS: {
+      viable: !!evalVIS?.viable,
+      priceMax: Number.isFinite(evalVIS?.precioMaxVivienda)
+        ? evalVIS.precioMaxVivienda
+        : 0,
+      loanMax: Number.isFinite(evalVIS?.montoPrestamo)
+        ? evalVIS.montoPrestamo
+        : 0,
+      rateAnnual: Number.isFinite(evalVIS?.tasaAnual) ? evalVIS.tasaAnual : null,
+      termMonths: Number.isFinite(evalVIS?.plazoMeses) ? evalVIS.plazoMeses : null,
+      requiresFirstHome: true,
+      requiresNewConstruction: true,
+      requiresIESS: false,
+      requiresContributions: false,
+      requiresMiduviQualifiedProject: false,
+      channel: "PRIVATE_BANK",
+      segment: "VIS",
+      displayName: "Vivienda de Interés Social",
+    },
+
+    VIP: {
+      viable: !!evalVIP?.viable,
+      priceMax: Number.isFinite(evalVIP?.precioMaxVivienda)
+        ? evalVIP.precioMaxVivienda
+        : 0,
+      loanMax: Number.isFinite(evalVIP?.montoPrestamo)
+        ? evalVIP.montoPrestamo
+        : 0,
+      rateAnnual: Number.isFinite(evalVIP?.tasaAnual) ? evalVIP.tasaAnual : null,
+      termMonths: Number.isFinite(evalVIP?.plazoMeses) ? evalVIP.plazoMeses : null,
+      requiresFirstHome: true,
+      requiresNewConstruction: true,
+      requiresIESS: false,
+      requiresContributions: false,
+      requiresMiduviQualifiedProject: false,
+      channel: "PRIVATE_BANK",
+      segment: "VIP",
+      displayName: "Vivienda de Interés Público",
+    },
+
+    VIS_II: {
+      viable: !!evalVIS?.viable,
+      priceMax: Number.isFinite(evalVIS?.precioMaxVivienda)
+        ? Math.min(evalVIS.precioMaxVivienda, 49164)
+        : 0,
+      loanMax: Number.isFinite(evalVIS?.montoPrestamo)
+        ? evalVIS.montoPrestamo
+        : 0,
+      rateAnnual: null,
+      termMonths: null,
+      requiresFirstHome: true,
+      requiresNewConstruction: true,
+      requiresIESS: false,
+      requiresContributions: false,
+      requiresMiduviQualifiedProject: false,
+      channel: "SUBSIDY",
+      segment: "SUBSIDY",
+      displayName: "VIS II Subsidio",
+    },
+
+    BIESS_CREDICASA: {
+      viable: !!evalBPREF?.viable,
+      priceMax: Number.isFinite(evalBPREF?.precioMaxVivienda)
+        ? evalBPREF.precioMaxVivienda
+        : 0,
+      loanMax: Number.isFinite(evalBPREF?.montoPrestamo)
+        ? evalBPREF.montoPrestamo
+        : 0,
+      rateAnnual: Number.isFinite(evalBPREF?.tasaAnual)
+        ? evalBPREF.tasaAnual
+        : null,
+      termMonths: Number.isFinite(evalBPREF?.plazoMeses)
+        ? evalBPREF.plazoMeses
+        : null,
+      requiresFirstHome: true,
+      requiresNewConstruction: true,
+      requiresIESS: true,
+      requiresContributions: true,
+      requiresMiduviQualifiedProject: false,
+      channel: "BIESS",
+      segment: "BIESS",
+      displayName: "BIESS Credicasa / Preferencial",
+    },
+
+    BIESS_STD: {
+      viable: !!evalBSTD?.viable,
+      priceMax: Number.isFinite(evalBSTD?.precioMaxVivienda)
+        ? evalBSTD.precioMaxVivienda
+        : 0,
+      loanMax: Number.isFinite(evalBSTD?.montoPrestamo)
+        ? evalBSTD.montoPrestamo
+        : 0,
+      rateAnnual: Number.isFinite(evalBSTD?.tasaAnual)
+        ? evalBSTD.tasaAnual
+        : null,
+      termMonths: Number.isFinite(evalBSTD?.plazoMeses)
+        ? evalBSTD.plazoMeses
+        : null,
+      requiresFirstHome: false,
+      requiresNewConstruction: false,
+      requiresIESS: true,
+      requiresContributions: true,
+      requiresMiduviQualifiedProject: false,
+      channel: "BIESS",
+      segment: "BIESS",
+      displayName: "BIESS",
+    },
+
+    PRIVATE: {
+      viable: !!evalCOM?.viable,
+      priceMax: Number.isFinite(evalCOM?.precioMaxVivienda)
+        ? evalCOM.precioMaxVivienda
+        : 0,
+      loanMax: Number.isFinite(evalCOM?.montoPrestamo)
+        ? evalCOM.montoPrestamo
+        : 0,
+      rateAnnual: Number.isFinite(evalCOM?.tasaAnual)
+        ? evalCOM.tasaAnual
+        : null,
+      termMonths: Number.isFinite(evalCOM?.plazoMeses)
+        ? evalCOM.plazoMeses
+        : null,
+      requiresFirstHome: false,
+      requiresNewConstruction: false,
+      requiresIESS: false,
+      requiresContributions: false,
+      requiresMiduviQualifiedProject: false,
+      channel: "PRIVATE_BANK",
+      segment: "PRIVATE",
+      displayName: "Hipoteca Privada",
+    },
+  };
+}
 
 /* ===========================================================
    Motor principal
 =========================================================== */
 export function calcularPrecalificacion(input) {
   const {
-    // Ingresos / deudas
     ingresoNetoMensual = 0,
     ingresoPareja = 0,
     otrasDeudasMensuales = 0,
-
-    // Vivienda
     valorVivienda = 0,
     entradaDisponible = 0,
-
-    // Perfil
     edad = 30,
     tipoIngreso = "Dependiente",
     aniosEstabilidad = 2,
     afiliadoIess = "No",
-
-    // 👇 Si el front manda "tieneVivienda" o "primeraVivienda"
     tieneVivienda = false,
     declaracionBuro = "ninguno",
-    estadoCivil, // opcional
+    estadoCivil,
     nacionalidad = "ecuatoriana",
-
-    // 👇 nuevo: cómo sustenta ingresos (solo independiente/mixto)
     sustentoIndependiente = null,
-
-    // 👇 NUEVO: flags extra de vivienda (si vienen del front)
-    // primeraVivienda: "Sí" / "No" / true / false
     primeraVivienda = null,
-    // viviendaUsada: true/false o "usada"/"nueva"
     viviendaUsada = null,
-    // viviendaEstrenar: true = por estrenar, false = no
     viviendaEstrenar = true,
-
-    // Requisitos BIESS
     iessAportesTotales = 0,
     iessAportesConsecutivos = 0,
-
-    // 🔹 NUEVO: plazo elegido por el usuario (en AÑOS, opcional)
     plazoAnios = null,
   } = input || {};
 
-  // ===========================================================
-  //  Validación global de sustento de ingresos
-  //  - Dependiente  → siempre OK
-  //  - Independiente/Mixto → requiere algún sustento claro
-  // ===========================================================
   const sustentoOKGlobal = (() => {
     if (tipoIngreso === "Dependiente") return true;
 
@@ -414,7 +551,6 @@ export function calcularPrecalificacion(input) {
     return okKeywords.some((k) => raw.includes(k));
   })();
 
-  /* ---- normalizaciones ---- */
   const afiliadoBool =
     typeof afiliadoIess === "string"
       ? afiliadoIess.toLowerCase().startsWith("s")
@@ -425,48 +561,35 @@ export function calcularPrecalificacion(input) {
       ? nacionalidad.trim().toLowerCase() !== "ecuatoriana"
       : false;
 
-  // ================= NORMALIZACIÓN VIVIENDA =================
-  // 1) ¿Es primera vivienda?
   const primeraViviendaBool =
     primeraVivienda === null || primeraVivienda === undefined
       ? null
       : typeof primeraVivienda === "string"
-      ? primeraVivienda.trim().toLowerCase().startsWith("s") // "sí"
+      ? primeraVivienda.trim().toLowerCase().startsWith("s")
       : !!primeraVivienda;
 
-  // Normalizamos tieneVivienda si viene como string
   const tieneViviendaBoolRaw =
     typeof tieneVivienda === "string"
       ? /si|sí|true|1/i.test(tieneVivienda)
       : !!tieneVivienda;
 
-  // Regla:
-  // - Si explícitamente NOS dicen "no es primera vivienda" → asumimos que YA tiene vivienda
-  // - Si no nos dicen nada, usamos el campo tieneVivienda normalizado
   const tieneViviendaBool =
     primeraViviendaBool === null ? tieneViviendaBoolRaw : !primeraViviendaBool;
 
-  // 2) ¿Es vivienda usada o por estrenar?
   const viviendaUsadaBool =
     typeof viviendaUsada === "string"
       ? /usada|segunda/i.test(viviendaUsada.trim().toLowerCase())
       : !!viviendaUsada;
 
-  // Si nos dicen explícitamente "usada", forzamos estrenar = false
   const viviendaNuevaBool = viviendaUsadaBool
     ? false
     : typeof viviendaEstrenar === "boolean"
     ? viviendaEstrenar
     : true;
-  // ==========================================================
 
-  // dti base general (NO penalizamos IESS)
   const dtiBase = 0.4;
-
-  // normalizamos años de estabilidad
   const aniosEstNum = n(aniosEstabilidad);
 
-  // penalizadores por tipo de ingreso
   const factorTipo =
     tipoIngreso === "Independiente"
       ? 0.85
@@ -474,7 +597,6 @@ export function calcularPrecalificacion(input) {
       ? 0.92
       : 1.0;
 
-  // ⚠️ penalizamos fuerte cuando la estabilidad es baja
   let factorEstab;
   if (aniosEstNum <= 0) {
     factorEstab = 0.6;
@@ -487,24 +609,51 @@ export function calcularPrecalificacion(input) {
   }
 
   const factorEdad = n(edad) < 23 || n(edad) > 60 ? 0.95 : 1.0;
-
-  // límite inferior más duro para no sobre-precalificar
   const factorCapacidad = Math.max(0.55, factorTipo * factorEstab * factorEdad);
 
-  // ingreso familiar (sumamos por compatibilidad)
   const ingresoTotal = n(ingresoNetoMensual) + n(ingresoPareja);
   const ingresoDisponible = Math.max(0, ingresoTotal - n(otrasDeudasMensuales));
 
-  // capacidad genérica (para comparativas generales)
   const capacidadPago = Math.max(
     0,
     ingresoDisponible * dtiBase * factorCapacidad
   );
 
   /* ===========================================================
-     Evaluador genérico por producto/programa
-     ⬇️ AHORA USA EL PLAZO ELEGIDO POR EL USUARIO (plazoAnios)
-  ========================================================== */
+     Nuevo puente: evaluación paralela del catálogo
+  =========================================================== */
+  const catalogProducts = getCatalogProductsForScoring();
+
+  const evaluatedCatalogProducts = catalogProducts.map((product) =>
+    evaluateMortgageProduct({
+      product,
+      input,
+      context: {
+        ingresoTotal,
+        ingresoDisponible,
+        factorCapacidad,
+        edad: n(edad),
+        tipoIngreso,
+        aniosEstabilidad: aniosEstNum,
+        afiliadoBool,
+        iessAportesTotales: n(iessAportesTotales),
+        iessAportesConsecutivos: n(iessAportesConsecutivos),
+        tieneViviendaBool,
+        viviendaNuevaBool,
+        declaracionBuro,
+        entradaDisponible: n(entradaDisponible),
+        valorVivienda: n(valorVivienda),
+        plazoAnios,
+        esExtranjero,
+        sustentoOKGlobal,
+      },
+    })
+  );
+
+  const evaluatedCatalogMap = Object.fromEntries(
+    evaluatedCatalogProducts.map((p) => [p.productId, p])
+  );
+
   function evaluarProducto(prodCfg, plazoAniosUsuario) {
     const {
       label,
@@ -520,14 +669,11 @@ export function calcularPrecalificacion(input) {
       requireContribs = false,
       dtiMax,
       ignoreCapacityPenalties = false,
-      // 👇 nuevo flag para BIESS estándar escalonado
       tieredStdBiess = false,
-      // 👇 nuevos rangos de plazo por producto (en AÑOS)
       plazoMinAnios,
       plazoMaxAnios,
     } = prodCfg;
 
-    // “Gatekeepers” normativos
     const dentroIngreso =
       ingresoTotal >= n(minIngreso) &&
       ingresoTotal <= n(incomeCap, Infinity) + 1e-9;
@@ -539,23 +685,15 @@ export function calcularPrecalificacion(input) {
         n(iessAportesConsecutivos) >= MIN_IESS_CONSEC
       : true;
 
-    // Si el producto requiere vivienda nueva (VIS/VIP/BIESS pref),
-    // bloqueamos automáticamente inmuebles usados.
     const viviendaNuevaOK = requireNewBuild ? !!viviendaNuevaBool : true;
 
-    // ============= LÍMITE DE EDAD AL VENCIMIENTO =============
-    // Regla simple: edad al final del crédito ≤ 75 años
     const edadNum = n(edad);
-
-    // Rango de plazo del producto en años (con defaults)
     const minAniosProd = n(plazoMinAnios, 5);
     const maxAniosProd = n(plazoMaxAnios, 25);
 
-    // 1) Determinamos el plazo ORIGINAL en función del usuario o del default
     let plazoOriginalMeses = n(plazoMeses);
 
     if (plazoAniosUsuario != null) {
-      // El usuario elige el plazo → lo limitamos al rango del producto
       const plazoUserAnios = clamp(
         n(plazoAniosUsuario),
         minAniosProd,
@@ -563,7 +701,6 @@ export function calcularPrecalificacion(input) {
       );
       plazoOriginalMeses = plazoUserAnios * 12;
     } else {
-      // Si no hay plazo de usuario y el producto no define plazoMeses, usamos 20 años dentro del rango
       if (!plazoOriginalMeses) {
         const defaultAnios = clamp(20, minAniosProd, maxAniosProd);
         plazoOriginalMeses = defaultAnios * 12;
@@ -571,21 +708,13 @@ export function calcularPrecalificacion(input) {
     }
 
     const maxPlazoPorEdadMeses = Math.max(0, (75 - edadNum) * 12);
-
-    // Plazo que realmente se puede usar en función de la edad
     const plazoEfectivo = Math.min(plazoOriginalMeses, maxPlazoPorEdadMeses);
-
-    // Si ya no hay plazo útil (o edad >= 75), el producto se considera no viable
     const edadOK = plazoEfectivo > 0;
-    // ==========================================================
 
-    // Monto que realmente se quiere pedir (según vivienda y entrada)
     const montoNecesario = Math.max(0, n(valorVivienda) - n(entradaDisponible));
 
-    // ===== TASA EFECTIVA ANUAL DEL PRODUCTO =====
     let tasaEfectivaAnual = n(tasaAnual);
 
-    // Si es BIESS estándar, usamos la tabla escalonada realista por monto y plazo
     if (tieredStdBiess) {
       const loan = n(montoNecesario);
       const plazoAniosEfectivo =
@@ -595,8 +724,6 @@ export function calcularPrecalificacion(input) {
     }
 
     const rate = tasaEfectivaAnual / 12;
-
-    // Capacidad específica del producto
     const factorCapProd = ignoreCapacityPenalties ? 1.0 : factorCapacidad;
     const dtiToUse =
       typeof dtiMax === "number" && dtiMax > 0 ? dtiMax : dtiBase;
@@ -606,10 +733,8 @@ export function calcularPrecalificacion(input) {
       ingresoDisponible * dtiToUse * factorCapProd
     );
 
-    // 👇 usamos plazoEfectivo en lugar de plazoOriginalMeses
     const montoMaxPorCuota = pvFromPayment(rate, plazoEfectivo, cuotaMaxProducto);
 
-    // Topes para “precio máximo de vivienda”
     const precioPorCapacidad = n(entradaDisponible) + n(montoMaxPorCuota);
     const precioPorLtv =
       1 - n(ltvMax) > 0 ? n(entradaDisponible) / (1 - n(ltvMax)) : Infinity;
@@ -620,15 +745,17 @@ export function calcularPrecalificacion(input) {
       precioPorLtv,
       precioPorTope
     );
+
     let binding = "capacidad";
     if (precioMaxVivienda === precioPorLtv) binding = "ltv";
     if (precioMaxVivienda === precioPorTope) binding = "tope";
 
-    // LTV real con el monto que se quiere pedir
     const ltv = n(valorVivienda) > 0 ? montoNecesario / n(valorVivienda) : 0;
 
-    // El banco no prestará por encima de tu capacidad (para este producto)
-    const montoPrestamo = Math.max(0, Math.min(montoNecesario, n(montoMaxPorCuota)));
+    const montoPrestamo = Math.max(
+      0,
+      Math.min(montoNecesario, n(montoMaxPorCuota))
+    );
 
     const cuota = pmt(rate, plazoEfectivo, montoPrestamo);
     const cuotaStress = pmt(
@@ -637,7 +764,6 @@ export function calcularPrecalificacion(input) {
       montoPrestamo
     );
 
-    // 👇 Aquí es donde se respeta el tope VIS/VIP por valor de vivienda
     const dentroPrecio = n(valorVivienda) <= n(priceCap, Infinity);
     const dentroLtv = ltv <= n(ltvMax) + 1e-9;
     const dentroCapacidad = cuota <= cuotaMaxProducto + 1e-9;
@@ -651,13 +777,13 @@ export function calcularPrecalificacion(input) {
       dentroPrecio &&
       dentroLtv &&
       dentroCapacidad &&
-      edadOK // 👈 ahora también depende de la edad
+      edadOK
     );
 
     return {
       producto: label || "—",
       tasaAnual: tasaEfectivaAnual,
-      plazoMeses: plazoEfectivo, // 👈 devolvemos el plazo ya ajustado
+      plazoMeses: plazoEfectivo,
       ltvMax: n(ltvMax),
       priceCap,
       incomeCap,
@@ -696,33 +822,35 @@ export function calcularPrecalificacion(input) {
     };
   }
 
-  /* ===========================================================
-     Construcción/evaluación de productos
-  ========================================================== */
   const PROD_VIS = { label: "VIS", ...LIMITES.VIS };
   const PROD_VIP = { label: "VIP", ...LIMITES.VIP };
   const PROD_BIESS_PREF = {
     label: "BIESS preferencial",
     ...LIMITES.BIESS_PREF,
-  }; // BIESS VIP
+  };
   const PROD_BIESS_STD = { label: "BIESS", ...LIMITES.BIESS_STD };
   const PROD_COM = { label: "Comercial", ...LIMITES.COMERCIAL };
 
-  // 👇 ahora evaluamos cada producto usando el mismo plazoAnios pedido
   const evalVIS = evaluarProducto(PROD_VIS, plazoAnios);
   const evalVIP = evaluarProducto(PROD_VIP, plazoAnios);
   const evalBPREF = evaluarProducto(PROD_BIESS_PREF, plazoAnios);
   const evalBSTD = evaluarProducto(PROD_BIESS_STD, plazoAnios);
   const evalCOM = evaluarProducto(PROD_COM, plazoAnios);
 
-  // Selección priorizada: VIS > VIP > BIESS pref > BIESS std > Comercial
+  const eligibilityProducts = buildEligibilityProducts({
+    evalVIS,
+    evalVIP,
+    evalBPREF,
+    evalBSTD,
+    evalCOM,
+  });
+
   let escenarioElegido = evalCOM;
   if (evalVIS.viable) escenarioElegido = evalVIS;
   else if (evalVIP.viable) escenarioElegido = evalVIP;
   else if (evalBPREF.viable) escenarioElegido = evalBPREF;
   else if (evalBSTD.viable) escenarioElegido = evalBSTD;
 
-  // 🔒 Viabilidad básica (solo por reglas de cada producto)
   const hayViableBasico =
     evalVIS.viable ||
     evalVIP.viable ||
@@ -730,15 +858,12 @@ export function calcularPrecalificacion(input) {
     evalBSTD.viable ||
     evalCOM.viable;
 
-  // 🔒 Freno de mano global:
-  // Si es Independiente/Mixto y NO tiene sustentoOKGlobal, se fuerza "sin oferta viable"
   const sinSustentoCritico =
     (tipoIngreso === "Independiente" || tipoIngreso === "Mixto") &&
     !sustentoOKGlobal;
 
   const hayViableFinal = hayViableBasico && !sinSustentoCritico;
 
-  // ❌ No matamos los montos, solo cambiamos el label
   if (!hayViableFinal) {
     escenarioElegido = {
       ...escenarioElegido,
@@ -747,12 +872,8 @@ export function calcularPrecalificacion(input) {
     };
   }
 
-  // 👇 Flag global para el front (A4/A5 + PDF)
   const sinOferta = !hayViableFinal;
 
-  /* ===========================================================
-     Métricas globales / riesgo
-  ========================================================== */
   const dtiSinHipoteca =
     ingresoTotal > 0 ? n(otrasDeudasMensuales) / ingresoTotal : 0;
 
@@ -772,7 +893,6 @@ export function calcularPrecalificacion(input) {
     Number.POSITIVE_INFINITY
   );
 
-  // Riesgo/score HL (simple legacy)
   let riesgoScore = 100;
   const ratioEntrada =
     n(valorVivienda) > 0 ? n(entradaDisponible) / n(valorVivienda) : 0;
@@ -787,7 +907,6 @@ export function calcularPrecalificacion(input) {
   const riesgoHabitaLibre =
     riesgoScore >= 80 ? "bajo" : riesgoScore >= 60 ? "medio" : "alto";
 
-  // tipo de crédito para scoreHabitaLibre
   const tipoCreditoForScore = (() => {
     if (escenarioElegido === evalVIS) return "vis";
     if (escenarioElegido === evalVIP) return "vip";
@@ -812,11 +931,6 @@ export function calcularPrecalificacion(input) {
     ultimas13Continuas: ultimas13ContinuasBool,
   });
 
-  /* ===========================================================
-     Enriquecimiento educativo/accionable
-  ========================================================== */
-
-  // 1) Score por bandas (para UI/PDF)
   const bandas = {
     ltv: clamp(100 - escenarioElegido.ltv * 100, 0, 100),
     dti: clamp(100 - dtiConHipoteca * 100, 0, 100),
@@ -828,6 +942,7 @@ export function calcularPrecalificacion(input) {
         ? 60
         : 90,
   };
+
   const scoreHLtotal = Math.round(
     0.35 * bandas.ltv +
       0.35 * bandas.dti +
@@ -835,7 +950,6 @@ export function calcularPrecalificacion(input) {
       0.15 * bandas.historial
   );
 
-  // 2) Stress test
   const stressTest = {
     tasaBase: n(escenarioElegido.tasaAnual),
     tasaStress: n(escenarioElegido.tasaAnual) + 0.02,
@@ -844,7 +958,6 @@ export function calcularPrecalificacion(input) {
     bufferRecomendado: 0.1,
   };
 
-  // 3) Costos y TCEA (aprox)
   const costos = (() => {
     const monto = n(escenarioElegido.montoPrestamo);
     const originacion = Math.min(monto * 0.01, 1200);
@@ -864,7 +977,6 @@ export function calcularPrecalificacion(input) {
     };
   })();
 
-  // 4) Matriz de opciones (resumen limpio para PDF)
   const opciones = {
     VIP: {
       viable: evalVIP.viable,
@@ -896,25 +1008,17 @@ export function calcularPrecalificacion(input) {
     },
   };
 
-  // 4b) Rutas viables + ruta recomendada (para UI/PDF y bancos)
   const rutasViables = [];
 
-  if (opciones.VIS.viable) {
-    rutasViables.push({ tipo: "VIS", ...opciones.VIS });
-  }
-  if (opciones.VIP.viable) {
-    rutasViables.push({ tipo: "VIP", ...opciones.VIP });
-  }
-  if (opciones.BIESS.viable) {
-    rutasViables.push({ tipo: "BIESS", ...opciones.BIESS });
-  }
+  if (opciones.VIS.viable) rutasViables.push({ tipo: "VIS", ...opciones.VIS });
+  if (opciones.VIP.viable) rutasViables.push({ tipo: "VIP", ...opciones.VIP });
+  if (opciones.BIESS.viable) rutasViables.push({ tipo: "BIESS", ...opciones.BIESS });
   if (opciones.Privada.viable) {
     rutasViables.push({ tipo: "Privada", ...opciones.Privada });
   }
 
   let rutaRecomendada = null;
 
-  // Prioridad: VIS > VIP > BIESS vs Privada (comparando cuota) > solo BIESS > solo Privada
   if (opciones.VIS.viable) {
     rutaRecomendada = { tipo: "VIS", ...opciones.VIS };
   } else if (opciones.VIP.viable) {
@@ -922,7 +1026,6 @@ export function calcularPrecalificacion(input) {
   } else if (opciones.BIESS.viable && opciones.Privada.viable) {
     const cuotaBiess = n(opciones.BIESS.cuota);
     const cuotaPriv = n(opciones.Privada.cuota);
-    // Si la cuota privada es igual o mejor (1% o más barata), recomendamos privada
     if (cuotaPriv <= cuotaBiess * 0.99) {
       rutaRecomendada = { tipo: "Privada", ...opciones.Privada };
     } else {
@@ -934,7 +1037,6 @@ export function calcularPrecalificacion(input) {
     rutaRecomendada = { tipo: "Privada", ...opciones.Privada };
   }
 
-  // 5) Checklist educativo
   const checklist = {
     documentos: [
       "Cédula y papeleta de votación",
@@ -952,7 +1054,6 @@ export function calcularPrecalificacion(input) {
     ],
   };
 
-  // 6) Plan de acción (dinámico y coherente con los datos)
   const accionesClave = [];
   const ingresoNum = n(ingresoTotal);
   const ingresoFmt = Math.round(ingresoNum).toLocaleString("es-EC", {
@@ -961,9 +1062,6 @@ export function calcularPrecalificacion(input) {
   });
 
   if (!hayViableFinal) {
-    // 🔴 Perfil en construcción: foco en volverlo viable
-
-    // DTI alto → reducir deudas
     if (dtiConHipoteca > 0.42 && ingresoNum > 0) {
       const gapUSD = Math.ceil((dtiConHipoteca - 0.42) * ingresoNum);
       accionesClave.push(
@@ -974,7 +1072,6 @@ export function calcularPrecalificacion(input) {
       );
     }
 
-    // LTV muy alto → aumentar entrada
     if (escenarioElegido.ltv >= 0.9 && n(valorVivienda) > 0) {
       const extraDown = Math.ceil(
         (escenarioElegido.ltv - 0.9) * n(valorVivienda)
@@ -982,8 +1079,7 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Aumenta tu entrada en alrededor de $ ${extraDown.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} para que el banco no financie más del 90% del valor de la vivienda.`
       );
     } else if (
@@ -997,25 +1093,21 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Si puedes, eleva tu entrada en unos $ ${extraDown.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} para acercarte a un LTV de 80% y mejorar tasas y condiciones.`
       );
     }
 
-    // Ingreso objetivo SOLO cuando el cuello es ingreso bajo
     if (ingresoNum < 900) {
       const targetLow = Math.round(Math.max(700, ingresoNum * 1.1) / 10) * 10;
       const targetHigh = Math.round((targetLow * 1.2) / 10) * 10;
       accionesClave.push(
         `Hoy tu ingreso familiar aproximado está alrededor de $ ${ingresoFmt}. Procura llevarlo en el mediano plazo a un rango cercano a $ ${targetLow.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} – $ ${targetHigh.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} mensuales, manteniendo bajo tu nivel de deudas. Eso hará que la cuota hipotecaria empiece a ser sostenible.`
       );
     } else if (ingresoNum >= 900 && ingresoNum < 1600) {
@@ -1024,12 +1116,10 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Hoy tu ingreso familiar aproximado está alrededor de $ ${ingresoFmt}. A medida que lo acerques a un rango de $ ${targetLow.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} – $ ${targetHigh.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} mensuales sin subir tus deudas, tus probabilidades de aprobación aumentarán de forma importante.`
       );
     }
@@ -1040,15 +1130,12 @@ export function calcularPrecalificacion(input) {
       );
     }
   } else {
-    // 🟢 Perfil ya viable: foco en optimizar condiciones
-
     if (dtiConHipoteca > 0.42 && ingresoNum > 0) {
       const gapUSD = Math.ceil((dtiConHipoteca - 0.42) * ingresoNum);
       accionesClave.push(
         `Aunque tu perfil ya es viable, bajar tu DTI por debajo de 42% reduciendo deudas en unos $ ${gapUSD.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} te ayudará a negociar mejores condiciones.`
       );
     }
@@ -1060,8 +1147,7 @@ export function calcularPrecalificacion(input) {
       accionesClave.push(
         `Si aumentas tu entrada en aproximadamente $ ${extraDown.toLocaleString(
           "es-EC",
-          { minimumFractionDigits: 0,
-            maximumFractionDigits: 0 }
+          { minimumFractionDigits: 0, maximumFractionDigits: 0 }
         )} y bajas el LTV hacia 80–85%, podrás acceder a mejores tasas o a más entidades.`
       );
     }
@@ -1073,7 +1159,6 @@ export function calcularPrecalificacion(input) {
     }
   }
 
-  // 7) Benchmark (3 “ofertas tipo” sin marca, para educar)
   const benchVIP = { nombre: "Opción A (VIP)", tasa: 0.0499, plazo: 300 };
   const benchPRI = { nombre: "Opción B (Privada)", tasa: 0.099, plazo: 240 };
   const benchBIE = { nombre: "Opción C (BIESS)", tasa: 0.069, plazo: 240 };
@@ -1104,9 +1189,6 @@ export function calcularPrecalificacion(input) {
     },
   ];
 
-  /* ===========================================================
-     Etiquetas de perfil (compat)
-  ========================================================== */
   let perfilLabel = "Ajustar datos";
   if (evalVIS.viable) perfilLabel = "VIS viable";
   else if (evalVIP.viable) perfilLabel = "VIP viable";
@@ -1119,27 +1201,17 @@ export function calcularPrecalificacion(input) {
       "Perfil en construcción (ingreso insuficiente / parámetros no viables)";
   }
 
-  // 🚧 Si la estabilidad es menor a 1 año, lo marcamos explícitamente
   if (aniosEstNum < 1) {
     perfilLabel = "Perfil en construcción (falta estabilidad)";
   }
 
-  /* ===========================================================
-     Respuesta estructurada (con compatibilidad)
-  ========================================================== */
   const evalBIESS_ALIAS = evalBPREF.viable ? evalBPREF : evalBSTD;
 
   return {
     ok: true,
-
-    // Vivienda / entrada
     entradaDisponible: n(entradaDisponible),
     valorVivienda: n(valorVivienda),
-
-    // Capacidad global
     capacidadPago: n(capacidadPago),
-
-    // Métricas del escenario elegido (COMPAT)
     montoMaximo: n(escenarioElegido.montoPrestamo),
     precioMaxVivienda: n(escenarioElegido.precioMaxVivienda),
     ltv: n(escenarioElegido.ltv),
@@ -1155,14 +1227,10 @@ export function calcularPrecalificacion(input) {
         ? "Banca privada"
         : rutaRecomendada?.tipo || escenarioElegido.producto,
     requeridos: { downTo80: n(reqDown80), downTo90: n(reqDown90) },
-
-    // 👇 Flags globales para el front + PDF
     flags: {
       sinOferta,
       sinSustento: sinSustentoCritico,
     },
-
-    // Perfil
     perfil: {
       label: perfilLabel,
       edad: n(edad),
@@ -1180,8 +1248,6 @@ export function calcularPrecalificacion(input) {
       sustentoIndependiente: sustentoIndependiente || null,
       sustentoOKGlobal,
     },
-
-    // Escenarios comparativos
     escenarios: {
       vis: evalVIS,
       vip: evalVIP,
@@ -1190,34 +1256,21 @@ export function calcularPrecalificacion(input) {
       biess_std: evalBSTD,
       comercial: evalCOM,
     },
-
-    // Riesgos / puntaje
+    eligibilityProducts,
+    catalogEvaluation: {
+      byId: evaluatedCatalogMap,
+      all: evaluatedCatalogProducts,
+    },
     riesgoHabitaLibre,
     puntajeHabitaLibre,
-
-    // Score interno por bandas
     scoreHL: { total: scoreHLtotal, bandas },
-
-    // Stress test explícito
     stressTest,
-
-    // Costos + TCEA aprox
     costos,
-
-    // Matriz limpia de opciones
     opciones,
-
-    // NUEVO: rutas viables y ruta recomendada
     rutasViables,
     rutaRecomendada,
-
-    // Checklist educativo
     checklist,
-
-    // Plan de acción (simple, el PDF lo refina)
     accionesClave,
-
-    // Comparador simple
     benchmark,
   };
 }
@@ -1226,7 +1279,6 @@ export function calcularPrecalificacion(input) {
    Probabilidad de aprobación por banco (nuevo)
 =========================================================== */
 export function evaluarProbabilidadPorBanco(input) {
-  // Usamos el motor principal como base
   const base = calcularPrecalificacion(input);
 
   const {
@@ -1252,9 +1304,7 @@ export function evaluarProbabilidadPorBanco(input) {
     iessAportesConsecutivos = 0,
   } = perfil || {};
 
-  // Historial de buró lo tomamos del input directamente
   const declaracionBuro = input?.declaracionBuro || "ninguno";
-
   const otrasDeudasMensuales = n(input?.otrasDeudasMensuales);
   const ingresoDisponible = Math.max(
     0,
@@ -1276,7 +1326,6 @@ export function evaluarProbabilidadPorBanco(input) {
 
   const tasaAnualBase = n(tasaAnual) || 0.08;
 
-  // Viabilidad por tipo de producto (para penalizar bancos que no aplican)
   const vipViable = escenarios?.vip?.viable;
   const visViable = escenarios?.vis?.viable;
   const biessViable = escenarios?.biess?.viable;
@@ -1299,22 +1348,18 @@ export function evaluarProbabilidadPorBanco(input) {
       requiereAportes,
     } = bank;
 
-    // DTI máximo según tipo de ingreso
     const dtiMax =
       tipoIngreso === "Dependiente"
         ? n(dtiMaxDependiente, 0.4)
         : n(dtiMaxIndependiente, 0.4);
 
     const cuotaMaxBanco = ingresoDisponible * dtiMax;
-
-    // Tasa y cuota necesaria para este banco
     const tasaAnualBanco = n(tasaRef, tasaAnualBase);
     const tasaMesBanco = tasaAnualBanco / 12;
 
     const montoPrestamo = montoPrestamoBase;
     const cuotaNecesaria = pmt(tasaMesBanco, plazoMesesEfectivo, montoPrestamo);
 
-    // LTV real vs LTV permitido por el banco
     const ltvReal =
       n(valorVivienda) > 0 ? montoPrestamo / n(valorVivienda) : 0;
 
@@ -1331,17 +1376,9 @@ export function evaluarProbabilidadPorBanco(input) {
 
     let score = 100;
 
-    // Capacidad de pago
-    if (cuotaNecesaria > cuotaMaxBanco + 1e-6) {
-      score -= 40;
-    }
+    if (cuotaNecesaria > cuotaMaxBanco + 1e-6) score -= 40;
+    if (ltvReal > ltvMaxBanco + 1e-6) score -= 30;
 
-    // LTV
-    if (ltvReal > ltvMaxBanco + 1e-6) {
-      score -= 30;
-    }
-
-    // Estabilidad laboral / RUC
     const aniosEst = n(aniosEstabilidad);
     if (
       tipoIngreso === "Dependiente" &&
@@ -1358,42 +1395,41 @@ export function evaluarProbabilidadPorBanco(input) {
       score -= 15;
     }
 
-    // Requisitos BIESS
     const afiliadoBool =
       typeof afiliadoIess === "string"
         ? afiliadoIess.toLowerCase().startsWith("s")
         : !!afiliadoIess;
 
-    if (requiereIESS && !afiliadoBool) {
-      score -= 40;
-    }
+    if (requiereIESS && !afiliadoBool) score -= 40;
     if (requiereAportes) {
       if (n(iessAportesTotales) < MIN_IESS_TOTALES) score -= 25;
       if (n(iessAportesConsecutivos) < MIN_IESS_CONSEC) score -= 25;
     }
 
-    // Buró
     if (declaracionBuro === "regularizado") score -= 10;
     if (declaracionBuro === "mora") score -= 40;
 
-    // Riesgo HL alto → penalización ligera (para no matar VIS/VIP)
     if (bank.tipo !== "VIP" && bank.tipo !== "VIS") {
       if (riesgoHabitaLibre === "alto") score -= 10;
     }
 
-    // Si ya el motor dice "sin sustento" → castigo fuerte
     if (flags?.sinSustento) {
       score -= 30;
     }
 
-    // Penalización por tipo de producto NO viable según escenarios
-    if (bank.tipo === "VIP" || bank.tipo === "VIS") {
-      // Si ni VIP ni VIS son viables, este banco pierde relevancia
-      if (vipViable === false && visViable === false) score -= 60;
+    // ✅ fix: VIS y VIP se penalizan por separado
+    if (bank.tipo === "VIP" && vipViable === false) {
+      score -= 60;
     }
+
+    if (bank.tipo === "VIS" && visViable === false) {
+      score -= 60;
+    }
+
     if (bank.tipo === "BIESS") {
       if (biessViable === false) score -= 60;
     }
+
     if (bank.tipo === "NORMAL") {
       if (comViable === false) score -= 60;
     }
@@ -1419,36 +1455,29 @@ export function evaluarProbabilidadPorBanco(input) {
     };
   });
 
-  // ===========================================================
-  // ORDENAMIENTO: priorizar el tipo de la RUTA RECOMENDADA
-  // ===========================================================
   const tipoRutaBase =
     rutaRecomendada?.tipo || (productoElegido || "").toString();
   const tipoRutaLower = tipoRutaBase.toLowerCase();
 
   resultados.sort((a, b) => {
-    // Ruta recomendada BIESS → BIESS va primero
     if (tipoRutaLower.includes("biess")) {
       const aIsBiess = a.tipo === "BIESS";
       const bIsBiess = b.tipo === "BIESS";
       if (aIsBiess !== bIsBiess) return aIsBiess ? -1 : 1;
     }
 
-    // Ruta recomendada VIS → VIS primero
     if (tipoRutaLower.includes("vis")) {
       const aIsVis = a.tipo === "VIS";
       const bIsVis = b.tipo === "VIS";
       if (aIsVis !== bIsVis) return aIsVis ? -1 : 1;
     }
 
-    // Ruta recomendada VIP → VIP primero
     if (tipoRutaLower.includes("vip")) {
       const aIsVip = a.tipo === "VIP";
       const bIsVip = b.tipo === "VIP";
       if (aIsVip !== bIsVip) return aIsVip ? -1 : 1;
     }
 
-    // Ruta recomendada Privada / Comercial / Normal → NORMAL primero
     if (
       tipoRutaLower.includes("privada") ||
       tipoRutaLower.includes("comercial") ||
@@ -1459,18 +1488,28 @@ export function evaluarProbabilidadPorBanco(input) {
       if (aIsNormal !== bIsNormal) return aIsNormal ? -1 : 1;
     }
 
-    // En caso de empate o sin priorización → por score
     return b.score - a.score;
   });
 
-  // 👇 Estructura que espera mailer.js
-  const bancosProbabilidad = resultados.map((r) => ({
+    const resultadosFiltrados = resultados.filter((r) => {
+    if (r.tipo === "VIP") return vipViable === true;
+    if (r.tipo === "VIS") return visViable === true;
+    if (r.tipo === "BIESS") return biessViable === true;
+    if (r.tipo === "NORMAL") return comViable === true;
+    return true;
+  });
+
+  const bancosProbabilidadBase = resultadosFiltrados.map((r) => ({
     banco: r.banco,
     tipoProducto: r.tipo,
-    probScore: r.score, // 0–100
-    probLabel: r.probabilidad, // Alta / Media / Baja...
+    probScore: r.score,
+    probLabel: r.probabilidad,
     dtiBanco: r.dtiUsadoBanco,
   }));
+
+  const bancosProbabilidad = bancosProbabilidadBase.map((b) =>
+    enrichBancoResultado(b, escenarios)
+  );
 
   const bancosTop3 = bancosProbabilidad.slice(0, 3);
   const mejorBanco = bancosTop3[0] || null;

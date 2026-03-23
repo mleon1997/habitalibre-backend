@@ -112,7 +112,10 @@ function toBoolOrNull(v) {
  */
 function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
   const perfil = resultadoNormalizado?.perfil || null;
-  const e = resultadoNormalizado?.__entrada || resultadoNormalizado?.perfilInput || null;
+  const e =
+    resultadoNormalizado?.__entrada ||
+    resultadoNormalizado?.perfilInput ||
+    null;
 
   const afiliadoIess =
     perfil?.afiliadoIess != null
@@ -266,7 +269,9 @@ function pickTiempoCompra(body = {}) {
  * Normaliza canal a { web, whatsapp, instagram }
  */
 function inferCanalManychat(body = {}) {
-  const canalRaw = String(body.canal || body.channel || "").trim().toLowerCase();
+  const canalRaw = String(body.canal || body.channel || "")
+    .trim()
+    .toLowerCase();
   if (canalRaw === "instagram" || canalRaw === "ig") return "instagram";
   if (canalRaw === "whatsapp" || canalRaw === "wa") return "whatsapp";
 
@@ -357,18 +362,21 @@ async function asegurarSnapshotPrecalificacion(leadDoc, tag = "GEN") {
       const e = r?.__entrada || r?.perfilInput || {};
 
       const bodyMotor = {
-        ingresoNetoMensual: leadDoc.ingreso_mensual ?? e.ingresoNetoMensual ?? 0,
+        ingresoNetoMensual:
+          leadDoc.ingreso_mensual ?? e.ingresoNetoMensual ?? 0,
         ingresoPareja: e.ingresoPareja ?? 0,
         otrasDeudasMensuales:
           leadDoc.deuda_mensual_aprox ?? e.otrasDeudasMensuales ?? 0,
         valorVivienda: leadDoc.valor_vivienda ?? e.valorVivienda ?? 0,
-        entradaDisponible: leadDoc.entrada_disponible ?? e.entradaDisponible ?? 0,
+        entradaDisponible:
+          leadDoc.entrada_disponible ?? e.entradaDisponible ?? 0,
         edad: leadDoc.edad ?? e.edad ?? null,
         afiliadoIess: leadDoc.afiliado_iess ?? e.afiliadoIess ?? null,
         iessAportesTotales: e.iessAportesTotales ?? 0,
         iessAportesConsecutivos: e.iessAportesConsecutivos ?? 0,
         tipoIngreso: leadDoc.tipo_ingreso ?? e.tipoIngreso ?? "Dependiente",
-        aniosEstabilidad: leadDoc.anios_estabilidad ?? e.aniosEstabilidad ?? 0,
+        aniosEstabilidad:
+          leadDoc.anios_estabilidad ?? e.aniosEstabilidad ?? 0,
         plazoAnios: null,
       };
 
@@ -397,7 +405,9 @@ async function asegurarSnapshotPrecalificacion(leadDoc, tag = "GEN") {
 
         montoMaximo: respuesta?.montoMaximo ?? snapActual?.montoMaximo ?? null,
         precioMaxVivienda:
-          respuesta?.precioMaxVivienda ?? snapActual?.precioMaxVivienda ?? null,
+          respuesta?.precioMaxVivienda ??
+          snapActual?.precioMaxVivienda ??
+          null,
       };
     }
 
@@ -451,6 +461,7 @@ async function asegurarSnapshotPrecalificacion(leadDoc, tag = "GEN") {
    ✅ guarda campos “rápidos”
    ✅ calcula lead.decision aquí mismo
    ✅ guarda lead.precalificacion snapshot (backend-first)
+   ✅ RESPONDE RÁPIDO y procesa lo pesado en background
 =========================================================== */
 export async function crearLead(req, res) {
   try {
@@ -548,78 +559,92 @@ export async function crearLead(req, res) {
     const resultadoNormalizado = normalizeResultadoParaSalida(
       resultadoSanitizado
     );
-// ✅ BACKEND-FIRST: recalcula sinOferta/producto/banco desde motor real
-let respuesta = null; // 👈 IMPORTANTÍSIMO: fuera del try
 
-try {
-  const e =
-    resultadoNormalizado?.__entrada ||
-    resultadoNormalizado?.perfilInput ||
-    {};
+    // ✅ BACKEND-FIRST: recalcula sinOferta/producto/banco desde motor real
+    let respuesta = null;
 
-  const bodyMotor = {
-    ingresoNetoMensual: e.ingresoNetoMensual ?? ingresoNetoMensual ?? 0,
-    ingresoPareja: e.ingresoPareja ?? 0,
-    otrasDeudasMensuales: e.otrasDeudasMensuales ?? otrasDeudasMensuales ?? 0,
-    valorVivienda: e.valorVivienda ?? valorVivienda ?? 0,
-    entradaDisponible: e.entradaDisponible ?? entradaDisponible ?? 0,
-    edad: e.edad ?? edad ?? null,
-    afiliadoIess: e.afiliadoIess ?? afiliadoIess ?? null,
-    iessAportesTotales: e.iessAportesTotales ?? 0,
-    iessAportesConsecutivos: e.iessAportesConsecutivos ?? 0,
-    tipoIngreso: e.tipoIngreso ?? tipoIngreso ?? "Dependiente",
-    aniosEstabilidad: e.aniosEstabilidad ?? aniosEstabilidad ?? 0,
-    plazoAnios: null,
+    try {
+      const e =
+        resultadoNormalizado?.__entrada ||
+        resultadoNormalizado?.perfilInput ||
+        {};
 
-    nacionalidad: e.nacionalidad,
-    estadoCivil: e.estadoCivil,
-    declaracionBuro: e.declaracionBuro,
-    primeraVivienda: e.primeraVivienda,
-    viviendaUsada: e.viviendaUsada,
-    viviendaEstrenar: e.viviendaEstrenar,
-    sustentoIndependiente: e.sustentoIndependiente,
-  };
+      const bodyMotor = {
+        ingresoNetoMensual: e.ingresoNetoMensual ?? ingresoNetoMensual ?? 0,
+        ingresoPareja: e.ingresoPareja ?? 0,
+        otrasDeudasMensuales:
+          e.otrasDeudasMensuales ?? otrasDeudasMensuales ?? 0,
+        valorVivienda: e.valorVivienda ?? valorVivienda ?? 0,
+        entradaDisponible: e.entradaDisponible ?? entradaDisponible ?? 0,
+        edad: e.edad ?? edad ?? null,
+        afiliadoIess: e.afiliadoIess ?? afiliadoIess ?? null,
+        iessAportesTotales: e.iessAportesTotales ?? 0,
+        iessAportesConsecutivos: e.iessAportesConsecutivos ?? 0,
+        tipoIngreso: e.tipoIngreso ?? tipoIngreso ?? "Dependiente",
+        aniosEstabilidad: e.aniosEstabilidad ?? aniosEstabilidad ?? 0,
+        plazoAnios: null,
 
-  const rMotor = precalificarHL(bodyMotor);
-  respuesta = rMotor?.respuesta || null;
+        nacionalidad: e.nacionalidad,
+        estadoCivil: e.estadoCivil,
+        declaracionBuro: e.declaracionBuro,
+        primeraVivienda: e.primeraVivienda,
+        viviendaUsada: e.viviendaUsada,
+        viviendaEstrenar: e.viviendaEstrenar,
+        sustentoIndependiente: e.sustentoIndependiente,
+      };
 
-  resultadoNormalizado.flags = { ...(resultadoNormalizado.flags || {}) };
-  resultadoNormalizado.flags.sinOferta = respuesta?.flags?.sinOferta === true;
+      const rMotor = precalificarHL(bodyMotor);
+      respuesta = rMotor?.respuesta || null;
 
-  resultadoNormalizado.productoSugerido = respuesta?.productoSugerido ?? null;
-  resultadoNormalizado.bancoSugerido = respuesta?.bancoSugerido ?? null;
+      resultadoNormalizado.flags = { ...(resultadoNormalizado.flags || {}) };
+      resultadoNormalizado.flags.sinOferta =
+        respuesta?.flags?.sinOferta === true;
 
-  // ✅ IMPORTANTÍSIMO: copiar también los numéricos que consume mailer/PDF
-if (respuesta) {
-  // métricas core
-  if (respuesta.cuotaEstimada != null) resultadoNormalizado.cuotaEstimada = respuesta.cuotaEstimada;
-  if (respuesta.capacidadPago != null) resultadoNormalizado.capacidadPago = respuesta.capacidadPago;
-  if (respuesta.dtiConHipoteca != null) resultadoNormalizado.dtiConHipoteca = respuesta.dtiConHipoteca;
+      resultadoNormalizado.productoSugerido =
+        respuesta?.productoSugerido ?? null;
+      resultadoNormalizado.bancoSugerido = respuesta?.bancoSugerido ?? null;
 
-  // límites
-  if (respuesta.montoMaximo != null) resultadoNormalizado.montoMaximo = respuesta.montoMaximo;
-  if (respuesta.precioMaxVivienda != null) resultadoNormalizado.precioMaxVivienda = respuesta.precioMaxVivienda;
+      // ✅ IMPORTANTÍSIMO: copiar también los numéricos que consume mailer/PDF
+      if (respuesta) {
+        // métricas core
+        if (respuesta.cuotaEstimada != null)
+          resultadoNormalizado.cuotaEstimada = respuesta.cuotaEstimada;
+        if (respuesta.capacidadPago != null)
+          resultadoNormalizado.capacidadPago = respuesta.capacidadPago;
+        if (respuesta.dtiConHipoteca != null)
+          resultadoNormalizado.dtiConHipoteca = respuesta.dtiConHipoteca;
 
-  // extras que también salen en el email/PDF
-  if (respuesta.cuotaStress != null) resultadoNormalizado.cuotaStress = respuesta.cuotaStress;
-  if (respuesta.ltv != null) resultadoNormalizado.ltv = respuesta.ltv;
+        // límites
+        if (respuesta.montoMaximo != null)
+          resultadoNormalizado.montoMaximo = respuesta.montoMaximo;
+        if (respuesta.precioMaxVivienda != null)
+          resultadoNormalizado.precioMaxVivienda = respuesta.precioMaxVivienda;
 
-  // si tu motor los trae
-  if (respuesta.tasaAnual != null) resultadoNormalizado.tasaAnual = respuesta.tasaAnual;
-  if (respuesta.plazoMeses != null) resultadoNormalizado.plazoMeses = respuesta.plazoMeses;
+        // extras que también salen en el email/PDF
+        if (respuesta.cuotaStress != null)
+          resultadoNormalizado.cuotaStress = respuesta.cuotaStress;
+        if (respuesta.ltv != null) resultadoNormalizado.ltv = respuesta.ltv;
 
-  // ✅ para que el PDF tenga inputs consistentes (si tus utils leen __entrada)
-  resultadoNormalizado.__entrada = resultadoNormalizado.__entrada || bodyMotor;
-}
+        // si tu motor los trae
+        if (respuesta.tasaAnual != null)
+          resultadoNormalizado.tasaAnual = respuesta.tasaAnual;
+        if (respuesta.plazoMeses != null)
+          resultadoNormalizado.plazoMeses = respuesta.plazoMeses;
 
-} catch (e) {
-  console.warn("⚠️ No se pudo recalcular backend-first:", e?.message || e);
-}
+        // ✅ para que el PDF tenga inputs consistentes
+        resultadoNormalizado.__entrada = resultadoNormalizado.__entrada || bodyMotor;
+      }
+    } catch (e) {
+      console.warn("⚠️ No se pudo recalcular backend-first:", e?.message || e);
+    }
 
-// ✅ ahora sí, porque respuesta existe (null o object)
-if (respuesta?.bancosTop3) resultadoNormalizado.bancosTop3 = respuesta.bancosTop3;
-if (respuesta?.mejorBanco) resultadoNormalizado.mejorBanco = respuesta.mejorBanco;
-if (respuesta?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuesta.rutaRecomendada;
+    if (respuesta?.bancosTop3)
+      resultadoNormalizado.bancosTop3 = respuesta.bancosTop3;
+    if (respuesta?.mejorBanco)
+      resultadoNormalizado.mejorBanco = respuesta.mejorBanco;
+    if (respuesta?.rutaRecomendada)
+      resultadoNormalizado.rutaRecomendada = respuesta.rutaRecomendada;
+
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
     const sinOferta = resultadoNormalizado?.flags?.sinOferta === true;
@@ -817,65 +842,15 @@ if (respuesta?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuesta
       await lead.save();
     }
 
-    // ✅ decision (ya setea planos)
-    await safeDecisionSave(lead, "WEB");
-
-    // ✅ precalificación snapshot (backend-first) + campos planos precalificacion_*
-    await asegurarSnapshotPrecalificacion(lead, "WEB");
-
     const codigoHL = lead.codigoHL;
-    const leadPlano = lead.toObject();
-
-    const resultadoConCodigo = {
-      ...resultadoNormalizado,
-      codigoHL,
-      flags: {
-        ...(resultadoNormalizado.flags || {}),
-        sinOferta: resultadoNormalizado?.flags?.sinOferta === true,
-      },
-
-      
-      productoElegido:
-        producto ||
-        resultadoNormalizado.productoElegido ||
-        resultadoNormalizado.productoSugerido ||
-        null,
-      tipoCreditoElegido:
-        resultadoNormalizado.tipoCreditoElegido ||
-        producto ||
-        resultadoNormalizado.productoElegido ||
-        resultadoNormalizado.productoSugerido ||
-        null,
-      bancoSugerido: resultadoNormalizado.bancoSugerido || null,
-      productoSugerido: resultadoNormalizado.productoSugerido || null,
-    };
-
-    console.log("🧪 MAIL DEBUG =>", {
-  cuota: resultadoConCodigo?.cuotaEstimada,
-  capacidad: resultadoConCodigo?.capacidadPago,
-  monto: resultadoConCodigo?.montoMaximo,
-  precio: resultadoConCodigo?.precioMaxVivienda,
-  banco: resultadoConCodigo?.bancoSugerido,
-  producto: resultadoConCodigo?.productoSugerido,
-  sinOferta: resultadoConCodigo?.flags?.sinOferta,
-});
-
-    try {
-      await Promise.all([
-        enviarCorreoCliente(leadPlano, resultadoConCodigo),
-        enviarCorreoLead(leadPlano, resultadoConCodigo),
-      ]);
-    } catch (errMail) {
-      console.error("❌ Error enviando correos de lead:", errMail);
-    }
-
     const status = isNew ? 201 : 200;
 
-    return res.status(status).json({
+    // ✅ Respuesta inmediata al frontend
+    res.status(status).json({
       ok: true,
       msg: isNew
-        ? "Lead creado correctamente"
-        : "Lead actualizado (merge) correctamente",
+        ? "¡Listo! Ya recibimos tu información. Estamos preparando tu resultado y te lo enviaremos por correo."
+        : "¡Listo! Actualizamos tu información. Estamos preparando tu resultado y te lo enviaremos por correo.",
       leadId: lead._id,
       codigoHL,
       linkedToUser,
@@ -891,8 +866,73 @@ if (respuesta?.rutaRecomendada) resultadoNormalizado.rutaRecomendada = respuesta
         decision_heat: lead.decision_heat ?? 0,
         precalificacion: lead.precalificacion || null,
         precalificacion_banco: lead.precalificacion_banco || null,
+        processingAsync: true,
       },
     });
+
+    // ⚠️ Muy importante: salir del request aquí
+    // y dejar lo demás en background.
+    void (async () => {
+      try {
+        // ✅ decision
+        await safeDecisionSave(lead, "WEB");
+
+        // ✅ precalificación snapshot
+        await asegurarSnapshotPrecalificacion(lead, "WEB");
+
+        // ✅ volver a leer lead ya actualizado para que el mail salga con data fresca
+        const leadRefrescado = await Lead.findById(lead._id);
+        const leadPlano = leadRefrescado
+          ? leadRefrescado.toObject()
+          : lead.toObject();
+
+        const resultadoConCodigo = {
+          ...resultadoNormalizado,
+          codigoHL,
+          flags: {
+            ...(resultadoNormalizado.flags || {}),
+            sinOferta: resultadoNormalizado?.flags?.sinOferta === true,
+          },
+          productoElegido:
+            producto ||
+            resultadoNormalizado.productoElegido ||
+            resultadoNormalizado.productoSugerido ||
+            null,
+          tipoCreditoElegido:
+            resultadoNormalizado.tipoCreditoElegido ||
+            producto ||
+            resultadoNormalizado.productoElegido ||
+            resultadoNormalizado.productoSugerido ||
+            null,
+          bancoSugerido: resultadoNormalizado.bancoSugerido || null,
+          productoSugerido: resultadoNormalizado.productoSugerido || null,
+        };
+
+        console.log("🧪 MAIL DEBUG =>", {
+          cuota: resultadoConCodigo?.cuotaEstimada,
+          capacidad: resultadoConCodigo?.capacidadPago,
+          monto: resultadoConCodigo?.montoMaximo,
+          precio: resultadoConCodigo?.precioMaxVivienda,
+          banco: resultadoConCodigo?.bancoSugerido,
+          producto: resultadoConCodigo?.productoSugerido,
+          sinOferta: resultadoConCodigo?.flags?.sinOferta,
+        });
+
+        await Promise.all([
+          enviarCorreoCliente(leadPlano, resultadoConCodigo),
+          enviarCorreoLead(leadPlano, resultadoConCodigo),
+        ]);
+
+        console.log("✅ Lead procesado en background:", {
+          codigoHL,
+          leadId: String(lead._id),
+        });
+      } catch (errBg) {
+        console.error("❌ Error en background de crearLead:", errBg);
+      }
+    })();
+
+    return;
   } catch (err) {
     console.error("❌ Error en crearLead:", err);
     return res.status(500).json({
@@ -1237,25 +1277,31 @@ export async function descargarFichaComercialPDF(req, res) {
 
     let precalificacion = snap;
 
-    // ✅ Si falta, recalcular con el motor desde los campos planos del lead (fallback __entrada)
+    // ✅ Si falta, recalcular con el motor desde los campos planos del lead
     if (faltaCritico) {
       const r = lead?.resultado || {};
       const e = r?.__entrada || r?.perfilInput || {};
 
       const bodyMotor = {
-        ingresoNetoMensual: lead.ingreso_mensual ?? e.ingresoNetoMensual ?? 0,
+        ingresoNetoMensual:
+          lead.ingreso_mensual ?? e.ingresoNetoMensual ?? 0,
         ingresoPareja: e.ingresoPareja ?? 0,
         otrasDeudasMensuales:
           lead.deuda_mensual_aprox ?? e.otrasDeudasMensuales ?? 0,
         valorVivienda: lead.valor_vivienda ?? e.valorVivienda ?? 0,
-        entradaDisponible: lead.entrada_disponible ?? e.entradaDisponible ?? 0,
+        entradaDisponible:
+          lead.entrada_disponible ?? e.entradaDisponible ?? 0,
         edad: lead.edad ?? e.edad ?? null,
         afiliadoIess: lead.afiliado_iess ?? e.afiliadoIess ?? null,
-        iessAportesTotales: lead.iess_aportes_totales ?? e.iessAportesTotales ?? 0,
+        iessAportesTotales:
+          lead.iess_aportes_totales ?? e.iessAportesTotales ?? 0,
         iessAportesConsecutivos:
-          lead.iess_aportes_consecutivos ?? e.iessAportesConsecutivos ?? 0,
+          lead.iess_aportes_consecutivos ??
+          e.iessAportesConsecutivos ??
+          0,
         tipoIngreso: lead.tipo_ingreso ?? e.tipoIngreso ?? "Dependiente",
-        aniosEstabilidad: lead.anios_estabilidad ?? e.aniosEstabilidad ?? 0,
+        aniosEstabilidad:
+          lead.anios_estabilidad ?? e.aniosEstabilidad ?? 0,
         plazoAnios: null,
       };
 
@@ -1273,7 +1319,8 @@ export async function descargarFichaComercialPDF(req, res) {
           tasaAnual: respuesta?.tasaAnual ?? snap?.tasaAnual ?? null,
           plazoMeses: respuesta?.plazoMeses ?? snap?.plazoMeses ?? null,
 
-          cuotaEstimada: respuesta?.cuotaEstimada ?? snap?.cuotaEstimada ?? null,
+          cuotaEstimada:
+            respuesta?.cuotaEstimada ?? snap?.cuotaEstimada ?? null,
           cuotaStress: respuesta?.cuotaStress ?? snap?.cuotaStress ?? null,
 
           dtiConHipoteca:
@@ -1283,9 +1330,12 @@ export async function descargarFichaComercialPDF(req, res) {
 
           montoMaximo: respuesta?.montoMaximo ?? snap?.montoMaximo ?? null,
           precioMaxVivienda:
-            respuesta?.precioMaxVivienda ?? snap?.precioMaxVivienda ?? null,
+            respuesta?.precioMaxVivienda ??
+            snap?.precioMaxVivienda ??
+            null,
 
-          capacidadPago: respuesta?.capacidadPago ?? snap?.capacidadPago ?? null,
+          capacidadPago:
+            respuesta?.capacidadPago ?? snap?.capacidadPago ?? null,
         };
 
         // ✅ Guardar snapshot + planos
@@ -1338,7 +1388,7 @@ export async function descargarFichaComercialPDF(req, res) {
       }
     }
 
-    // ✅ Fallback final: si no hay snap ni motor, intenta armarlo desde resultadoStored
+    // ✅ Fallback final
     if (!precalificacion && resultadoStored) {
       precalificacion = {
         bancoSugerido:

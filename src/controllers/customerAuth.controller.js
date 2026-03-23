@@ -37,13 +37,9 @@ function safeUser(u) {
  * y devolver su _id para linkear currentLeadId.
  */
 async function findLeadIdForUser({ emailNorm, telClean }) {
-  // 1) por email normalizado en identidades
   if (emailNorm) {
     const byEmail = await Lead.findOne({
-      $or: [
-        { "identidades.emailNorm": emailNorm },
-        { email: emailNorm },
-      ],
+      $or: [{ "identidades.emailNorm": emailNorm }, { email: emailNorm }],
     })
       .sort({ updatedAt: -1 })
       .select({ _id: 1 })
@@ -52,13 +48,9 @@ async function findLeadIdForUser({ emailNorm, telClean }) {
     if (byEmail?._id) return byEmail._id;
   }
 
-  // 2) por teléfono normalizado
   if (telClean) {
     const byPhone = await Lead.findOne({
-      $or: [
-        { "identidades.telefonoNorm": telClean },
-        { telefono: telClean },
-      ],
+      $or: [{ "identidades.telefonoNorm": telClean }, { telefono: telClean }],
     })
       .sort({ updatedAt: -1 })
       .select({ _id: 1 })
@@ -91,8 +83,12 @@ export async function registerCustomer(req, res) {
     const nombreTrim = String(nombre || "").trim();
     const apellidoTrim = String(apellido || "").trim();
 
-    if (!nombreTrim) return res.status(400).json({ error: "Nombre es obligatorio" });
-    if (!apellidoTrim) return res.status(400).json({ error: "Apellido es obligatorio" });
+    if (!nombreTrim) {
+      return res.status(400).json({ error: "Nombre es obligatorio" });
+    }
+    if (!apellidoTrim) {
+      return res.status(400).json({ error: "Apellido es obligatorio" });
+    }
 
     const telClean = cleanPhone(telefono);
     if (!isValidEcPhone(telClean)) {
@@ -111,7 +107,6 @@ export async function registerCustomer(req, res) {
 
     const passwordHash = await bcrypt.hash(String(password), 10);
 
-    // ✅ intenta linkear con lead existente si ya lo capturaste antes
     const leadId = await findLeadIdForUser({ emailNorm, telClean });
 
     const user = await User.create({
@@ -169,7 +164,6 @@ export async function loginCustomer(req, res) {
     const ok = await bcrypt.compare(String(password), user.passwordHash);
     if (!ok) return res.status(401).json({ error: "Credenciales inválidas" });
 
-    // ✅ actualiza lastLogin y trata de linkear lead si estaba vacío
     let currentLeadId = user.currentLeadId || null;
     if (!currentLeadId) {
       const leadId = await findLeadIdForUser({
@@ -211,9 +205,7 @@ export async function meCustomer(req, res) {
   try {
     const payload = req.customer || req.user || req.usuario || req.auth || null;
 
-    // ✅ soporta token payload { id } o { userId }
-    const userId =
-      payload?.id || payload?.userId || payload?._id || null;
+    const userId = payload?.id || payload?.userId || payload?._id || null;
 
     if (!userId) return res.status(401).json({ error: "No autorizado" });
 
@@ -324,6 +316,38 @@ export async function resetPasswordCustomer(req, res) {
     console.error("🔥 resetPasswordCustomer error FULL:", err);
     return res.status(500).json({
       error: "Error al cambiar contraseña",
+      detail: err?.message || String(err),
+    });
+  }
+}
+
+/* =========================
+   DELETE /api/customer-auth/delete-account
+========================= */
+export async function deleteAccountCustomer(req, res) {
+  try {
+    const payload = req.customer || req.user || req.usuario || req.auth || null;
+    const userId = payload?.id || payload?.userId || payload?._id || null;
+
+    if (!userId) {
+      return res.status(401).json({ error: "No autorizado" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "Cuenta no encontrada" });
+    }
+
+    await User.findByIdAndDelete(userId);
+
+    return res.json({
+      ok: true,
+      message: "Cuenta eliminada correctamente",
+    });
+  } catch (err) {
+    console.error("🔥 deleteAccountCustomer error FULL:", err);
+    return res.status(500).json({
+      error: "No se pudo eliminar la cuenta",
       detail: err?.message || String(err),
     });
   }
