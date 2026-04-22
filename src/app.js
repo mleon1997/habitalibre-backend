@@ -12,6 +12,8 @@ import { verifySmtp } from "./utils/mailer.js";
 
 import Lead from "./models/Lead.js";
 import igRoutes from "./routes/ig.routes.js";
+import casosActivacionRoutes from "./routes/casosActivacion.routes.js";
+
 
 // ================================
 // Conversación IG (state machine)
@@ -456,6 +458,8 @@ app.use("/api/admin/users", adminUsersRoutes);
 app.use("/api/customer-auth", customerAuthRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/customer/leads", customerLeadsRoutes);
+app.use("/api/casos-activacion", casosActivacionRoutes);
+
 
 // Diagnóstico / Precalificación / Mortgage
 app.use("/api/diag/mailer", diagMailerRoutes);
