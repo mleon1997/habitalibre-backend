@@ -2698,9 +2698,15 @@ function buildHomeRecommendation({
 =========================================================== */
 export function runMortgageMatcherCore(normalizedCtx = {}) {
   const ctx = normalizedCtx;
+  const hasTargetPropertyValue = n(ctx.valorVivienda, 0) > 0;
 
-  const { subsidyEvaluations, scenarios } = buildScenarios(ctx);
-  const rankedScenarios = rankScenarios(scenarios);
+const { subsidyEvaluations, scenarios } = hasTargetPropertyValue
+  ? buildScenarios(ctx)
+  : { subsidyEvaluations: [], scenarios: [] };
+
+const rankedScenarios = hasTargetPropertyValue
+  ? rankScenarios(scenarios)
+  : [];
 
   const rankedProfileScenarios = rankScenarios(buildProfileFitScenarios(ctx));
   const rankedFutureProfileScenarios = rankScenarios(buildFutureProfileFitScenarios(ctx));
@@ -2715,8 +2721,13 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
     cloneCtxWithPlannedEntry(ctx)
   );
 
-  const rankedBaseScenarios = rankedScenarios.filter((s) => !s.subsidyId);
-  const bestTargetScenario = rankedBaseScenarios.find((s) => s.viable) || null;
+  const rankedBaseScenarios = hasTargetPropertyValue
+  ? rankedScenarios.filter((s) => !s.subsidyId)
+  : [];
+
+const bestTargetScenario = hasTargetPropertyValue
+  ? rankedBaseScenarios.find((s) => s.viable) || null
+  : null;
 
   const rankedProfileBaseScenarios = rankedProfileScenarios.filter(
     (s) => !s.subsidyId
@@ -2747,72 +2758,75 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
 
   const bestSubsidy = rankedSubsidies.find((s) => s.viable) || null;
 
-  const bestOption = bestTargetScenario
-    ? {
-        ...bestTargetScenario,
-        subsidy:
-          bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
-            ? bestSubsidy
-            : null,
-        subsidyId:
-          bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
-            ? bestSubsidy.id
-            : null,
-        subsidyAmount:
-          bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
-            ? n(bestSubsidy.subsidyAmount)
-            : 0,
-      }
-    : null;
+const bestOption = bestTargetScenario
+  ? {
+      ...bestTargetScenario,
+      subsidy:
+        bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
+          ? bestSubsidy
+          : null,
+      subsidyId:
+        bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
+          ? bestSubsidy.id
+          : null,
+      subsidyAmount:
+        bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
+          ? n(bestSubsidy.subsidyAmount)
+          : 0,
+    }
+  : null;
 
-  const rankedMortgages = rankedProfileBaseScenarios.map((s) => ({
-    scenarioId: s.scenarioId,
-    mortgageId: s.mortgageId,
-    subsidyId: s.subsidyId,
-    label: s.label,
-    provider: s.mortgage?.provider || null,
-    segment: s.mortgage?.segment || null,
-    category: s.mortgage?.category || null,
-    viable:
-      (!!bestTargetScenario && bestTargetScenario.mortgageId === s.mortgageId) ||
-      !!s.mortgage?.couldWorkIfRangeAdjusted,
-    targetViable: rankedBaseScenarios.some(
-      (t) => t.mortgageId === s.mortgageId && t.viable
-    ),
-    profileEligible: !!s.mortgage?.structurallyEligible,
-    score: s.score,
-    probabilidad: s.probabilidad,
-    annualRate: s.annualRate,
-    cuota: s.cuota,
-    montoPrestamo: s.montoPrestamo,
+const rankedMortgages = rankedProfileBaseScenarios.map((s) => ({
+  scenarioId: s.scenarioId,
+  mortgageId: s.mortgageId,
+  subsidyId: s.subsidyId,
+  label: s.label,
+  provider: s.mortgage?.provider || null,
+  segment: s.mortgage?.segment || null,
+  category: s.mortgage?.category || null,
+  viable: hasTargetPropertyValue
+    ? (
+        (!!bestTargetScenario && bestTargetScenario.mortgageId === s.mortgageId) ||
+        !!s.mortgage?.couldWorkIfRangeAdjusted
+      )
+    : !!s.mortgage?.couldWorkIfRangeAdjusted,
+  targetViable: hasTargetPropertyValue
+    ? rankedBaseScenarios.some((t) => t.mortgageId === s.mortgageId && t.viable)
+    : false,
+  profileEligible: !!s.mortgage?.structurallyEligible,
+  score: s.score,
+  probabilidad: s.probabilidad,
+  annualRate: s.annualRate,
+  cuota: s.cuota,
+  montoPrestamo: s.montoPrestamo,
+  precioMaxProgramaHipoteca: s.precioMaxProgramaHipoteca,
+  precioMaxProgramaSubsidio: s.precioMaxProgramaSubsidio,
+  precioMaxPrograma: s.precioMaxPrograma,
+  precioMaxPorCuota: s.precioMaxPorCuota,
+  precioMaxPorEntrada: s.precioMaxPorEntrada,
+  precioMaxPerfil: s.precioMaxPerfil,
+  factorLimitante: s.factorLimitante,
+  precioMaxVivienda: s.precioMaxVivienda,
+  subsidyAmount: s.subsidyAmount || 0,
+  reasons: s.mortgage?.reasons || [],
+}));
 
-    precioMaxProgramaHipoteca: s.precioMaxProgramaHipoteca,
-    precioMaxProgramaSubsidio: s.precioMaxProgramaSubsidio,
-    precioMaxPrograma: s.precioMaxPrograma,
-    precioMaxPorCuota: s.precioMaxPorCuota,
-    precioMaxPorEntrada: s.precioMaxPorEntrada,
-    precioMaxPerfil: s.precioMaxPerfil,
-    factorLimitante: s.factorLimitante,
-    precioMaxVivienda: s.precioMaxVivienda,
-
-    subsidyAmount: s.subsidyAmount || 0,
-    reasons: s.mortgage?.reasons || [],
-  }));
-
-  const recommendationExplanation = buildRecommendationExplanation(
-    bestOption,
-    rankedScenarios,
-    ctx
-  );
+const recommendationExplanation = hasTargetPropertyValue
+  ? buildRecommendationExplanation(bestOption, rankedScenarios, ctx)
+  : null;
 
   const eligibilityProducts = buildEligibilityProductsFromScenarios(
     rankedBaseScenarios
   );
 
-  const propertyRecommendationPolicy = buildPropertyRecommendationPolicy(
-    bestOption,
-    rankedBaseScenarios
-  );
+const propertyRecommendationPolicy = hasTargetPropertyValue
+  ? buildPropertyRecommendationPolicy(bestOption, rankedBaseScenarios)
+  : {
+      recommendedProductIds: [],
+      strictProductIds: [],
+      flexibleProductIds: [],
+      mode: "profile_based_only",
+    };
 
   const bestMortgage = bestTargetScenario
     ? {
@@ -2864,7 +2878,22 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
     primaryCapacityScenario?.segment ??
     null;
 
-  const sinOferta = !bestMortgage;
+ const topLevelScore = hasTargetPropertyValue
+  ? bestMortgage?.score ?? primaryCapacityScenario?.score ?? 0
+  : primaryCapacityScenario?.score ?? 0;
+
+const topLevelProbabilidad = hasTargetPropertyValue
+  ? (
+      bestMortgage?.probabilidad ??
+      primaryCapacityScenario?.probabilidad ??
+      "Sin oferta hoy"
+    )
+  : (
+      primaryCapacityScenario?.probabilidad ??
+      "Sin oferta hoy"
+    );
+
+const sinOferta = hasTargetPropertyValue ? !bestMortgage : false;
 
   const plannedEntryMeta = buildPlannedEntrySnapshot(ctx);
 
@@ -2911,11 +2940,13 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
     },
   };
 
-  const targetEvaluation = buildTargetEvaluation({
-    ctx,
-    rankedTargetScenarios: rankedBaseScenarios,
-    profileEligibility,
-  });
+const targetEvaluation = hasTargetPropertyValue
+  ? buildTargetEvaluation({
+      ctx,
+      rankedTargetScenarios: rankedBaseScenarios,
+      profileEligibility,
+    })
+  : null;
 
   return {
     ok: true,
@@ -2952,12 +2983,9 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
     tasaAnual: topLevelRate,
     montoMaximo: topLevelLoan,
     loanAmount: topLevelLoan,
-    score: bestMortgage?.score ?? primaryCapacityScenario?.score ?? 0,
-    probabilidad:
-      bestMortgage?.probabilidad ??
-      primaryCapacityScenario?.probabilidad ??
-      "Sin oferta hoy",
-    sinOferta,
+  score: topLevelScore,
+probabilidad: topLevelProbabilidad,
+sinOferta,
   };
 }
 
@@ -2966,6 +2994,7 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
 =========================================================== */
 export function runMortgageMatcher(input = {}) {
   const ctx = normalizeInput(input);
+  const hasTargetPropertyValue = n(ctx.valorVivienda, 0) > 0;
 
   const baseResult = runMortgageMatcherCore(ctx);
 
@@ -2982,26 +3011,25 @@ export function runMortgageMatcher(input = {}) {
       0.45
   );
 
-  const closestFitToday = buildClosestFitAlternative(
-    baseResult?.rankedMortgages || [],
-    ctx
-  );
+const closestFitToday = hasTargetPropertyValue
+  ? buildClosestFitAlternative(baseResult?.rankedMortgages || [], ctx)
+  : null;
 
-  const goalPreservingFutureRoute = buildGoalPreservingFutureAlternative(
-    matchedProperties || [],
-    ctx
-  );
+const goalPreservingFutureRoute = hasTargetPropertyValue
+  ? buildGoalPreservingFutureAlternative(matchedProperties || [], ctx)
+  : null;
 
-  const inventoryBackedAlternative = buildInventoryBackedAlternative(
-    matchedProperties || [],
-    ctx
-  );
+const inventoryBackedAlternative = hasTargetPropertyValue
+  ? buildInventoryBackedAlternative(matchedProperties || [], ctx)
+  : null;
 
-  const rankedHousingAlternatives = rankHousingAlternatives(
-    [goalPreservingFutureRoute, closestFitToday, inventoryBackedAlternative],
-    ctx,
-    cuotaMaxUsuario
-  );
+const rankedHousingAlternatives = hasTargetPropertyValue
+  ? rankHousingAlternatives(
+      [goalPreservingFutureRoute, closestFitToday, inventoryBackedAlternative],
+      ctx,
+      cuotaMaxUsuario
+    )
+  : [];
 
   const primaryHousingAlternative = rankedHousingAlternatives[0] || null;
   const secondaryHousingAlternative = rankedHousingAlternatives[1] || null;
