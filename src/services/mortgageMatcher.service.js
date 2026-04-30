@@ -3017,15 +3017,39 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
     ) ||
     rankedProfileBaseScenarios[0] ||
     null;
+const futureCapacityCandidates = rankedFutureProfileBaseScenarios
+  .filter((s) => s?.mortgage?.structurallyEligible === true)
+  .filter((s) => s?.mortgage?.couldWorkIfRangeAdjusted === true)
+  .filter((s) => n(s?.precioMaxVivienda, 0) > 0);
 
-  const bestFutureProfileScenario =
-    rankedFutureProfileBaseScenarios.find(
-      (s) =>
-        s?.mortgage?.structurallyEligible &&
-        s?.mortgage?.couldWorkIfRangeAdjusted
-    ) ||
-    rankedFutureProfileBaseScenarios[0] ||
-    null;
+const bestFutureCapacityScenarioForTarget =
+  hasTargetPropertyValue && futureCapacityCandidates.length
+    ? [...futureCapacityCandidates].sort((a, b) => {
+        const aContainsTarget = programCanContainTarget(a, n(ctx.valorVivienda, 0));
+        const bContainsTarget = programCanContainTarget(b, n(ctx.valorVivienda, 0));
+
+        if (aContainsTarget !== bContainsTarget) {
+          return aContainsTarget ? -1 : 1;
+        }
+
+        const aGap = Math.abs(n(ctx.valorVivienda, 0) - n(a?.precioMaxVivienda, 0));
+        const bGap = Math.abs(n(ctx.valorVivienda, 0) - n(b?.precioMaxVivienda, 0));
+
+        if (aGap !== bGap) return aGap - bGap;
+
+        return n(a?.priority, 99) - n(b?.priority, 99);
+      })[0]
+    : null;
+
+const bestFutureProfileScenario =
+  bestFutureCapacityScenarioForTarget ||
+  rankedFutureProfileBaseScenarios.find(
+    (s) =>
+      s?.mortgage?.structurallyEligible &&
+      s?.mortgage?.couldWorkIfRangeAdjusted
+  ) ||
+  rankedFutureProfileBaseScenarios[0] ||
+  null;
 
   const rankedSubsidies = [...subsidyEvaluations].sort((a, b) => {
     if (a.viable !== b.viable) return a.viable ? -1 : 1;
