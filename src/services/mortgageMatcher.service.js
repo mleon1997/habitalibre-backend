@@ -2369,15 +2369,39 @@ function buildTargetEvaluation({
     (id) => !viableProgramsToday.includes(id)
   );
 
-  let mainReason = null;
+ let mainReason = null;
 
-  if (
-    targetPropertyValue > 0 &&
-    nonViableProgramsForTarget.length &&
-    !viableProgramsToday.length
-  ) {
-    mainReason = "property_value_above_program_limits";
+if (targetPropertyValue > 0 && !viableProgramsToday.length) {
+  const targetScenarios = Array.isArray(rankedTargetScenarios)
+    ? rankedTargetScenarios
+    : [];
+
+  const hasProgramLimitIssue = targetScenarios.some(
+    (s) =>
+      s?.mortgage?.flags?.propertyOk === false ||
+      s?.mortgage?.flags?.dentroPrecioPrograma === false
+  );
+
+  const hasProfileCapacityIssue = targetScenarios.some(
+    (s) =>
+      s?.mortgage?.flags?.dentroPrecioPerfil === false ||
+      s?.mortgage?.flags?.dentroCapacidad === false
+  );
+
+  const hasEntryIssue = targetScenarios.some(
+    (s) => s?.mortgage?.flags?.dentroLtv === false
+  );
+
+  if (hasProfileCapacityIssue) {
+    mainReason = "profile_capacity_below_target";
+  } else if (hasEntryIssue) {
+    mainReason = "entry_below_required";
+  } else if (hasProgramLimitIssue) {
+    mainReason = "property_value_outside_program_limits";
+  } else if (nonViableProgramsForTarget.length) {
+    mainReason = "no_program_fits_current_goal";
   }
+}
 
   return {
     targetPropertyValue,
