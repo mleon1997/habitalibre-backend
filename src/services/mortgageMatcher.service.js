@@ -3140,7 +3140,50 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
       }
     : null;
 
-  const primaryCapacityScenario = bestProfileScenario;
+function programCanContainTarget(scenario, targetPrice) {
+  if (!scenario || !targetPrice) return false;
+
+  const caps = scenario?.mortgage?.product?.caps || {};
+
+  const min = caps.propertyMin == null ? 0 : n(caps.propertyMin, 0);
+  const max = caps.propertyMax == null ? Infinity : n(caps.propertyMax, Infinity);
+
+  return targetPrice >= min && targetPrice <= max;
+}
+
+const targetPriceForCapacity = n(ctx.valorVivienda, 0);
+
+const capacityCandidates = rankedProfileBaseScenarios
+  .filter((s) => s?.mortgage?.structurallyEligible === true)
+  .filter((s) => s?.mortgage?.couldWorkIfRangeAdjusted === true)
+  .filter((s) => n(s?.precioMaxVivienda, 0) > 0);
+
+const bestCapacityScenarioForTarget =
+  hasTargetPropertyValue && capacityCandidates.length
+    ? [...capacityCandidates].sort((a, b) => {
+        const aContainsTarget = programCanContainTarget(a, targetPriceForCapacity);
+        const bContainsTarget = programCanContainTarget(b, targetPriceForCapacity);
+
+        // Primero preferimos programas cuyo rango sí contiene la meta del usuario.
+        if (aContainsTarget !== bContainsTarget) {
+          return aContainsTarget ? -1 : 1;
+        }
+
+        // Luego elegimos el que más se acerque al valor objetivo desde la capacidad real.
+        const aGap = Math.abs(targetPriceForCapacity - n(a?.precioMaxVivienda, 0));
+        const bGap = Math.abs(targetPriceForCapacity - n(b?.precioMaxVivienda, 0));
+
+        if (aGap !== bGap) return aGap - bGap;
+
+        // Si empatan, mantenemos prioridad comercial.
+        return n(a?.priority, 99) - n(b?.priority, 99);
+      })[0]
+    : null;
+
+const primaryCapacityScenario =
+  bestTargetScenario ||
+  bestCapacityScenarioForTarget ||
+  bestProfileScenario;
 
   const topLevelPrecioMax = primaryCapacityScenario?.precioMaxVivienda ?? 0;
   const topLevelCuota = primaryCapacityScenario?.cuota ?? null;
