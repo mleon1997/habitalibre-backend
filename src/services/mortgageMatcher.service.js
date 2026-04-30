@@ -20,7 +20,9 @@ function pmt(rate, nper, pv) {
   const r = n(rate, 0);
   const N = n(nper, 1);
   const PV = n(pv, 0);
+
   if (r === 0) return PV / N;
+
   return (PV * r) / (1 - Math.pow(1 + r, -N));
 }
 
@@ -28,7 +30,9 @@ function pvFromPayment(rate, nper, payment) {
   const r = n(rate, 0);
   const N = n(nper, 1);
   const PMT = n(payment, 0);
+
   if (r === 0) return PMT * N;
+
   return (PMT * (1 - Math.pow(1 + r, -N))) / r;
 }
 
@@ -46,9 +50,12 @@ function pct(v, digits = 0) {
 function toBool(v, def = false) {
   if (v === true || v === false) return v;
   if (v == null) return def;
+
   const s = String(v).trim().toLowerCase();
+
   if (["true", "1", "si", "sí", "s", "yes", "y"].includes(s)) return true;
   if (["false", "0", "no", "n"].includes(s)) return false;
+
   return def;
 }
 
@@ -102,26 +109,32 @@ function normalizeBiessApplicantType(input = {}) {
 =========================================================== */
 function normalizeTipoIngreso(raw) {
   const s = String(raw || "Dependiente").trim().toLowerCase();
+
   if (s.includes("mixt")) return "Mixto";
   if (s.includes("independ")) return "Independiente";
+
   return "Dependiente";
 }
 
 function normalizeTipoContrato(raw) {
   const s = String(raw || "indefinido").trim().toLowerCase();
+
   if (s.includes("tempor")) return "temporal";
   if (s.includes("serv")) return "servicios";
+
   return "indefinido";
 }
 
 function normalizeSustentoIndependiente(raw) {
   const s = String(raw || "").trim().toLowerCase();
+
   if (!s) return null;
   if (s.includes("ruc") || s.includes("factur")) return "facturacion_ruc";
   if (s.includes("bancar")) return "movimientos_bancarizados";
   if (s.includes("sri") || s.includes("declar")) return "declaracion_sri";
   if (s.includes("mixt")) return "mixto";
   if (s.includes("inform")) return "informal";
+
   return s;
 }
 
@@ -182,6 +195,7 @@ function normalizeInput(input = {}) {
 
   return {
     ...input,
+
     edad: n(input.edad, 30),
     ingresoNetoMensual: n(input.ingresoNetoMensual),
     ingresoPareja: n(input.ingresoPareja),
@@ -282,8 +296,10 @@ function resolveAnnualRate(product, { loanAmount, termYears, propertyValue }) {
       const maxProperty =
         tier.maxProperty == null ? Infinity : n(tier.maxProperty, Infinity);
       const minProperty = tier.minProperty == null ? 0 : n(tier.minProperty, 0);
-      const maxLoan = tier.maxLoan == null ? Infinity : n(tier.maxLoan, Infinity);
-      const maxYears = tier.maxYears == null ? Infinity : n(tier.maxYears, Infinity);
+      const maxLoan =
+        tier.maxLoan == null ? Infinity : n(tier.maxLoan, Infinity);
+      const maxYears =
+        tier.maxYears == null ? Infinity : n(tier.maxYears, Infinity);
 
       const propertyOk =
         n(propertyValue) >= minProperty && n(propertyValue) <= maxProperty;
@@ -322,6 +338,7 @@ function isSubsidyCompatibleWithMortgage(subsidyProduct, mortgageProduct) {
 =========================================================== */
 function getScenarioPriority(scenario) {
   const mortgage = scenario?.mortgage;
+
   if (!mortgage) return 99;
 
   if (mortgage?.id === "BIESS_CREDICASA") return 1;
@@ -353,7 +370,6 @@ function checkCommonEligibility(product, ctx, extra = {}, options = {}) {
 
   const propertyMax =
     caps.propertyMax == null ? Infinity : n(caps.propertyMax, Infinity);
-
   const propertyMin = caps.propertyMin == null ? 0 : n(caps.propertyMin, 0);
 
   const firstHomeOk = rules.firstHome ? !ctx.tieneViviendaBool : true;
@@ -371,7 +387,9 @@ function checkCommonEligibility(product, ctx, extra = {}, options = {}) {
 
   const iessOk = rules.requireIESS ? !!ctx.afiliadoBool : true;
 
-  const tipoSolicitanteBiess = String(ctx.tipoSolicitanteBiess || "").toLowerCase();
+  const tipoSolicitanteBiess = String(
+    ctx.tipoSolicitanteBiess || ""
+  ).toLowerCase();
 
   const eligibleApplicantTypes = Array.isArray(rules.eligibleApplicantTypes)
     ? rules.eligibleApplicantTypes.map((x) => String(x).toLowerCase())
@@ -388,9 +406,9 @@ function checkCommonEligibility(product, ctx, extra = {}, options = {}) {
   if (rules.requireContributions) {
     if (tipoSolicitanteBiess === "discapacidad") {
       const minTotal = n(
-        rules.minContribTotalMonthsDisability,
-        rules.minContribTotalMonths,
-        18
+        rules.minContribTotalMonthsDisability ??
+          rules.minContribTotalMonths ??
+          18
       );
       contribTotalOk = n(ctx.iessAportesTotales) >= minTotal;
       contribConsecOk = true;
@@ -405,37 +423,42 @@ function checkCommonEligibility(product, ctx, extra = {}, options = {}) {
       tipoSolicitanteBiess === "independiente"
     ) {
       const minTotal = n(
-        rules.minContribTotalMonthsIndependent,
-        rules.minContribTotalMonths,
-        36
+        rules.minContribTotalMonthsIndependent ??
+          rules.minContribTotalMonths ??
+          36
       );
       const minConsec = n(
-        rules.minContribConsecutiveMonthsIndependent,
-        rules.minContribConsecutiveMonths,
-        36
+        rules.minContribConsecutiveMonthsIndependent ??
+          rules.minContribConsecutiveMonths ??
+          36
       );
+
       contribTotalOk = n(ctx.iessAportesTotales) >= minTotal;
       contribConsecOk = n(ctx.iessAportesConsecutivos) >= minConsec;
     } else {
       const minTotal = n(
-        rules.minContribTotalMonthsDependent,
-        rules.minContribTotalMonths,
-        36
+        rules.minContribTotalMonthsDependent ??
+          rules.minContribTotalMonths ??
+          36
       );
       const minConsec = n(
-        rules.minContribConsecutiveMonthsDependent,
-        rules.minContribConsecutiveMonths,
-        13
+        rules.minContribConsecutiveMonthsDependent ??
+          rules.minContribConsecutiveMonths ??
+          13
       );
+
       contribTotalOk = n(ctx.iessAportesTotales) >= minTotal;
       contribConsecOk = n(ctx.iessAportesConsecutivos) >= minConsec;
     }
   }
 
   const foreignOk =
-    rules.allowsForeign == null ? true : rules.allowsForeign || !ctx.esExtranjero;
+    rules.allowsForeign == null
+      ? true
+      : rules.allowsForeign || !ctx.esExtranjero;
 
   const buro = String(ctx.declaracionBuro || "ninguno").toLowerCase();
+
   const buroOk =
     buro === "mora"
       ? !!rules.allowsBuroMora
@@ -619,8 +642,7 @@ function evaluateMortgageProduct(
     montoNecesarioBruto - n(subsidyAmount)
   );
 
-  const loanCap =
-    caps.loanCap == null ? Infinity : n(caps.loanCap, Infinity);
+  const loanCap = caps.loanCap == null ? Infinity : n(caps.loanCap, Infinity);
 
   const requestedLoan = Math.min(montoNecesarioNeto, loanCap);
 
@@ -744,6 +766,7 @@ function evaluateMortgageProduct(
   const viable = dentroPrecio && dentroLtv && dentroCapacidad;
 
   let tipoCredito = "default";
+
   if (product.id === "BIESS_CREDICASA") tipoCredito = "biess_vip";
   else if (product.id === "BIESS_VIS_VIP") tipoCredito = "biess_vip";
   else if (product.id === "BIESS_MEDIA") tipoCredito = "default";
@@ -775,6 +798,7 @@ function evaluateMortgageProduct(
   });
 
   let scoreBase = viable ? 100 : 55;
+
   if (!dentroCapacidad) scoreBase -= 20;
   if (!dentroLtv) scoreBase -= 20;
   if (!dentroPrecio) scoreBase -= 15;
@@ -801,6 +825,7 @@ function evaluateMortgageProduct(
   }
 
   let probabilidad = "Baja";
+
   if (score >= 80) probabilidad = "Alta";
   else if (score >= 60) probabilidad = "Media";
   else if (score < 40) probabilidad = "Muy baja";
@@ -839,6 +864,7 @@ function evaluateMortgageProduct(
       0,
       n(ctx.valorVivienda) - n(subsidyAmount) - n(montoPrestamo)
     ),
+
     flags: {
       ...baseEligibility.flags,
       dentroPrecioPrograma,
@@ -847,6 +873,7 @@ function evaluateMortgageProduct(
       dentroLtv,
       dentroCapacidad,
     },
+
     reasons: [
       ...Object.entries({
         ...baseEligibility.flags,
@@ -859,6 +886,7 @@ function evaluateMortgageProduct(
         .filter(([, v]) => !v)
         .map(([k]) => `Falla en ${k}`),
     ],
+
     score,
     probabilidad,
     scoreHL,
@@ -1057,6 +1085,7 @@ function evaluateMortgageProfileFit(
   const cuotaPerfil = pmt(monthlyRate, termMonths, montoPrestamoPerfil);
 
   let tipoCredito = "default";
+
   if (product.id === "BIESS_CREDICASA") tipoCredito = "biess_vip";
   else if (product.id === "BIESS_VIS_VIP") tipoCredito = "biess_vip";
   else if (product.id === "BIESS_MEDIA") tipoCredito = "default";
@@ -1073,8 +1102,7 @@ function evaluateMortgageProfileFit(
       ingresoTotal > 0
         ? (n(ctx.otrasDeudasMensuales) + n(cuotaPerfil)) / ingresoTotal
         : 0,
-    ltv:
-      precioMaxPerfil > 0 ? montoPrestamoPerfil / precioMaxPerfil : 0,
+    ltv: precioMaxPerfil > 0 ? montoPrestamoPerfil / precioMaxPerfil : 0,
     aniosEstabilidad: n(ctx.aniosEstabilidad),
     mesesActividad: n(ctx.mesesActividad),
     edad: n(ctx.edad),
@@ -1112,6 +1140,7 @@ function evaluateMortgageProfileFit(
   score = clamp(score, 0, 100);
 
   let probabilidad = "Baja";
+
   if (score >= 80) probabilidad = "Alta";
   else if (score >= 60) probabilidad = "Media";
   else if (score < 40) probabilidad = "Muy baja";
@@ -1409,7 +1438,7 @@ function rankScenarios(scenarios = []) {
 /* ===========================================================
    Profile eligibility para frontend/Home
 =========================================================== */
-function buildProfileEligibilityMap(profileRankedScenarios = [], ctx = {}) {
+function buildProfileEligibilityMap(profileRankedScenarios = []) {
   const map = {};
 
   for (const s of profileRankedScenarios) {
@@ -1434,7 +1463,10 @@ function buildProfileEligibilityMap(profileRankedScenarios = [], ctx = {}) {
         requiresFirstHome: !!mortgage?.product?.rules?.firstHome,
         requiresNewConstruction: !!mortgage?.product?.rules?.newConstruction,
         requiresIESS: !!mortgage?.product?.rules?.requireIESS,
-        requiresContributions: !!mortgage?.product?.rules?.requireContributions,
+        requiresContributions:
+          !!mortgage?.product?.rules?.requireContributions,
+        requiresMiduviQualifiedProject:
+          !!mortgage?.product?.rules?.requiresMiduviQualifiedProject,
         channel: mortgage?.provider || mortgage?.product?.channel || null,
         segment: mortgage?.segment || mortgage?.product?.segment || null,
         displayName: mortgage?.name || mortgage?.product?.name || id,
@@ -1474,7 +1506,8 @@ function buildEligibilityProductsFromScenarios(rankedScenarios = []) {
         requiresFirstHome: !!mortgage?.product?.rules?.firstHome,
         requiresNewConstruction: !!mortgage?.product?.rules?.newConstruction,
         requiresIESS: !!mortgage?.product?.rules?.requireIESS,
-        requiresContributions: !!mortgage?.product?.rules?.requireContributions,
+        requiresContributions:
+          !!mortgage?.product?.rules?.requireContributions,
         requiresMiduviQualifiedProject:
           !!mortgage?.product?.rules?.requiresMiduviQualifiedProject,
         channel: mortgage?.provider || mortgage?.product?.channel || null,
@@ -1572,14 +1605,18 @@ function humanReasonFromFlag(flagKey, scenario) {
 
     iessOk: "este programa requiere afiliación activa al IESS",
     contribTotalOk: "este programa requiere más aportaciones acumuladas al IESS",
-    contribConsecOk: "este programa requiere más aportaciones consecutivas al IESS",
+    contribConsecOk:
+      "este programa requiere más aportaciones consecutivas al IESS",
     pensionOk: "este programa requiere pensión jubilar vigente",
     applicantTypeOk: "tu tipo de solicitante no encaja con este producto BIESS",
     firstHomeOk: "este programa aplica únicamente para compra de primera vivienda",
-    newConstructionOk: "este programa aplica únicamente para viviendas nuevas o por estrenar",
+    newConstructionOk:
+      "este programa aplica únicamente para viviendas nuevas o por estrenar",
     foreignOk: "este programa no aplica para tu condición de nacionalidad",
-    buroOk: "tu historial crediticio reportado no encaja con los requisitos del programa",
-    estabilidadOk: "este programa requiere mayor estabilidad laboral o de ingresos",
+    buroOk:
+      "tu historial crediticio reportado no encaja con los requisitos del programa",
+    estabilidadOk:
+      "este programa requiere mayor estabilidad laboral o de ingresos",
     estabilidadDependienteOk:
       "para este programa te conviene una mayor antigüedad en tu empleo actual",
     estabilidadIndependienteOk:
@@ -1655,7 +1692,10 @@ function humanWhyNotScenario(scenario, bestOption) {
       if (k === "dentroPrecio" && mortgage.flags?.dentroPrecioPerfil === false) {
         return false;
       }
-      if (k === "dentroPrecio" && mortgage.flags?.dentroPrecioPrograma === false) {
+      if (
+        k === "dentroPrecio" &&
+        mortgage.flags?.dentroPrecioPrograma === false
+      ) {
         return false;
       }
       return true;
@@ -1719,14 +1759,18 @@ function buildRecommendationExplanation(bestOption, rankedScenarios = [], ctx = 
   }
 
   if (ctx.tipoIngreso === "Dependiente" && ctx.tipoContrato === "indefinido") {
-    reasons.push("Tu contrato indefinido fortalece tu perfil ante entidades financieras.");
+    reasons.push(
+      "Tu contrato indefinido fortalece tu perfil ante entidades financieras."
+    );
   }
 
   if (
     (ctx.tipoIngreso === "Independiente" || ctx.tipoIngreso === "Mixto") &&
     ctx.sustentoIndependiente === "facturacion_ruc"
   ) {
-    reasons.push("Tu sustento con facturación RUC fortalece la evaluación de ingresos.");
+    reasons.push(
+      "Tu sustento con facturación RUC fortalece la evaluación de ingresos."
+    );
   }
 
   if (mortgage.ltvMax) {
@@ -1739,7 +1783,9 @@ function buildRecommendationExplanation(bestOption, rankedScenarios = [], ctx = 
 
   if (mortgage.cuota > 0) {
     reasons.push(
-      `Tu cuota estimada sería aproximadamente $${money(mortgage.cuota)} al mes.`
+      `Tu cuota estimada sería aproximadamente $${money(
+        mortgage.cuota
+      )} al mes.`
     );
   }
 
@@ -1751,7 +1797,10 @@ function buildRecommendationExplanation(bestOption, rankedScenarios = [], ctx = 
     );
   }
 
-  if (bestOption.subsidy?.id === "VIS_II" && n(bestOption.subsidy?.subsidyAmount) > 0) {
+  if (
+    bestOption.subsidy?.id === "VIS_II" &&
+    n(bestOption.subsidy?.subsidyAmount) > 0
+  ) {
     reasons.push(
       `Además podrías aplicar a un subsidio aproximado de $${money(
         bestOption.subsidy.subsidyAmount
@@ -1776,8 +1825,7 @@ function buildRecommendationExplanation(bestOption, rankedScenarios = [], ctx = 
     summary =
       "Es la opción BIESS más conveniente para tu perfil hoy según valor de vivienda, cuota y requisitos vigentes.";
   } else if (bestOption?.mortgage?.segment === "VIS") {
-    summary =
-      "Es la opción más conveniente para tu perfil hoy dentro de VIS.";
+    summary = "Es la opción más conveniente para tu perfil hoy dentro de VIS.";
   } else if (bestOption?.mortgage?.segment === "PRIVATE") {
     summary =
       "Es la opción privada más conveniente para tu perfil hoy según entrada, capacidad de pago y condiciones generales.";
@@ -1789,6 +1837,198 @@ function buildRecommendationExplanation(bestOption, rankedScenarios = [], ctx = 
     reasons,
     whyNotOthers,
     nextStep: "Puedes continuar con el proceso de precalificación con este programa.",
+  };
+}
+
+/* ===========================================================
+   Mortgage Marketplace para frontend
+=========================================================== */
+function providerLabelFromChannel(channel) {
+  const key = String(channel || "").trim().toUpperCase();
+
+  const map = {
+    PRIVATE_BANK: "Banca Privada",
+    BIESS: "BIESS",
+  };
+
+  return map[key] || channel || "Entidad financiera";
+}
+
+function marketplaceReasonForAdjusted(scenario, ctx = {}) {
+  const targetPrice = n(ctx.valorVivienda, 0);
+  const priceMax = n(scenario?.precioMaxVivienda, 0);
+  const factor = String(scenario?.factorLimitante || "").toLowerCase();
+
+  if (targetPrice > 0 && priceMax > 0 && targetPrice > priceMax) {
+    return `Podría funcionar si ajustas tu búsqueda hacia viviendas de hasta $${money(
+      priceMax
+    )}.`;
+  }
+
+  if (factor === "entrada") {
+    return "Podría funcionar si aumentas tu entrada disponible.";
+  }
+
+  if (factor === "cuota") {
+    return "Podría funcionar si reduces deudas, mejoras ingreso disponible o bajas el valor objetivo.";
+  }
+
+  if (factor === "programa") {
+    return "Podría funcionar si eliges una vivienda dentro del rango permitido del programa.";
+  }
+
+  return "Podría funcionar si ajustas el rango o algunas condiciones de la búsqueda.";
+}
+
+function toMortgageMarketplaceItem(scenario, ctx = {}, bucket = "current_goal") {
+  if (!scenario) return null;
+
+  const mortgage = scenario?.mortgage || {};
+  const product = mortgage?.product || {};
+  const rules = product?.rules || {};
+  const targetPrice = n(ctx.valorVivienda, 0);
+
+  const provider =
+    mortgage?.provider || product?.channel || scenario?.provider || null;
+
+  const mortgageId = scenario?.mortgageId || mortgage?.id || product?.id || null;
+
+  const priceMax =
+    n(scenario?.precioMaxVivienda, 0) ||
+    n(mortgage?.precioMaxVivienda, 0) ||
+    0;
+
+  const requiresMiduviQualifiedProject =
+    rules?.requiresMiduviQualifiedProject === true;
+
+  const condition = requiresMiduviQualifiedProject
+    ? "Aplica si el proyecto está calificado para este programa."
+    : null;
+
+  let userMessage = null;
+
+  if (bucket === "current_goal") {
+    userMessage =
+      "Aplica para tu meta actual según las reglas del programa y tu perfil.";
+  }
+
+  if (bucket === "adjusted_range") {
+    userMessage = marketplaceReasonForAdjusted(scenario, ctx);
+  }
+
+  if (bucket === "not_recommended") {
+    userMessage = humanWhyNotScenario(scenario, null);
+  }
+
+  return {
+    scenarioId: scenario?.scenarioId || null,
+    mortgageId,
+    subsidyId: scenario?.subsidyId || null,
+
+    provider,
+    providerLabel: providerLabelFromChannel(provider),
+
+    productLabel:
+      scenario?.label ||
+      mortgage?.name ||
+      product?.name ||
+      mortgageId ||
+      "Hipoteca",
+
+    segment: mortgage?.segment || product?.segment || null,
+    category: mortgage?.category || product?.category || null,
+
+    bucket,
+    appliesToCurrentGoal: bucket === "current_goal",
+    couldWorkIfAdjusted: bucket === "adjusted_range",
+    recommendedForCurrentGoal: bucket === "current_goal",
+
+    viable: scenario?.viable === true,
+    profileEligible:
+      mortgage?.structurallyEligible === true || scenario?.viable === true,
+
+    targetPropertyValue: targetPrice || null,
+    precioMaxVivienda: priceMax || null,
+    precioMaxPerfil: n(scenario?.precioMaxPerfil, 0) || null,
+    precioMaxPrograma: n(scenario?.precioMaxPrograma, 0) || null,
+    precioMaxPorCuota: n(scenario?.precioMaxPorCuota, 0) || null,
+    precioMaxPorEntrada: n(scenario?.precioMaxPorEntrada, 0) || null,
+
+    factorLimitante: scenario?.factorLimitante || null,
+
+    annualRate: scenario?.annualRate ?? mortgage?.annualRate ?? null,
+    termMonths: mortgage?.termMonths ?? null,
+    cuota: scenario?.cuota ?? mortgage?.cuota ?? null,
+    montoPrestamo: scenario?.montoPrestamo ?? mortgage?.montoPrestamo ?? null,
+
+    score: scenario?.score ?? mortgage?.score ?? null,
+    probabilidad: scenario?.probabilidad || mortgage?.probabilidad || null,
+
+    requiresMiduviQualifiedProject,
+    condition,
+    userMessage,
+
+    reasons: mortgage?.reasons || scenario?.reasons || [],
+    flags: mortgage?.flags || {},
+  };
+}
+
+function buildMortgageMarketplace({
+  ctx,
+  bestOption,
+  rankedBaseScenarios = [],
+  rankedProfileBaseScenarios = [],
+}) {
+  const currentGoalOptions = rankedBaseScenarios.filter(
+    (s) => s?.viable === true && !s?.subsidyId
+  );
+
+  const bestForCurrentGoal =
+    bestOption && bestOption?.viable === true
+      ? toMortgageMarketplaceItem(bestOption, ctx, "current_goal")
+      : currentGoalOptions[0]
+      ? toMortgageMarketplaceItem(currentGoalOptions[0], ctx, "current_goal")
+      : null;
+
+  const bestScenarioId = bestForCurrentGoal?.scenarioId || null;
+
+  const alsoAppliesForCurrentGoal = currentGoalOptions
+    .filter((s) => s?.scenarioId !== bestScenarioId)
+    .map((s) => toMortgageMarketplaceItem(s, ctx, "current_goal"))
+    .filter(Boolean);
+
+  const currentGoalMortgageIds = new Set(
+    currentGoalOptions.map((s) => s?.mortgageId).filter(Boolean)
+  );
+
+  const couldWorkIfAdjusted = rankedProfileBaseScenarios
+    .filter((s) => !s?.subsidyId)
+    .filter((s) => s?.mortgage?.structurallyEligible === true)
+    .filter((s) => s?.mortgage?.couldWorkIfRangeAdjusted === true)
+    .filter((s) => !currentGoalMortgageIds.has(s?.mortgageId))
+    .map((s) => toMortgageMarketplaceItem(s, ctx, "adjusted_range"))
+    .filter(Boolean);
+
+  const notRecommendedForCurrentGoal = rankedBaseScenarios
+    .filter((s) => !s?.subsidyId)
+    .filter((s) => s?.viable !== true)
+    .map((s) => toMortgageMarketplaceItem(s, ctx, "not_recommended"))
+    .filter(Boolean);
+
+  return {
+    hasCurrentGoalOptions: currentGoalOptions.length > 0,
+    targetPropertyValue: n(ctx.valorVivienda, 0) || null,
+
+    bestForCurrentGoal,
+    alsoAppliesForCurrentGoal,
+    couldWorkIfAdjusted,
+    notRecommendedForCurrentGoal,
+
+    counts: {
+      currentGoal: currentGoalOptions.length,
+      adjustedRange: couldWorkIfAdjusted.length,
+      notRecommended: notRecommendedForCurrentGoal.length,
+    },
   };
 }
 
@@ -1848,7 +2088,11 @@ function buildClosestFitAlternative(rankedMortgages = [], ctx = {}) {
 function buildGoalPreservingFutureAlternative(matchedProperties = [], ctx = {}) {
   const targetPrice = n(ctx.valorVivienda, 0);
 
-  if (!targetPrice || !Array.isArray(matchedProperties) || !matchedProperties.length) {
+  if (
+    !targetPrice ||
+    !Array.isArray(matchedProperties) ||
+    !matchedProperties.length
+  ) {
     return null;
   }
 
@@ -1856,7 +2100,8 @@ function buildGoalPreservingFutureAlternative(matchedProperties = [], ctx = {}) 
     .filter((p) => {
       const price = n(p?.precio ?? p?.price);
       const futureViable =
-        String(p?.estadoCompra || "") === "entrada_viable_hipoteca_futura_viable" ||
+        String(p?.estadoCompra || "") ===
+          "entrada_viable_hipoteca_futura_viable" ||
         p?.evaluacionHipotecaFutura?.viable === true;
 
       const cuota = n(p?.evaluacionHipotecaFutura?.cuotaReferencia, 0);
@@ -1886,8 +2131,7 @@ function buildGoalPreservingFutureAlternative(matchedProperties = [], ctx = {}) 
           p?.evaluacionHipotecaFutura?.mortgageSelected?.label ||
           "Ruta futura viable",
         provider: p?.evaluacionHipotecaFutura?.mortgageSelected?.provider || null,
-        segment:
-          p?.evaluacionHipotecaFutura?.mortgageSelected?.segment || null,
+        segment: p?.evaluacionHipotecaFutura?.mortgageSelected?.segment || null,
         viableToday: false,
         viableFuture: true,
         preservesUserGoal: price >= targetPrice * 0.9,
@@ -1895,17 +2139,14 @@ function buildGoalPreservingFutureAlternative(matchedProperties = [], ctx = {}) 
         alternativePrice: price,
         monthlyPayment: n(p?.evaluacionHipotecaFutura?.cuotaReferencia, 0),
         annualRate:
-          n(p?.evaluacionHipotecaFutura?.mortgageSelected?.annualRate, 0) || null,
-        loanAmount: n(
-          p?.evaluacionHipotecaFutura?.montoHipotecaProyectado,
-          0
-        ),
+          n(p?.evaluacionHipotecaFutura?.mortgageSelected?.annualRate, 0) ||
+          null,
+        loanAmount: n(p?.evaluacionHipotecaFutura?.montoHipotecaProyectado, 0),
         monthsToViable: months,
         factorLimitante: "entrada",
         reasons: [],
         score: n(p?.evaluacionHipotecaFutura?.score, 0),
-        probabilidad:
-          p?.evaluacionHipotecaFutura?.probabilidad || "Media",
+        probabilidad: p?.evaluacionHipotecaFutura?.probabilidad || "Media",
         propertyName: p?.nombre || p?.title || p?.proyecto || "",
       };
     })
@@ -2041,9 +2282,11 @@ function rankHousingAlternatives(alternatives = [], ctx = {}, cuotaMaxUsuario = 
       if (a.type === "goal_preserving") {
         return n(a.monthlyPayment) > 0 && n(a.monthsToViable) > 0;
       }
+
       if (a.viableToday || a.viableFuture) {
         return n(a.monthlyPayment) > 0 || a.viableToday;
       }
+
       return false;
     })
     .map((a) => {
@@ -2052,8 +2295,10 @@ function rankHousingAlternatives(alternatives = [], ctx = {}, cuotaMaxUsuario = 
         0,
         1
       );
+
       const timePenalty = clamp(n(a.monthsToViable) / 24, 0, 1);
       const viabilityStrength = a.viableToday ? 1 : a.viableFuture ? 0.72 : 0.2;
+
       const paymentComfort =
         n(a.monthlyPayment) > 0
           ? 1 - clamp(n(a.monthlyPayment) / cuotaRef, 0, 1)
@@ -2061,6 +2306,7 @@ function rankHousingAlternatives(alternatives = [], ctx = {}, cuotaMaxUsuario = 
 
       const preservesGoalBonus = a.preservesUserGoal ? 0.12 : 0;
       const specificityBonus = a.propertyName ? 0.04 : 0;
+
       const programBonus =
         a.segment === "VIP" ||
         a.segment === "VIS" ||
@@ -2150,10 +2396,7 @@ function formatMoneyShort(v) {
   return `$${money(x)}`;
 }
 
-function buildImmediateApprovalGuidance({
-  financialCapacity,
-  ctx = {},
-}) {
+function buildImmediateApprovalGuidance({ financialCapacity, ctx = {} }) {
   const estimatedMaxPropertyValue = n(
     financialCapacity?.estimatedMaxPropertyValue,
     0
@@ -2211,7 +2454,6 @@ function buildImmediateApprovalGuidance({
 function buildHomeRecommendation({
   ctx,
   financialCapacity,
-  rankedMortgages = [],
   profileEligibility = {},
   targetEvaluation = {},
 }) {
@@ -2223,9 +2465,11 @@ function buildHomeRecommendation({
     financialCapacity?.estimatedMonthlyPayment,
     0
   );
+
   const limitingFactor = String(
     financialCapacity?.limitingFactor || ""
   ).toLowerCase();
+
   const hasImmediateViableMortgage =
     !!financialCapacity?.hasImmediateViableMortgage;
 
@@ -2274,6 +2518,7 @@ function buildHomeRecommendation({
           : 99;
 
       if (pa !== pb) return pa - pb;
+
       return n(b.priceMax) - n(a.priceMax);
     });
 
@@ -2396,12 +2641,11 @@ function buildHomeRecommendation({
       )} en aproximadamente ${plannedMonths} meses.`,
       mainMessage:
         "Tu meta no está fuera de alcance. El reto no es tanto tu perfil hipotecario de fondo, sino completar la entrada en el tiempo correcto.",
-      detailMessage:
-        `Con una entrada futura proyectada de aproximadamente ${formatMoneyShort(
-          plannedFutureEntry
-        )}, tu rango estimado podría subir hacia ${formatMoneyShort(
-          plannedFuturePrice
-        )}.`,
+      detailMessage: `Con una entrada futura proyectada de aproximadamente ${formatMoneyShort(
+        plannedFutureEntry
+      )}, tu rango estimado podría subir hacia ${formatMoneyShort(
+        plannedFuturePrice
+      )}.`,
       cta: {
         label: "Ver proyectos con entrada en cuotas",
         path: "/marketplace",
@@ -2459,7 +2703,10 @@ function buildHomeRecommendation({
       );
     }
 
-    if (capacidadEntradaMensual > 0 && plannedFuturePrice > estimatedMaxPropertyValue) {
+    if (
+      capacidadEntradaMensual > 0 &&
+      plannedFuturePrice > estimatedMaxPropertyValue
+    ) {
       actionableSteps.push(
         `Si mantienes un ahorro de entrada de ${formatMoneyShort(
           capacidadEntradaMensual
@@ -2481,7 +2728,7 @@ function buildHomeRecommendation({
       title: "Tu meta hoy está por encima de tu capacidad actual.",
       subtitle:
         estimatedMaxPropertyValue > 0
-          ? `Tu meta actual es más alta que el rango que hoy parece más saludable para aprobación. La buena noticia es que sí existe una ruta realista desde tu perfil.`
+          ? "Tu meta actual es más alta que el rango que hoy parece más saludable para aprobación. La buena noticia es que sí existe una ruta realista desde tu perfil."
           : "Tu meta actual está bastante por encima de lo que el motor ve como aprobable hoy.",
       mainMessage:
         "No significa que tu perfil esté mal. Significa que hoy tu meta de vivienda está por encima del rango que mejor encaja con tus condiciones actuales.",
@@ -2554,7 +2801,10 @@ function buildHomeRecommendation({
         "Tu principal limitante hoy es la entrada. Aumentar la entrada disponible puede acercarte más rápido a aprobación real."
       );
 
-      if (capacidadEntradaMensual > 0 && plannedFuturePrice > estimatedMaxPropertyValue) {
+      if (
+        capacidadEntradaMensual > 0 &&
+        plannedFuturePrice > estimatedMaxPropertyValue
+      ) {
         actionableSteps.push(
           `Como ya puedes destinar ${formatMoneyShort(
             capacidadEntradaMensual
@@ -2700,34 +2950,32 @@ export function runMortgageMatcherCore(normalizedCtx = {}) {
   const ctx = normalizedCtx;
   const hasTargetPropertyValue = n(ctx.valorVivienda, 0) > 0;
 
-const { subsidyEvaluations, scenarios } = hasTargetPropertyValue
-  ? buildScenarios(ctx)
-  : { subsidyEvaluations: [], scenarios: [] };
+  const { subsidyEvaluations, scenarios } = hasTargetPropertyValue
+    ? buildScenarios(ctx)
+    : { subsidyEvaluations: [], scenarios: [] };
 
-const rankedScenarios = hasTargetPropertyValue
-  ? rankScenarios(scenarios)
-  : [];
+  const rankedScenarios = hasTargetPropertyValue
+    ? rankScenarios(scenarios)
+    : [];
 
   const rankedProfileScenarios = rankScenarios(buildProfileFitScenarios(ctx));
-  const rankedFutureProfileScenarios = rankScenarios(buildFutureProfileFitScenarios(ctx));
-
-  const profileEligibility = buildProfileEligibilityMap(
-    rankedProfileScenarios,
-    ctx
+  const rankedFutureProfileScenarios = rankScenarios(
+    buildFutureProfileFitScenarios(ctx)
   );
 
+  const profileEligibility = buildProfileEligibilityMap(rankedProfileScenarios);
+
   const futureProfileEligibility = buildProfileEligibilityMap(
-    rankedFutureProfileScenarios,
-    cloneCtxWithPlannedEntry(ctx)
+    rankedFutureProfileScenarios
   );
 
   const rankedBaseScenarios = hasTargetPropertyValue
-  ? rankedScenarios.filter((s) => !s.subsidyId)
-  : [];
+    ? rankedScenarios.filter((s) => !s.subsidyId)
+    : [];
 
-const bestTargetScenario = hasTargetPropertyValue
-  ? rankedBaseScenarios.find((s) => s.viable) || null
-  : null;
+  const bestTargetScenario = hasTargetPropertyValue
+    ? rankedBaseScenarios.find((s) => s.viable) || null
+    : null;
 
   const rankedProfileBaseScenarios = rankedProfileScenarios.filter(
     (s) => !s.subsidyId
@@ -2739,14 +2987,18 @@ const bestTargetScenario = hasTargetPropertyValue
 
   const bestProfileScenario =
     rankedProfileBaseScenarios.find(
-      (s) => s?.mortgage?.structurallyEligible && s?.mortgage?.couldWorkIfRangeAdjusted
+      (s) =>
+        s?.mortgage?.structurallyEligible &&
+        s?.mortgage?.couldWorkIfRangeAdjusted
     ) ||
     rankedProfileBaseScenarios[0] ||
     null;
 
   const bestFutureProfileScenario =
     rankedFutureProfileBaseScenarios.find(
-      (s) => s?.mortgage?.structurallyEligible && s?.mortgage?.couldWorkIfRangeAdjusted
+      (s) =>
+        s?.mortgage?.structurallyEligible &&
+        s?.mortgage?.couldWorkIfRangeAdjusted
     ) ||
     rankedFutureProfileBaseScenarios[0] ||
     null;
@@ -2758,90 +3010,100 @@ const bestTargetScenario = hasTargetPropertyValue
 
   const bestSubsidy = rankedSubsidies.find((s) => s.viable) || null;
 
-const bestOption = bestTargetScenario
-  ? {
-      ...bestTargetScenario,
-      subsidy:
-        bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
-          ? bestSubsidy
-          : null,
-      subsidyId:
-        bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
-          ? bestSubsidy.id
-          : null,
-      subsidyAmount:
-        bestTargetScenario?.mortgageId === "VIS" && bestSubsidy?.id === "VIS_II"
-          ? n(bestSubsidy.subsidyAmount)
-          : 0,
-    }
-  : null;
+  const bestOption = bestTargetScenario
+    ? {
+        ...bestTargetScenario,
+        subsidy:
+          bestTargetScenario?.mortgageId === "VIS" &&
+          bestSubsidy?.id === "VIS_II"
+            ? bestSubsidy
+            : null,
+        subsidyId:
+          bestTargetScenario?.mortgageId === "VIS" &&
+          bestSubsidy?.id === "VIS_II"
+            ? bestSubsidy.id
+            : null,
+        subsidyAmount:
+          bestTargetScenario?.mortgageId === "VIS" &&
+          bestSubsidy?.id === "VIS_II"
+            ? n(bestSubsidy.subsidyAmount)
+            : 0,
+      }
+    : null;
 
-const rankedMortgages = rankedProfileBaseScenarios.map((s) => ({
-  scenarioId: s.scenarioId,
-  mortgageId: s.mortgageId,
-  subsidyId: s.subsidyId,
-  label: s.label,
-  provider: s.mortgage?.provider || null,
-  segment: s.mortgage?.segment || null,
-  category: s.mortgage?.category || null,
-  viable: hasTargetPropertyValue
-    ? (
-        (!!bestTargetScenario && bestTargetScenario.mortgageId === s.mortgageId) ||
+  const rankedMortgages = rankedProfileBaseScenarios.map((s) => ({
+    scenarioId: s.scenarioId,
+    mortgageId: s.mortgageId,
+    subsidyId: s.subsidyId,
+    label: s.label,
+    provider: s.mortgage?.provider || null,
+    segment: s.mortgage?.segment || null,
+    category: s.mortgage?.category || null,
+
+    viable: hasTargetPropertyValue
+      ? (!!bestTargetScenario && bestTargetScenario.mortgageId === s.mortgageId) ||
         !!s.mortgage?.couldWorkIfRangeAdjusted
-      )
-    : !!s.mortgage?.couldWorkIfRangeAdjusted,
-  targetViable: hasTargetPropertyValue
-    ? rankedBaseScenarios.some((t) => t.mortgageId === s.mortgageId && t.viable)
-    : false,
-  profileEligible: !!s.mortgage?.structurallyEligible,
-  score: s.score,
-  probabilidad: s.probabilidad,
-  annualRate: s.annualRate,
-  cuota: s.cuota,
-  montoPrestamo: s.montoPrestamo,
-  precioMaxProgramaHipoteca: s.precioMaxProgramaHipoteca,
-  precioMaxProgramaSubsidio: s.precioMaxProgramaSubsidio,
-  precioMaxPrograma: s.precioMaxPrograma,
-  precioMaxPorCuota: s.precioMaxPorCuota,
-  precioMaxPorEntrada: s.precioMaxPorEntrada,
-  precioMaxPerfil: s.precioMaxPerfil,
-  factorLimitante: s.factorLimitante,
-  precioMaxVivienda: s.precioMaxVivienda,
-  subsidyAmount: s.subsidyAmount || 0,
-  reasons: s.mortgage?.reasons || [],
-}));
+      : !!s.mortgage?.couldWorkIfRangeAdjusted,
 
-const recommendationExplanation = hasTargetPropertyValue
-  ? buildRecommendationExplanation(bestOption, rankedScenarios, ctx)
-  : null;
+    targetViable: hasTargetPropertyValue
+      ? rankedBaseScenarios.some((t) => t.mortgageId === s.mortgageId && t.viable)
+      : false,
 
-  const eligibilityProducts = buildEligibilityProductsFromScenarios(
-    rankedBaseScenarios
-  );
+    profileEligible: !!s.mortgage?.structurallyEligible,
 
-const propertyRecommendationPolicy = hasTargetPropertyValue
-  ? buildPropertyRecommendationPolicy(bestOption, rankedBaseScenarios)
-  : {
-      recommendedProductIds: [],
-      strictProductIds: [],
-      flexibleProductIds: [],
-      mode: "profile_based_only",
-    };
+    score: s.score,
+    probabilidad: s.probabilidad,
+    annualRate: s.annualRate,
+    cuota: s.cuota,
+    montoPrestamo: s.montoPrestamo,
+    precioMaxProgramaHipoteca: s.precioMaxProgramaHipoteca,
+    precioMaxProgramaSubsidio: s.precioMaxProgramaSubsidio,
+    precioMaxPrograma: s.precioMaxPrograma,
+    precioMaxPorCuota: s.precioMaxPorCuota,
+    precioMaxPorEntrada: s.precioMaxPorEntrada,
+    precioMaxPerfil: s.precioMaxPerfil,
+    factorLimitante: s.factorLimitante,
+    precioMaxVivienda: s.precioMaxVivienda,
+    subsidyAmount: s.subsidyAmount || 0,
+    reasons: s.mortgage?.reasons || [],
+  }));
+
+  const recommendationExplanation = hasTargetPropertyValue
+    ? buildRecommendationExplanation(bestOption, rankedScenarios, ctx)
+    : null;
+
+  const eligibilityProducts =
+    buildEligibilityProductsFromScenarios(rankedBaseScenarios);
+
+  const propertyRecommendationPolicy = hasTargetPropertyValue
+    ? buildPropertyRecommendationPolicy(bestOption, rankedBaseScenarios)
+    : {
+        recommendedProductIds: [],
+        strictProductIds: [],
+        flexibleProductIds: [],
+        mode: "profile_based_only",
+      };
 
   const bestMortgage = bestTargetScenario
     ? {
         scenarioId: bestTargetScenario.scenarioId,
         mortgageId: bestTargetScenario.mortgageId,
         label: bestTargetScenario.mortgage?.name || bestTargetScenario.label,
+        provider: bestTargetScenario.mortgage?.provider || null,
+        segment: bestTargetScenario.mortgage?.segment || null,
+        category: bestTargetScenario.mortgage?.category || null,
         viable: bestTargetScenario.viable,
         probabilidad: bestTargetScenario.probabilidad,
         score: bestTargetScenario.score,
         annualRate: bestTargetScenario.annualRate,
+        termMonths: bestTargetScenario.mortgage?.termMonths || null,
         cuota: bestTargetScenario.cuota,
         montoPrestamo: bestTargetScenario.montoPrestamo,
 
-        precioMaxProgramaHipoteca: bestTargetScenario.precioMaxProgramaHipoteca,
-        precioMaxProgramaSubsidio: bestTargetScenario.precioMaxProgramaSubsidio,
+        precioMaxProgramaHipoteca:
+          bestTargetScenario.precioMaxProgramaHipoteca,
+        precioMaxProgramaSubsidio:
+          bestTargetScenario.precioMaxProgramaSubsidio,
         precioMaxPrograma: bestTargetScenario.precioMaxPrograma,
         precioMaxPorCuota: bestTargetScenario.precioMaxPorCuota,
         precioMaxPorEntrada: bestTargetScenario.precioMaxPorEntrada,
@@ -2856,58 +3118,37 @@ const propertyRecommendationPolicy = hasTargetPropertyValue
 
   const primaryCapacityScenario = bestProfileScenario;
 
-  const topLevelPrecioMax =
-    primaryCapacityScenario?.precioMaxVivienda ?? 0;
-
-  const topLevelCuota =
-    primaryCapacityScenario?.cuota ?? null;
-
-  const topLevelRate =
-    primaryCapacityScenario?.annualRate ?? null;
-
-  const topLevelLoan =
-    primaryCapacityScenario?.montoPrestamo ?? 0;
+  const topLevelPrecioMax = primaryCapacityScenario?.precioMaxVivienda ?? 0;
+  const topLevelCuota = primaryCapacityScenario?.cuota ?? null;
+  const topLevelRate = primaryCapacityScenario?.annualRate ?? null;
+  const topLevelLoan = primaryCapacityScenario?.montoPrestamo ?? 0;
 
   const bancoSugerido =
-    bestMortgage?.label ??
-    primaryCapacityScenario?.label ??
-    null;
+    bestMortgage?.label ?? primaryCapacityScenario?.label ?? null;
 
   const productoSugerido =
-    bestMortgage?.segment ??
-    primaryCapacityScenario?.segment ??
-    null;
+    bestMortgage?.segment ?? primaryCapacityScenario?.segment ?? null;
 
- const topLevelScore = hasTargetPropertyValue
-  ? bestMortgage?.score ?? primaryCapacityScenario?.score ?? 0
-  : primaryCapacityScenario?.score ?? 0;
+  const topLevelScore = hasTargetPropertyValue
+    ? bestMortgage?.score ?? primaryCapacityScenario?.score ?? 0
+    : primaryCapacityScenario?.score ?? 0;
 
-const topLevelProbabilidad = hasTargetPropertyValue
-  ? (
-      bestMortgage?.probabilidad ??
+  const topLevelProbabilidad = hasTargetPropertyValue
+    ? bestMortgage?.probabilidad ??
       primaryCapacityScenario?.probabilidad ??
       "Sin oferta hoy"
-    )
-  : (
-      primaryCapacityScenario?.probabilidad ??
-      "Sin oferta hoy"
-    );
+    : primaryCapacityScenario?.probabilidad ?? "Sin oferta hoy";
 
-const sinOferta = hasTargetPropertyValue ? !bestMortgage : false;
+  const sinOferta = hasTargetPropertyValue ? !bestMortgage : false;
 
   const plannedEntryMeta = buildPlannedEntrySnapshot(ctx);
 
   const futureTopLevelPrecioMax =
     bestFutureProfileScenario?.precioMaxVivienda ?? 0;
 
-  const futureTopLevelCuota =
-    bestFutureProfileScenario?.cuota ?? null;
-
-  const futureTopLevelRate =
-    bestFutureProfileScenario?.annualRate ?? null;
-
-  const futureTopLevelLoan =
-    bestFutureProfileScenario?.montoPrestamo ?? 0;
+  const futureTopLevelCuota = bestFutureProfileScenario?.cuota ?? null;
+  const futureTopLevelRate = bestFutureProfileScenario?.annualRate ?? null;
+  const futureTopLevelLoan = bestFutureProfileScenario?.montoPrestamo ?? 0;
 
   const financialCapacity = {
     hasImmediateViableMortgage: !!bestMortgage,
@@ -2940,13 +3181,39 @@ const sinOferta = hasTargetPropertyValue ? !bestMortgage : false;
     },
   };
 
-const targetEvaluation = hasTargetPropertyValue
-  ? buildTargetEvaluation({
-      ctx,
-      rankedTargetScenarios: rankedBaseScenarios,
-      profileEligibility,
-    })
-  : null;
+  const targetEvaluation = hasTargetPropertyValue
+    ? buildTargetEvaluation({
+        ctx,
+        rankedTargetScenarios: rankedBaseScenarios,
+        profileEligibility,
+      })
+    : null;
+
+  const mortgageMarketplace = hasTargetPropertyValue
+    ? buildMortgageMarketplace({
+        ctx,
+        bestOption,
+        rankedBaseScenarios,
+        rankedProfileBaseScenarios,
+      })
+    : {
+        hasCurrentGoalOptions: false,
+        targetPropertyValue: null,
+        bestForCurrentGoal: null,
+        alsoAppliesForCurrentGoal: [],
+        couldWorkIfAdjusted: rankedProfileBaseScenarios
+          .filter((s) => !s?.subsidyId)
+          .filter((s) => s?.mortgage?.structurallyEligible === true)
+          .filter((s) => s?.mortgage?.couldWorkIfRangeAdjusted === true)
+          .map((s) => toMortgageMarketplaceItem(s, ctx, "adjusted_range"))
+          .filter(Boolean),
+        notRecommendedForCurrentGoal: [],
+        counts: {
+          currentGoal: 0,
+          adjustedRange: 0,
+          notRecommended: 0,
+        },
+      };
 
   return {
     ok: true,
@@ -2970,6 +3237,7 @@ const targetEvaluation = hasTargetPropertyValue
     profileEligibility,
     futureProfileEligibility,
     targetEvaluation,
+    mortgageMarketplace,
     propertyRecommendationPolicy,
     recommendationExplanation,
     financialCapacity,
@@ -2983,9 +3251,9 @@ const targetEvaluation = hasTargetPropertyValue
     tasaAnual: topLevelRate,
     montoMaximo: topLevelLoan,
     loanAmount: topLevelLoan,
-  score: topLevelScore,
-probabilidad: topLevelProbabilidad,
-sinOferta,
+    score: topLevelScore,
+    probabilidad: topLevelProbabilidad,
+    sinOferta,
   };
 }
 
@@ -3011,25 +3279,25 @@ export function runMortgageMatcher(input = {}) {
       0.45
   );
 
-const closestFitToday = hasTargetPropertyValue
-  ? buildClosestFitAlternative(baseResult?.rankedMortgages || [], ctx)
-  : null;
+  const closestFitToday = hasTargetPropertyValue
+    ? buildClosestFitAlternative(baseResult?.rankedMortgages || [], ctx)
+    : null;
 
-const goalPreservingFutureRoute = hasTargetPropertyValue
-  ? buildGoalPreservingFutureAlternative(matchedProperties || [], ctx)
-  : null;
+  const goalPreservingFutureRoute = hasTargetPropertyValue
+    ? buildGoalPreservingFutureAlternative(matchedProperties || [], ctx)
+    : null;
 
-const inventoryBackedAlternative = hasTargetPropertyValue
-  ? buildInventoryBackedAlternative(matchedProperties || [], ctx)
-  : null;
+  const inventoryBackedAlternative = hasTargetPropertyValue
+    ? buildInventoryBackedAlternative(matchedProperties || [], ctx)
+    : null;
 
-const rankedHousingAlternatives = hasTargetPropertyValue
-  ? rankHousingAlternatives(
-      [goalPreservingFutureRoute, closestFitToday, inventoryBackedAlternative],
-      ctx,
-      cuotaMaxUsuario
-    )
-  : [];
+  const rankedHousingAlternatives = hasTargetPropertyValue
+    ? rankHousingAlternatives(
+        [goalPreservingFutureRoute, closestFitToday, inventoryBackedAlternative],
+        ctx,
+        cuotaMaxUsuario
+      )
+    : [];
 
   const primaryHousingAlternative = rankedHousingAlternatives[0] || null;
   const secondaryHousingAlternative = rankedHousingAlternatives[1] || null;
@@ -3037,7 +3305,6 @@ const rankedHousingAlternatives = hasTargetPropertyValue
   const homeRecommendation = buildHomeRecommendation({
     ctx,
     financialCapacity: baseResult?.financialCapacity,
-    rankedMortgages: baseResult?.rankedMortgages || [],
     profileEligibility: baseResult?.profileEligibility || {},
     targetEvaluation: baseResult?.targetEvaluation || {},
   });
