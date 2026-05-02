@@ -47,6 +47,43 @@ function pct(v, digits = 0) {
   return `${(n(v) * 100).toFixed(digits)}%`;
 }
 
+function buildTermMetadata(product, effectiveYears = null) {
+  const term = product?.term || {};
+  const optionsYears = Array.isArray(term.optionsYears)
+    ? term.optionsYears.map((x) => n(x)).filter((x) => x > 0)
+    : [];
+
+  const defaultYears = n(term.defaultYears, n(term.maxYears, effectiveYears || 0));
+  const maxYears = n(term.maxYears, defaultYears);
+  const minYears = n(term.minYears, 0);
+
+  const resolvedEffectiveYears =
+    effectiveYears != null ? n(effectiveYears, defaultYears) : defaultYears;
+
+  return {
+    termYears: resolvedEffectiveYears,
+    termMonths: resolvedEffectiveYears > 0 ? resolvedEffectiveYears * 12 : null,
+
+    termOptionsYears: optionsYears.length ? optionsYears : [defaultYears].filter(Boolean),
+    termOptionsMonths: optionsYears.length
+      ? optionsYears.map((y) => y * 12)
+      : [defaultYears * 12].filter(Boolean),
+
+    defaultTermYears: defaultYears,
+    defaultTermMonths: defaultYears > 0 ? defaultYears * 12 : null,
+
+    minTermYears: minYears,
+    minTermMonths: minYears > 0 ? minYears * 12 : null,
+
+    maxTermYears: maxYears,
+    maxTermMonths: maxYears > 0 ? maxYears * 12 : null,
+
+    termPolicyLabel: term.policyLabel || null,
+    termNotes: term.notes || null,
+    allowsUserTermPreference: term.allowsUserPreference === true,
+  };
+}
+
 function toBool(v, def = false) {
   if (v === true || v === false) return v;
   if (v == null) return def;
@@ -693,8 +730,9 @@ function evaluateMortgageProduct(
     };
   }
 
-  const monthlyRate = annualRate / 12;
-  const termMonths = effectiveYears * 12;
+const monthlyRate = annualRate / 12;
+const termMeta = buildTermMetadata(product, effectiveYears);
+const termMonths = termMeta.termMonths || effectiveYears * 12;
 
   const dtiMax = n(risk.dtiMax, 0.4);
   const ltvMax = n(risk.ltvMax, 0.85);
@@ -839,9 +877,8 @@ function evaluateMortgageProduct(
     type: "mortgage",
     viable,
     annualRate,
-    termYears: effectiveYears,
-    termMonths,
-    requestedLoan,
+...termMeta,
+requestedLoan,
     montoPrestamo,
     cuota,
     cuotaMax,
@@ -1026,7 +1063,8 @@ function evaluateMortgageProfileFit(
   }
 
   const monthlyRate = annualRate / 12;
-  const termMonths = effectiveYears * 12;
+const termMeta = buildTermMetadata(product, effectiveYears);
+const termMonths = termMeta.termMonths || effectiveYears * 12;
 
   const montoMaxPorCuota = pvFromPayment(monthlyRate, termMonths, cuotaMax);
 
@@ -1154,10 +1192,9 @@ function evaluateMortgageProfileFit(
     type: "mortgage_profile_fit",
     structurallyEligible: true,
     couldWorkIfRangeAdjusted: precioMaxPerfil > 0,
-    annualRate,
-    termYears: effectiveYears,
-    termMonths,
-    cuota: cuotaPerfil,
+annualRate,
+...termMeta,
+cuota: cuotaPerfil,
     montoPrestamo: montoPrestamoPerfil,
     cuotaMax,
     subsidyAmount: n(subsidyAmount),
@@ -1957,9 +1994,53 @@ function toMortgageMarketplaceItem(scenario, ctx = {}, bucket = "current_goal") 
     factorLimitante: scenario?.factorLimitante || null,
 
     annualRate: scenario?.annualRate ?? mortgage?.annualRate ?? null,
-    termMonths: mortgage?.termMonths ?? null,
-    cuota: scenario?.cuota ?? mortgage?.cuota ?? null,
-    montoPrestamo: scenario?.montoPrestamo ?? mortgage?.montoPrestamo ?? null,
+
+termYears: mortgage?.termYears ?? null,
+termMonths: mortgage?.termMonths ?? null,
+termOptionsYears:
+  mortgage?.termOptionsYears ||
+  product?.term?.optionsYears ||
+  [],
+termOptionsMonths:
+  mortgage?.termOptionsMonths ||
+  (Array.isArray(product?.term?.optionsYears)
+    ? product.term.optionsYears.map((y) => y * 12)
+    : []),
+defaultTermYears:
+  mortgage?.defaultTermYears ??
+  product?.term?.defaultYears ??
+  null,
+defaultTermMonths:
+  mortgage?.defaultTermMonths ??
+  (product?.term?.defaultYears ? product.term.defaultYears * 12 : null),
+minTermYears:
+  mortgage?.minTermYears ??
+  product?.term?.minYears ??
+  null,
+minTermMonths:
+  mortgage?.minTermMonths ??
+  (product?.term?.minYears ? product.term.minYears * 12 : null),
+maxTermYears:
+  mortgage?.maxTermYears ??
+  product?.term?.maxYears ??
+  null,
+maxTermMonths:
+  mortgage?.maxTermMonths ??
+  (product?.term?.maxYears ? product.term.maxYears * 12 : null),
+termPolicyLabel:
+  mortgage?.termPolicyLabel ||
+  product?.term?.policyLabel ||
+  null,
+termNotes:
+  mortgage?.termNotes ||
+  product?.term?.notes ||
+  null,
+allowsUserTermPreference:
+  mortgage?.allowsUserTermPreference ??
+  product?.term?.allowsUserPreference === true,
+
+cuota: scenario?.cuota ?? mortgage?.cuota ?? null,
+montoPrestamo: scenario?.montoPrestamo ?? mortgage?.montoPrestamo ?? null,
 
     score: scenario?.score ?? mortgage?.score ?? null,
     probabilidad: scenario?.probabilidad || mortgage?.probabilidad || null,
@@ -3101,9 +3182,24 @@ const bestFutureProfileScenario =
 
     score: s.score,
     probabilidad: s.probabilidad,
-    annualRate: s.annualRate,
-    cuota: s.cuota,
-    montoPrestamo: s.montoPrestamo,
+   annualRate: s.annualRate,
+
+termYears: s.mortgage?.termYears ?? null,
+termMonths: s.mortgage?.termMonths ?? null,
+termOptionsYears: s.mortgage?.termOptionsYears || [],
+termOptionsMonths: s.mortgage?.termOptionsMonths || [],
+defaultTermYears: s.mortgage?.defaultTermYears ?? null,
+defaultTermMonths: s.mortgage?.defaultTermMonths ?? null,
+minTermYears: s.mortgage?.minTermYears ?? null,
+minTermMonths: s.mortgage?.minTermMonths ?? null,
+maxTermYears: s.mortgage?.maxTermYears ?? null,
+maxTermMonths: s.mortgage?.maxTermMonths ?? null,
+termPolicyLabel: s.mortgage?.termPolicyLabel || null,
+termNotes: s.mortgage?.termNotes || null,
+allowsUserTermPreference: s.mortgage?.allowsUserTermPreference === true,
+
+cuota: s.cuota,
+montoPrestamo: s.montoPrestamo,
     precioMaxProgramaHipoteca: s.precioMaxProgramaHipoteca,
     precioMaxProgramaSubsidio: s.precioMaxProgramaSubsidio,
     precioMaxPrograma: s.precioMaxPrograma,
@@ -3143,9 +3239,24 @@ const bestFutureProfileScenario =
         viable: bestTargetScenario.viable,
         probabilidad: bestTargetScenario.probabilidad,
         score: bestTargetScenario.score,
-        annualRate: bestTargetScenario.annualRate,
-        termMonths: bestTargetScenario.mortgage?.termMonths || null,
-        cuota: bestTargetScenario.cuota,
+       annualRate: bestTargetScenario.annualRate,
+
+termYears: bestTargetScenario.mortgage?.termYears || null,
+termMonths: bestTargetScenario.mortgage?.termMonths || null,
+termOptionsYears: bestTargetScenario.mortgage?.termOptionsYears || [],
+termOptionsMonths: bestTargetScenario.mortgage?.termOptionsMonths || [],
+defaultTermYears: bestTargetScenario.mortgage?.defaultTermYears || null,
+defaultTermMonths: bestTargetScenario.mortgage?.defaultTermMonths || null,
+minTermYears: bestTargetScenario.mortgage?.minTermYears || null,
+minTermMonths: bestTargetScenario.mortgage?.minTermMonths || null,
+maxTermYears: bestTargetScenario.mortgage?.maxTermYears || null,
+maxTermMonths: bestTargetScenario.mortgage?.maxTermMonths || null,
+termPolicyLabel: bestTargetScenario.mortgage?.termPolicyLabel || null,
+termNotes: bestTargetScenario.mortgage?.termNotes || null,
+allowsUserTermPreference:
+  bestTargetScenario.mortgage?.allowsUserTermPreference === true,
+
+cuota: bestTargetScenario.cuota,
         montoPrestamo: bestTargetScenario.montoPrestamo,
 
         precioMaxProgramaHipoteca:
