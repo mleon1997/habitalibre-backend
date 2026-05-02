@@ -22,6 +22,11 @@ export const mortgageCatalog = [
       maxYears: 30,
       defaultYears: 25,
       maxAgeAtMaturity: 75,
+      optionsYears: [20, 25, 30],
+      policyLabel: "Hasta 30 años",
+      notes:
+        "El programa VIS puede permitir hasta 30 años; la disponibilidad final depende de la entidad financiera participante, edad, capacidad de pago y políticas internas.",
+      allowsUserPreference: true,
     },
 
     caps: {
@@ -70,6 +75,11 @@ export const mortgageCatalog = [
       maxYears: 30,
       defaultYears: 25,
       maxAgeAtMaturity: 75,
+      optionsYears: [20, 25, 30],
+      policyLabel: "Hasta 30 años",
+      notes:
+        "El programa VIP puede permitir hasta 30 años; la disponibilidad final depende de la entidad financiera participante, edad, capacidad de pago y políticas internas.",
+      allowsUserPreference: true,
     },
 
     caps: {
@@ -136,6 +146,7 @@ export const mortgageCatalog = [
   // Hasta 100% financiamiento
   // Primera vivienda, nueva, primer uso
   // Ingreso familiar máx. 1,527.94
+  // Plazo referencial: hasta 30 años
   // ===============================
   {
     id: "BIESS_CREDICASA",
@@ -151,9 +162,14 @@ export const mortgageCatalog = [
 
     term: {
       minYears: 5,
-      maxYears: 25,
-      defaultYears: 25,
+      maxYears: 30,
+      defaultYears: 30,
       maxAgeAtMaturity: 77,
+      optionsYears: [20, 25, 30],
+      policyLabel: "Hasta 30 años",
+      notes:
+        "BIESS Vivienda Premier / Credicasa publica plazo máximo de 30 años. La aprobación final depende del perfil del afiliado o jubilado.",
+      allowsUserPreference: false,
     },
 
     caps: {
@@ -215,6 +231,7 @@ export const mortgageCatalog = [
   // 71,505 - 105,000
   // 4.99%
   // Hasta 95%
+  // Plazo referencial: hasta 25 años
   // ===============================
   {
     id: "BIESS_VIS_VIP",
@@ -233,6 +250,11 @@ export const mortgageCatalog = [
       maxYears: 25,
       defaultYears: 25,
       maxAgeAtMaturity: 77,
+      optionsYears: [15, 20, 25],
+      policyLabel: "Hasta 25 años",
+      notes:
+        "BIESS publica vivienda nueva o usada hasta 25 años para productos hipotecarios generales. La aprobación final depende del perfil del afiliado o jubilado.",
+      allowsUserPreference: false,
     },
 
     caps: {
@@ -294,6 +316,7 @@ export const mortgageCatalog = [
   // 105,001 - 130,000
   // 6.99%
   // Hasta 95%
+  // Plazo referencial: hasta 25 años
   // ===============================
   {
     id: "BIESS_MEDIA",
@@ -312,6 +335,11 @@ export const mortgageCatalog = [
       maxYears: 25,
       defaultYears: 25,
       maxAgeAtMaturity: 77,
+      optionsYears: [15, 20, 25],
+      policyLabel: "Hasta 25 años",
+      notes:
+        "BIESS publica vivienda nueva o usada hasta 25 años para productos hipotecarios generales. La aprobación final depende del perfil del afiliado o jubilado.",
+      allowsUserPreference: false,
     },
 
     caps: {
@@ -372,6 +400,7 @@ export const mortgageCatalog = [
   // 130,001 - 200,000
   // 7.99%
   // Hasta 90%
+  // Plazo referencial: hasta 25 años
   // ===============================
   {
     id: "BIESS_ALTA",
@@ -390,6 +419,11 @@ export const mortgageCatalog = [
       maxYears: 25,
       defaultYears: 25,
       maxAgeAtMaturity: 77,
+      optionsYears: [15, 20, 25],
+      policyLabel: "Hasta 25 años",
+      notes:
+        "BIESS publica vivienda nueva o usada hasta 25 años para productos hipotecarios generales. La aprobación final depende del perfil del afiliado o jubilado.",
+      allowsUserPreference: false,
     },
 
     caps: {
@@ -451,6 +485,7 @@ export const mortgageCatalog = [
   // 8.50% base en catálogo
   // Hasta 80%
   // Techo máximo de financiamiento: 460,000
+  // Plazo referencial: hasta 25 años
   // ===============================
   {
     id: "BIESS_LUJO",
@@ -469,6 +504,11 @@ export const mortgageCatalog = [
       maxYears: 25,
       defaultYears: 25,
       maxAgeAtMaturity: 77,
+      optionsYears: [15, 20, 25],
+      policyLabel: "Hasta 25 años",
+      notes:
+        "BIESS publica vivienda nueva o usada hasta 25 años para productos hipotecarios generales. La aprobación final depende del perfil del afiliado o jubilado.",
+      allowsUserPreference: false,
     },
 
     caps: {
@@ -525,7 +565,7 @@ export const mortgageCatalog = [
   },
 
   // ===============================
-  // banca privada normal
+  // Banca privada normal
   // ===============================
   {
     id: "PRIVATE",
@@ -540,9 +580,14 @@ export const mortgageCatalog = [
 
     term: {
       minYears: 5,
-      maxYears: 25,
-      defaultYears: 25,
+      maxYears: 20,
+      defaultYears: 20,
       maxAgeAtMaturity: 75,
+      optionsYears: [15, 20],
+      policyLabel: "Hasta 20 años",
+      notes:
+        "Referencia para banca privada tradicional. El plazo final depende de la entidad financiera, edad, capacidad de pago y políticas internas.",
+      allowsUserPreference: false,
     },
 
     caps: {
