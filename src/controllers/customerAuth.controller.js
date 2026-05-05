@@ -62,6 +62,36 @@ async function findLeadIdForUser({ emailNorm, telClean }) {
   return null;
 }
 
+/**
+ * Envía correo de bienvenida sin romper el registro si falla.
+ * Usa import dinámico para evitar que el backend se caiga si la función
+ * aún no existe en mailerCustomerAuth.js.
+ */
+async function trySendWelcomeEmail({ to, nombre }) {
+  try {
+    const mailer = await import("../utils/mailerCustomerAuth.js");
+
+    if (typeof mailer.enviarCorreoBienvenidaCustomer !== "function") {
+      console.warn(
+        "⚠️ enviarCorreoBienvenidaCustomer no existe en mailerCustomerAuth.js"
+      );
+      return;
+    }
+
+    await mailer.enviarCorreoBienvenidaCustomer({
+      to,
+      nombre,
+    });
+
+    console.log("✅ Correo de bienvenida enviado a:", to);
+  } catch (emailErr) {
+    console.error(
+      "⚠️ No se pudo enviar el correo de bienvenida:",
+      emailErr?.message || emailErr
+    );
+  }
+}
+
 /* =========================
    POST /api/customer-auth/register
    body: { email, password, nombre, apellido, telefono }
@@ -74,6 +104,7 @@ export async function registerCustomer(req, res) {
     if (!emailNorm || !emailNorm.includes("@")) {
       return res.status(400).json({ error: "Email inválido" });
     }
+
     if (!password || String(password).trim().length < 6) {
       return res
         .status(400)
@@ -86,11 +117,13 @@ export async function registerCustomer(req, res) {
     if (!nombreTrim) {
       return res.status(400).json({ error: "Nombre es obligatorio" });
     }
+
     if (!apellidoTrim) {
       return res.status(400).json({ error: "Apellido es obligatorio" });
     }
 
     const telClean = cleanPhone(telefono);
+
     if (!isValidEcPhone(telClean)) {
       return res
         .status(400)
@@ -98,6 +131,7 @@ export async function registerCustomer(req, res) {
     }
 
     const exists = await User.findOne({ email: emailNorm });
+
     if (exists) {
       return res.status(409).json({
         error: "Este email ya tiene cuenta. Inicia sesión.",
@@ -107,7 +141,10 @@ export async function registerCustomer(req, res) {
 
     const passwordHash = await bcrypt.hash(String(password), 10);
 
-    const leadId = await findLeadIdForUser({ emailNorm, telClean });
+    const leadId = await findLeadIdForUser({
+      emailNorm,
+      telClean,
+    });
 
     const user = await User.create({
       email: emailNorm,
@@ -123,6 +160,11 @@ export async function registerCustomer(req, res) {
       userId: user._id,
       email: user.email,
       leadId: user.currentLeadId || null,
+    });
+
+    await trySendWelcomeEmail({
+      to: user.email,
+      nombre: user.nombre || nombreTrim,
     });
 
     return res.json({
@@ -152,6 +194,7 @@ export async function loginCustomer(req, res) {
     if (!emailNorm || !emailNorm.includes("@")) {
       return res.status(400).json({ error: "Email inválido" });
     }
+
     if (!password || String(password).trim().length < 6) {
       return res
         .status(400)
@@ -159,17 +202,25 @@ export async function loginCustomer(req, res) {
     }
 
     const user = await User.findOne({ email: emailNorm });
-    if (!user) return res.status(401).json({ error: "Credenciales inválidas" });
+
+    if (!user) {
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
 
     const ok = await bcrypt.compare(String(password), user.passwordHash);
-    if (!ok) return res.status(401).json({ error: "Credenciales inválidas" });
+
+    if (!ok) {
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
 
     let currentLeadId = user.currentLeadId || null;
+
     if (!currentLeadId) {
       const leadId = await findLeadIdForUser({
         emailNorm,
         telClean: cleanPhone(user.telefono),
       });
+
       if (leadId) currentLeadId = leadId;
     }
 
@@ -207,10 +258,15 @@ export async function meCustomer(req, res) {
 
     const userId = payload?.id || payload?.userId || payload?._id || null;
 
-    if (!userId) return res.status(401).json({ error: "No autorizado" });
+    if (!userId) {
+      return res.status(401).json({ error: "No autorizado" });
+    }
 
     const user = await User.findById(userId);
-    if (!user) return res.status(401).json({ error: "No autorizado" });
+
+    if (!user) {
+      return res.status(401).json({ error: "No autorizado" });
+    }
 
     return res.json({
       user: safeUser(user),
@@ -283,6 +339,7 @@ export async function resetPasswordCustomer(req, res) {
     const pass = String(newPassword || "");
 
     if (!rawToken) return res.status(400).json({ error: "Token inválido" });
+
     if (!pass || pass.trim().length < 6) {
       return res
         .status(400)
@@ -334,6 +391,7 @@ export async function deleteAccountCustomer(req, res) {
     }
 
     const user = await User.findById(userId);
+
     if (!user) {
       return res.status(404).json({ error: "Cuenta no encontrada" });
     }
