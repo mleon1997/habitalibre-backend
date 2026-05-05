@@ -5,6 +5,7 @@ console.log("✅ CARGADO mortgageMatcher.service.js NUEVO");
 import { mortgageCatalog, SBU } from "../config/mortgageCatalog.js";
 import scoreHabitaLibre from "../lib/scoreHabitaLibre.js";
 import matchPropertiesToProfile from "./propertyMatch.service.js";
+import { evaluateCreditRisk } from "./creditRisk.service.js";
 
 /* ===========================================================
    Helpers numéricos / financieros
@@ -249,9 +250,19 @@ function normalizeInput(input = {}) {
     tipoIngreso,
     tipoContrato,
     sustentoIndependiente,
-    declaracionBuro: input.declaracionBuro || "ninguno",
-    nacionalidad: input.nacionalidad || "ecuatoriana",
-    horizonteCompra: input.horizonteCompra || input.tiempoCompra || null,
+declaracionBuro: input.declaracionBuro || "ninguno",
+
+creditHistoryStatus: input.creditHistoryStatus || "unknown",
+hasActiveDelinquency: input.hasActiveDelinquency || "unknown",
+delinquencyRange: input.delinquencyRange || "none",
+recentCreditDenied: input.recentCreditDenied || "unknown",
+declaredCreditScore:
+  input.declaredCreditScore != null && input.declaredCreditScore !== ""
+    ? n(input.declaredCreditScore, null)
+    : null,
+
+nacionalidad: input.nacionalidad || "ecuatoriana",
+horizonteCompra: input.horizonteCompra || input.tiempoCompra || null,
 
     afiliadoBool,
     tieneViviendaBool,
@@ -3459,6 +3470,54 @@ const primaryCapacityScenario =
   };
 }
 
+function buildReadinessStatus({ baseResult = {}, creditAssessment = {} }) {
+  const hasImmediateViableMortgage =
+    baseResult?.financialCapacity?.hasImmediateViableMortgage === true ||
+    baseResult?.bestMortgage?.viable === true;
+
+  const hasFinancialCapacity =
+    n(baseResult?.precioMaxVivienda, 0) > 0 ||
+    n(baseResult?.financialCapacity?.estimatedMaxPropertyValue, 0) > 0;
+
+  const creditLevel = String(creditAssessment?.level || "unknown");
+
+  if (creditAssessment?.blocksBankSubmission) {
+    return "credit_repair_needed";
+  }
+
+  if (hasImmediateViableMortgage && creditLevel === "unknown") {
+    return "ready_financially_credit_pending";
+  }
+
+  if (
+    hasImmediateViableMortgage &&
+    ["medium_risk"].includes(creditLevel)
+  ) {
+    return "ready_financially_credit_review";
+  }
+
+  if (
+    hasImmediateViableMortgage &&
+    ["healthy", "low_risk"].includes(creditLevel)
+  ) {
+    return "ready_for_bank";
+  }
+
+  if (hasFinancialCapacity && creditLevel === "unknown") {
+    return "financial_capacity_credit_pending";
+  }
+
+  if (hasFinancialCapacity && creditLevel === "medium_risk") {
+    return "financial_capacity_credit_review";
+  }
+
+  if (hasFinancialCapacity) {
+    return "financial_route_available";
+  }
+
+  return "financial_preparation_needed";
+}
+
 /* ===========================================================
    API principal del matcher
 =========================================================== */
@@ -3466,7 +3525,27 @@ export function runMortgageMatcher(input = {}) {
   const ctx = normalizeInput(input);
   const hasTargetPropertyValue = n(ctx.valorVivienda, 0) > 0;
 
+  const creditAssessment = evaluateCreditRisk(ctx);
+
   const baseResult = runMortgageMatcherCore(ctx);
+
+  const readinessStatus = buildReadinessStatus({
+    baseResult,
+    creditAssessment,
+  });
+
+  const baseScore = n(baseResult?.score, 0);
+  const creditAdjustedScore = clamp(
+    baseScore - n(creditAssessment?.scorePenalty, 0),
+    0,
+    100
+  );
+
+  let creditAdjustedProbability = "Baja";
+
+  if (creditAdjustedScore >= 80) creditAdjustedProbability = "Alta";
+  else if (creditAdjustedScore >= 60) creditAdjustedProbability = "Media";
+  else if (creditAdjustedScore < 40) creditAdjustedProbability = "Muy baja";
 
   const matchedProperties = matchPropertiesToProfile({
     ctx,
@@ -3511,19 +3590,40 @@ export function runMortgageMatcher(input = {}) {
     targetEvaluation: baseResult?.targetEvaluation || {},
   });
 
-  return {
-    ...baseResult,
-    matchedProperties,
-    housingAlternatives: {
-      goalPreservingFutureRoute,
-      closestFitToday,
-      inventoryBackedAlternative,
-      rankedHousingAlternatives,
-      primaryHousingAlternative,
-      secondaryHousingAlternative,
-    },
-    homeRecommendation,
-  };
+ return {
+  ...baseResult,
+
+  creditAssessment,
+  readinessStatus,
+
+  scoreBase: baseResult?.score ?? null,
+  score: creditAdjustedScore,
+  probabilidadBase: baseResult?.probabilidad ?? null,
+  probabilidad: creditAdjustedProbability,
+
+  creditWarnings: {
+    blocksBankSubmission: creditAssessment?.blocksBankSubmission === true,
+    level: creditAssessment?.level || "unknown",
+    label: creditAssessment?.label || "Validación crediticia pendiente",
+    recommendedAction: creditAssessment?.recommendedAction || null,
+    reasons: creditAssessment?.reasons || [],
+  },
+
+  matchedProperties,
+  housingAlternatives: {
+    goalPreservingFutureRoute,
+    closestFitToday,
+    inventoryBackedAlternative,
+    rankedHousingAlternatives,
+    primaryHousingAlternative,
+    secondaryHousingAlternative,
+  },
+  homeRecommendation: {
+    ...homeRecommendation,
+    creditAssessment,
+    readinessStatus,
+  },
+};
 }
 
 export default runMortgageMatcher;
