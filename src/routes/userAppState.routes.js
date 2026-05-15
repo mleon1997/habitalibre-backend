@@ -162,12 +162,34 @@ router.patch("/selected-property", authCustomerRequired, async (req, res) => {
   try {
     const userId = req.customer.userId;
 
-    const selectedProperty =
-      req.body?.selectedProperty ||
-      req.body?.property ||
-      req.body?.propiedad ||
-      req.body ||
-      null;
+    const hasSelectedProperty = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "selectedProperty"
+    );
+
+    const hasProperty = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "property"
+    );
+
+    const hasPropiedad = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "propiedad"
+    );
+
+    if (!hasSelectedProperty && !hasProperty && !hasPropiedad) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Debes enviar selectedProperty, property o propiedad. No se aceptan bodies genéricos.",
+      });
+    }
+
+    const selectedProperty = hasSelectedProperty
+      ? req.body.selectedProperty
+      : hasProperty
+      ? req.body.property
+      : req.body.propiedad;
 
     const state = await UserAppState.findOneAndUpdate(
       { userId },
