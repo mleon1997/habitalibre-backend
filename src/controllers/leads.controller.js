@@ -25,19 +25,15 @@ const LEADS_CONTROLLER_VERSION = "2026-02-09-leads-controller-v1.2";
 function extraerScoreHL(resultado) {
   if (!resultado) return null;
 
-  // ✅ Caso más común: puntajeHabitaLibre es NUMBER (ej: 72)
   const s0 = resultado?.puntajeHabitaLibre;
   if (typeof s0 === "number") return s0;
 
-  // ✅ Caso alterno: puntajeHabitaLibre es objeto { score: 72 }
   const s1 = resultado?.puntajeHabitaLibre?.score;
   if (typeof s1 === "number") return s1;
 
-  // ✅ legacy: scoreHL es objeto { total, bandas }
   const s2 = resultado?.scoreHL?.total;
   if (typeof s2 === "number") return s2;
 
-  // compat muy viejo: scoreHL number
   if (typeof resultado.scoreHL === "number") return resultado.scoreHL;
 
   return null;
@@ -61,10 +57,8 @@ function extraerProducto(resultado) {
 function sanitizarResultadoCliente(resultado = {}) {
   const limpio = { ...(resultado || {}) };
 
-  // legacy: top-level sinOferta (lo eliminamos para evitar pisar)
   if ("sinOferta" in limpio) delete limpio.sinOferta;
 
-  // NO tocar flags.sinOferta (pero clonamos flags)
   if (limpio.flags && typeof limpio.flags === "object") {
     limpio.flags = { ...limpio.flags };
   }
@@ -90,8 +84,9 @@ function toLowerOrNull(v) {
 
 function mapTipoCompraNumero(tipoCompraRawLower) {
   if (tipoCompraRawLower === "solo") return 1;
-  if (tipoCompraRawLower === "pareja" || tipoCompraRawLower === "en_pareja")
+  if (tipoCompraRawLower === "pareja" || tipoCompraRawLower === "en_pareja") {
     return 2;
+  }
   return null;
 }
 
@@ -105,11 +100,6 @@ function toBoolOrNull(v) {
   return null;
 }
 
-/**
- * ✅ Extrae “campos rápidos” desde resultadoNormalizado.perfil (si existe)
- * y también soporta resultado.__entrada / resultado.perfilInput
- * para que WEB/MVP no pierda data en campos planos.
- */
 function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
   const perfil = resultadoNormalizado?.perfil || null;
   const e =
@@ -131,7 +121,6 @@ function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
       ? toNumberOrNull(e.aniosEstabilidad)
       : null;
 
-  // perfil.ingresoTotal suele ser suma (individual + pareja)
   const ingresoMensual =
     perfil?.ingresoTotal != null
       ? toNumberOrNull(perfil.ingresoTotal)
@@ -168,7 +157,6 @@ function extraerCamposRapidosDesdeResultado(resultadoNormalizado) {
       ? String(e.tipoIngreso).trim()
       : null;
 
-  // Estos suelen venir top-level en scoring.js (pero si no vienen, queda null)
   const valorVivienda =
     resultadoNormalizado?.valorVivienda != null
       ? toNumberOrNull(resultadoNormalizado.valorVivienda)
@@ -265,13 +253,11 @@ function pickTiempoCompra(body = {}) {
   );
 }
 
-/**
- * Normaliza canal a { web, whatsapp, instagram }
- */
 function inferCanalManychat(body = {}) {
   const canalRaw = String(body.canal || body.channel || "")
     .trim()
     .toLowerCase();
+
   if (canalRaw === "instagram" || canalRaw === "ig") return "instagram";
   if (canalRaw === "whatsapp" || canalRaw === "wa") return "whatsapp";
 
@@ -298,8 +284,6 @@ function pickSubscriberId(body = {}) {
 
 /* ===========================================================
    ✅ Helper: guardar decision en lead sin romper el request
-   - Guarda motor nuevo + compat UI (estado/etapa/llamarHoy/etc.)
-   - setea decision_* planos indexables
 =========================================================== */
 async function safeDecisionSave(leadDoc, tag = "GEN") {
   try {
@@ -308,7 +292,6 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
     leadDoc.decision = {
       ...d,
 
-      // ✅ compat UI / legacy keys
       estado: d.bucket,
       etapa: d.stage,
       llamarHoy: d.callToday,
@@ -316,7 +299,6 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
       porQue: d.reasons,
       nextActions: d.nextActions || [],
 
-      // compat extra (si UI espera algunas llaves)
       scoreHL: d.scoreHL ?? leadDoc.scoreHL ?? null,
       dti: d.dti ?? null,
       ltv: d.ltv ?? null,
@@ -340,9 +322,6 @@ async function safeDecisionSave(leadDoc, tag = "GEN") {
 
 /* ===========================================================
    ✅ Helper: snapshot precalificación backend-first (blindado)
-   - si el snapshot no tiene campos críticos, recalcula con motor.
-   - usa fallback a resultado.__entrada / resultado.perfilInput
-   - setea también campos planos precalificacion_*
 =========================================================== */
 async function asegurarSnapshotPrecalificacion(leadDoc, tag = "GEN") {
   try {
@@ -413,7 +392,6 @@ async function asegurarSnapshotPrecalificacion(leadDoc, tag = "GEN") {
 
     leadDoc.precalificacion = snapshotFinal;
 
-    // planos “útiles” (dashboard/filtros)
     leadDoc.precalificacion_banco = snapshotFinal?.bancoSugerido || null;
 
     leadDoc.precalificacion_tasaAnual = Number.isFinite(
@@ -457,11 +435,6 @@ async function asegurarSnapshotPrecalificacion(leadDoc, tag = "GEN") {
 
 /* ===========================================================
    POST /api/leads   (crear lead desde el simulador)
-   ✅ MERGE Web + ManyChat
-   ✅ guarda campos “rápidos”
-   ✅ calcula lead.decision aquí mismo
-   ✅ guarda lead.precalificacion snapshot (backend-first)
-   ✅ RESPONDE RÁPIDO y procesa lo pesado en background
 =========================================================== */
 export async function crearLead(req, res) {
   try {
@@ -476,7 +449,6 @@ export async function crearLead(req, res) {
       tiempoCompra,
       sustentoIndependiente,
 
-      // ✅ OPCIONAL (desde el FRONT)
       afiliadoIess,
       aniosEstabilidad,
       ingresoNetoMensual,
@@ -485,11 +457,9 @@ export async function crearLead(req, res) {
       tipoCompra,
       tipoCompraNumero,
 
-      // ✅ opcional
       valorVivienda,
       entradaDisponible,
 
-      // ✅ opcional (planos)
       edad,
       tipoIngreso,
     } = req.body || {};
@@ -501,7 +471,6 @@ export async function crearLead(req, res) {
       });
     }
 
-    // ✅ aceptar snake_case/camelCase para campos mínimos
     const body = req.body || {};
 
     const edadRaw =
@@ -560,7 +529,6 @@ export async function crearLead(req, res) {
       resultadoSanitizado
     );
 
-    // ✅ BACKEND-FIRST: recalcula sinOferta/producto/banco desde motor real
     let respuesta = null;
 
     try {
@@ -604,46 +572,52 @@ export async function crearLead(req, res) {
         respuesta?.productoSugerido ?? null;
       resultadoNormalizado.bancoSugerido = respuesta?.bancoSugerido ?? null;
 
-      // ✅ IMPORTANTÍSIMO: copiar también los numéricos que consume mailer/PDF
       if (respuesta) {
-        // métricas core
-        if (respuesta.cuotaEstimada != null)
+        if (respuesta.cuotaEstimada != null) {
           resultadoNormalizado.cuotaEstimada = respuesta.cuotaEstimada;
-        if (respuesta.capacidadPago != null)
+        }
+        if (respuesta.capacidadPago != null) {
           resultadoNormalizado.capacidadPago = respuesta.capacidadPago;
-        if (respuesta.dtiConHipoteca != null)
+        }
+        if (respuesta.dtiConHipoteca != null) {
           resultadoNormalizado.dtiConHipoteca = respuesta.dtiConHipoteca;
+        }
 
-        // límites
-        if (respuesta.montoMaximo != null)
+        if (respuesta.montoMaximo != null) {
           resultadoNormalizado.montoMaximo = respuesta.montoMaximo;
-        if (respuesta.precioMaxVivienda != null)
+        }
+        if (respuesta.precioMaxVivienda != null) {
           resultadoNormalizado.precioMaxVivienda = respuesta.precioMaxVivienda;
+        }
 
-        // extras que también salen en el email/PDF
-        if (respuesta.cuotaStress != null)
+        if (respuesta.cuotaStress != null) {
           resultadoNormalizado.cuotaStress = respuesta.cuotaStress;
+        }
         if (respuesta.ltv != null) resultadoNormalizado.ltv = respuesta.ltv;
 
-        // si tu motor los trae
-        if (respuesta.tasaAnual != null)
+        if (respuesta.tasaAnual != null) {
           resultadoNormalizado.tasaAnual = respuesta.tasaAnual;
-        if (respuesta.plazoMeses != null)
+        }
+        if (respuesta.plazoMeses != null) {
           resultadoNormalizado.plazoMeses = respuesta.plazoMeses;
+        }
 
-        // ✅ para que el PDF tenga inputs consistentes
-        resultadoNormalizado.__entrada = resultadoNormalizado.__entrada || bodyMotor;
+        resultadoNormalizado.__entrada =
+          resultadoNormalizado.__entrada || bodyMotor;
       }
     } catch (e) {
       console.warn("⚠️ No se pudo recalcular backend-first:", e?.message || e);
     }
 
-    if (respuesta?.bancosTop3)
+    if (respuesta?.bancosTop3) {
       resultadoNormalizado.bancosTop3 = respuesta.bancosTop3;
-    if (respuesta?.mejorBanco)
+    }
+    if (respuesta?.mejorBanco) {
       resultadoNormalizado.mejorBanco = respuesta.mejorBanco;
-    if (respuesta?.rutaRecomendada)
+    }
+    if (respuesta?.rutaRecomendada) {
       resultadoNormalizado.rutaRecomendada = respuesta.rutaRecomendada;
+    }
 
     const scoreHL = extraerScoreHL(resultadoNormalizado);
     const producto = extraerProducto(resultadoNormalizado);
@@ -685,7 +659,6 @@ export async function crearLead(req, res) {
         ? toNumberOrNull(tipoCompraNumeroRaw)
         : mapTipoCompraNumero(tipoCompraLower);
 
-    // ✅ Prioridad valor/entrada
     const valorViviendaNorm =
       valorViviendaRaw != null
         ? toNumberOrNull(valorViviendaRaw)
@@ -713,7 +686,6 @@ export async function crearLead(req, res) {
         ? String(derivados.tipoIngreso).trim()
         : null);
 
-    // ✅ score detalle para debug/admin
     const scoreHLDetalleNorm =
       resultadoNormalizado?.puntajeHabitaLibre != null
         ? resultadoNormalizado.puntajeHabitaLibre
@@ -789,10 +761,8 @@ export async function crearLead(req, res) {
         scoreHL: typeof scoreHL === "number" ? scoreHL : null,
         scoreHLDetalle: scoreHLDetalleNorm || null,
 
-        // ✅ CANÓNICO
         resultado: resultadoNormalizado,
 
-        // ✅ CAMPOS PLANOS
         afiliado_iess: afiliadoIessNorm,
         ingreso_mensual: ingresoMensualNorm,
         anios_estabilidad: aniosEstabilidadNorm,
@@ -828,66 +798,33 @@ export async function crearLead(req, res) {
       },
     });
 
-const codigoHL =
-  lead.codigoHL || generarCodigoHLDesdeObjectId(lead._id);
+    const codigoHL = lead.codigoHL || generarCodigoHLDesdeObjectId(lead._id);
 
-const status = isNew ? 201 : 200;
+    const resultadoConCodigo = {
+      ...resultadoNormalizado,
+      codigoHL,
+      flags: {
+        ...(resultadoNormalizado.flags || {}),
+        sinOferta: resultadoNormalizado?.flags?.sinOferta === true,
+      },
+      productoElegido:
+        producto ||
+        resultadoNormalizado.productoElegido ||
+        resultadoNormalizado.productoSugerido ||
+        null,
+      tipoCreditoElegido:
+        resultadoNormalizado.tipoCreditoElegido ||
+        producto ||
+        resultadoNormalizado.productoElegido ||
+        resultadoNormalizado.productoSugerido ||
+        null,
+      bancoSugerido: resultadoNormalizado.bancoSugerido || null,
+      productoSugerido: resultadoNormalizado.productoSugerido || null,
+    };
 
-res.status(status).json({
-  ok: true,
-  msg: isNew
-    ? "¡Listo! Ya recibimos tu información. Estamos preparando tu resultado y te lo enviaremos por correo."
-    : "¡Listo! Actualizamos tu información. Estamos preparando tu resultado y te lo enviaremos por correo.",
-  leadId: lead._id,
-  codigoHL,
-  linkedToUser,
-  linkedMethod,
-  debug: {
-    processingAsync: true,
-  },
-});
+    const httpStatus = isNew ? 201 : 200;
 
-void (async () => {
-  try {
-    if (!lead.codigoHL) {
-      lead.codigoHL = codigoHL;
-      await lead.save();
-    }
-
-    if (userIdFinal) {
-      await Lead.updateOne(
-        { _id: lead._id },
-        { $set: { userId: userIdFinal } }
-      );
-
-      await User.updateOne(
-        { _id: userIdFinal },
-        { $set: { currentLeadId: lead._id } }
-      );
-    }
-
-    await safeDecisionSave(lead, "WEB");
-    await asegurarSnapshotPrecalificacion(lead, "WEB");
-
-    const leadRefrescado = await Lead.findById(lead._id);
-    const leadPlano = leadRefrescado
-      ? leadRefrescado.toObject()
-      : lead.toObject();
-
-    await Promise.all([
-      enviarCorreoCliente(leadPlano, resultadoConCodigo),
-      enviarCorreoLead(leadPlano, resultadoConCodigo),
-    ]);
-  } catch (errBg) {
-    console.error("❌ Error en background de crearLead:", errBg);
-  }
-})();
-
-return;
-    const status = isNew ? 201 : 200;
-
-    // ✅ Respuesta inmediata al frontend
-    res.status(status).json({
+    res.status(httpStatus).json({
       ok: true,
       msg: isNew
         ? "¡Listo! Ya recibimos tu información. Estamos preparando tu resultado y te lo enviaremos por correo."
@@ -911,43 +848,32 @@ return;
       },
     });
 
-    // ⚠️ Muy importante: salir del request aquí
-    // y dejar lo demás en background.
     void (async () => {
       try {
-        // ✅ decision
-        await safeDecisionSave(lead, "WEB");
+        if (!lead.codigoHL) {
+          lead.codigoHL = codigoHL;
+          await lead.save();
+        }
 
-        // ✅ precalificación snapshot
+        if (userIdFinal) {
+          await Lead.updateOne(
+            { _id: lead._id },
+            { $set: { userId: userIdFinal } }
+          );
+
+          await User.updateOne(
+            { _id: userIdFinal },
+            { $set: { currentLeadId: lead._id } }
+          );
+        }
+
+        await safeDecisionSave(lead, "WEB");
         await asegurarSnapshotPrecalificacion(lead, "WEB");
 
-        // ✅ volver a leer lead ya actualizado para que el mail salga con data fresca
         const leadRefrescado = await Lead.findById(lead._id);
         const leadPlano = leadRefrescado
           ? leadRefrescado.toObject()
           : lead.toObject();
-
-        const resultadoConCodigo = {
-          ...resultadoNormalizado,
-          codigoHL,
-          flags: {
-            ...(resultadoNormalizado.flags || {}),
-            sinOferta: resultadoNormalizado?.flags?.sinOferta === true,
-          },
-          productoElegido:
-            producto ||
-            resultadoNormalizado.productoElegido ||
-            resultadoNormalizado.productoSugerido ||
-            null,
-          tipoCreditoElegido:
-            resultadoNormalizado.tipoCreditoElegido ||
-            producto ||
-            resultadoNormalizado.productoElegido ||
-            resultadoNormalizado.productoSugerido ||
-            null,
-          bancoSugerido: resultadoNormalizado.bancoSugerido || null,
-          productoSugerido: resultadoNormalizado.productoSugerido || null,
-        };
 
         console.log("🧪 MAIL DEBUG =>", {
           cuota: resultadoConCodigo?.cuotaEstimada,
@@ -1062,7 +988,7 @@ export async function statsLeads(req, res) {
     inicioHoy.setHours(0, 0, 0, 0);
 
     const inicioSemana = new Date(now);
-    const day = inicioSemana.getDay(); // 0 domingo, 1 lunes...
+    const day = inicioSemana.getDay();
     const diffToMonday = (day + 6) % 7;
     inicioSemana.setDate(inicioSemana.getDate() - diffToMonday);
     inicioSemana.setHours(0, 0, 0, 0);
@@ -1115,8 +1041,6 @@ export async function statsLeads(req, res) {
 
 /* ===========================================================
    POST /api/leads/manychat  (unificado IG + WhatsApp)
-   ✅ MERGE con leads Web
-   ✅ calcula lead.decision aquí mismo
 =========================================================== */
 export async function crearLeadManychat(req, res) {
   try {
@@ -1203,9 +1127,6 @@ export async function crearLeadManychat(req, res) {
 
     await safeDecisionSave(lead, "MANYCHAT");
 
-    // (opcional) snapshot aunque ManyChat no tenga todo
-    // await asegurarSnapshotPrecalificacion(lead, "MANYCHAT");
-
     return res.json({
       ok: true,
       version: LEADS_CONTROLLER_VERSION,
@@ -1245,8 +1166,9 @@ export async function obtenerLeadPorIdAdmin(req, res) {
     if (!id) return res.status(400).json({ ok: false, msg: "Falta id" });
 
     const lead = await Lead.findById(id).lean();
-    if (!lead)
+    if (!lead) {
       return res.status(404).json({ ok: false, msg: "Lead no encontrado" });
+    }
 
     return res.json({ ok: true, lead });
   } catch (err) {
@@ -1257,9 +1179,6 @@ export async function obtenerLeadPorIdAdmin(req, res) {
 
 /* ===========================================================
    ✅ PDF Ficha Comercial
-   - GET /api/leads/:id/ficha-comercial.pdf
-   - GET /api/leads/hl/:codigoHL/ficha-comercial.pdf
-   ✅ “A prueba de balas”: si precalif está incompleta, recalcula con motor.
 =========================================================== */
 export async function descargarFichaComercialPDF(req, res) {
   try {
@@ -1267,12 +1186,10 @@ export async function descargarFichaComercialPDF(req, res) {
 
     let lead = null;
 
-    // 1) Buscar por ID
     if (id) {
       lead = await Lead.findById(id).lean();
     }
 
-    // 2) Buscar por código HL
     if (!lead && codigoHL) {
       lead = await Lead.findOne({ codigoHL: String(codigoHL).trim() }).lean();
     }
@@ -1281,7 +1198,6 @@ export async function descargarFichaComercialPDF(req, res) {
       return res.status(404).json({ ok: false, msg: "Lead no encontrado" });
     }
 
-    // ✅ Fecha bonita dd/mm/yyyy
     const fecha = (() => {
       try {
         const d = lead.createdAt ? new Date(lead.createdAt) : new Date();
@@ -1295,20 +1211,15 @@ export async function descargarFichaComercialPDF(req, res) {
       }
     })();
 
-    // ✅ Plaza
     const plaza =
       lead.ciudad_compra ||
       lead.ciudad ||
       lead?.metadata?.perfil?.ciudadCompra ||
       "-";
 
-    // ✅ Resultado tal cual guardado
     const resultadoStored = lead.resultado || null;
-
-    // ✅ Snapshot guardado (si existe)
     const snap = lead.precalificacion || null;
 
-    // ✅ Detectar si faltan campos CRÍTICOS
     const faltaCritico =
       !snap ||
       snap?.bancoSugerido == null ||
@@ -1318,7 +1229,6 @@ export async function descargarFichaComercialPDF(req, res) {
 
     let precalificacion = snap;
 
-    // ✅ Si falta, recalcular con el motor desde los campos planos del lead
     if (faltaCritico) {
       const r = lead?.resultado || {};
       const e = r?.__entrada || r?.perfilInput || {};
@@ -1337,9 +1247,7 @@ export async function descargarFichaComercialPDF(req, res) {
         iessAportesTotales:
           lead.iess_aportes_totales ?? e.iessAportesTotales ?? 0,
         iessAportesConsecutivos:
-          lead.iess_aportes_consecutivos ??
-          e.iessAportesConsecutivos ??
-          0,
+          lead.iess_aportes_consecutivos ?? e.iessAportesConsecutivos ?? 0,
         tipoIngreso: lead.tipo_ingreso ?? e.tipoIngreso ?? "Dependiente",
         aniosEstabilidad:
           lead.anios_estabilidad ?? e.aniosEstabilidad ?? 0,
@@ -1349,11 +1257,11 @@ export async function descargarFichaComercialPDF(req, res) {
       try {
         const { respuesta } = precalificarHL(bodyMotor);
 
-        // ✅ Construir/Completar snapshot
         precalificacion = {
           ...(snap || {}),
 
-          bancoSugerido: respuesta?.bancoSugerido ?? snap?.bancoSugerido ?? null,
+          bancoSugerido:
+            respuesta?.bancoSugerido ?? snap?.bancoSugerido ?? null,
           productoSugerido:
             respuesta?.productoSugerido ?? snap?.productoSugerido ?? null,
 
@@ -1379,7 +1287,6 @@ export async function descargarFichaComercialPDF(req, res) {
             respuesta?.capacidadPago ?? snap?.capacidadPago ?? null,
         };
 
-        // ✅ Guardar snapshot + planos
         try {
           await Lead.updateOne(
             { _id: lead._id },
@@ -1429,7 +1336,6 @@ export async function descargarFichaComercialPDF(req, res) {
       }
     }
 
-    // ✅ Fallback final
     if (!precalificacion && resultadoStored) {
       precalificacion = {
         bancoSugerido:
@@ -1506,7 +1412,6 @@ export async function descargarFichaComercialPDF(req, res) {
       telefono: lead.telefono || "-",
       email: lead.email || "-",
 
-      // campos core
       scoreHL: lead.scoreHL ?? null,
       edad: lead.edad ?? null,
       tipo_ingreso: lead.tipo_ingreso ?? null,
@@ -1516,13 +1421,11 @@ export async function descargarFichaComercialPDF(req, res) {
       tipo_compra: lead.tipo_compra ?? null,
       producto: lead.producto ?? null,
 
-      // perfil financiero
       ingreso_mensual: lead.ingreso_mensual ?? null,
       deuda_mensual_aprox: lead.deuda_mensual_aprox ?? null,
       afiliado_iess: lead.afiliado_iess ?? null,
       anios_estabilidad: lead.anios_estabilidad ?? null,
 
-      // ✅ IMPORTANTES
       resultado: resultadoStored,
       decision: lead.decision || null,
       precalificacion,
