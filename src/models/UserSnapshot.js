@@ -1,39 +1,56 @@
 // src/models/UserSnapshot.js
 import mongoose from "mongoose";
 
-const UserSnapshotSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    index: true
-  },
-  fecha: {
-    type: Date,
-    default: Date.now,
-    index: true
-  },
-  input: {
-    ingresos: Number,
-    deudas: Number,
-    entrada: Number,
-    edad: Number,
-    estabilidadLaboral: Number,
-    afiliadoIESS: Boolean
-  },
-  output: {
-    scoreHL: Number,
-    dti: Number,
-    capacidadPago: Number,
-    cuotaEstimada: Number,
-    tasa: Number,
-    ltv: Number
-  },
-  preparacionPorRuta: {
-    biess: Number,
-    privada: Number,
-    vis: Number
-  },
-  rutaRecomendada: String
-});
+const UserSnapshotSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
 
-export default mongoose.model("UserSnapshot", UserSnapshotSchema);
+    // Guarda TODO el payload original del Journey.
+    // Ej: ingresoNetoMensual, deudas, ciudadCompra, entradaDisponible,
+    // tipoIngreso, IESS, historial crediticio, horizonteCompra, etc.
+    input: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
+    // Guarda TODO el resultado del motor hipotecario.
+    // Ej: bestMortgage, rankedMortgages, matchedProperties,
+    // precioMaxVivienda, cuotaEstimada, bancosTop3, scenarios, etc.
+    output: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
+    preparacionPorRuta: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+
+    rutaRecomendada: {
+      type: String,
+      default: null,
+    },
+
+    fecha: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
+  },
+  {
+    timestamps: true,
+    strict: false,
+    minimize: false,
+  }
+);
+
+UserSnapshotSchema.index({ userId: 1, fecha: -1 });
+UserSnapshotSchema.index({ userId: 1, createdAt: -1 });
+
+export default mongoose.models.UserSnapshot ||
+  mongoose.model("UserSnapshot", UserSnapshotSchema);

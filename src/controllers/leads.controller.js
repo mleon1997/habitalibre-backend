@@ -828,21 +828,62 @@ export async function crearLead(req, res) {
       },
     });
 
-    if (userIdFinal) {
-      lead.userId = userIdFinal;
+const codigoHL =
+  lead.codigoHL || generarCodigoHLDesdeObjectId(lead._id);
+
+const status = isNew ? 201 : 200;
+
+res.status(status).json({
+  ok: true,
+  msg: isNew
+    ? "¡Listo! Ya recibimos tu información. Estamos preparando tu resultado y te lo enviaremos por correo."
+    : "¡Listo! Actualizamos tu información. Estamos preparando tu resultado y te lo enviaremos por correo.",
+  leadId: lead._id,
+  codigoHL,
+  linkedToUser,
+  linkedMethod,
+  debug: {
+    processingAsync: true,
+  },
+});
+
+void (async () => {
+  try {
+    if (!lead.codigoHL) {
+      lead.codigoHL = codigoHL;
       await lead.save();
+    }
+
+    if (userIdFinal) {
+      await Lead.updateOne(
+        { _id: lead._id },
+        { $set: { userId: userIdFinal } }
+      );
+
       await User.updateOne(
         { _id: userIdFinal },
         { $set: { currentLeadId: lead._id } }
       );
     }
 
-    if (!lead.codigoHL) {
-      lead.codigoHL = generarCodigoHLDesdeObjectId(lead._id);
-      await lead.save();
-    }
+    await safeDecisionSave(lead, "WEB");
+    await asegurarSnapshotPrecalificacion(lead, "WEB");
 
-    const codigoHL = lead.codigoHL;
+    const leadRefrescado = await Lead.findById(lead._id);
+    const leadPlano = leadRefrescado
+      ? leadRefrescado.toObject()
+      : lead.toObject();
+
+    await Promise.all([
+      enviarCorreoCliente(leadPlano, resultadoConCodigo),
+      enviarCorreoLead(leadPlano, resultadoConCodigo),
+    ]);
+  } catch (errBg) {
+    console.error("❌ Error en background de crearLead:", errBg);
+  }
+})();
+
+return;
     const status = isNew ? 201 : 200;
 
     // ✅ Respuesta inmediata al frontend
