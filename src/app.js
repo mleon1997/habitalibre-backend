@@ -15,6 +15,7 @@ import igRoutes from "./routes/ig.routes.js";
 import casosActivacionRoutes from "./routes/casosActivacion.routes.js";
 
 
+
 // ================================
 // Conversación IG (state machine)
 // ================================
@@ -45,6 +46,7 @@ import diagMailerRoutes from "./routes/diagMailer.routes.js";
 import precalificarRoutes from "./routes/precalificar.routes.js";
 import leadsRoutes from "./routes/leads.routes.js";
 import healthRoutes from "./routes/health.routes.js";
+import userAppStateRoutes from "./routes/userAppState.routes.js";
 
 // ================================
 // App
@@ -459,6 +461,7 @@ app.use("/api/customer-auth", customerAuthRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/customer/leads", customerLeadsRoutes);
 app.use("/api/casos-activacion", casosActivacionRoutes);
+app.use("/api/user-app-state", userAppStateRoutes);
 
 
 // Diagnóstico / Precalificación / Mortgage
