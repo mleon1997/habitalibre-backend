@@ -599,6 +599,17 @@ function buildMatchBadge({ property, estadoCompra, evaluacionEntrada }) {
   }
 
   if (
+  estadoCompra === "ruta_cercana" &&
+  property?.tipoEntrega === "inmediata"
+) {
+  return "Fuera de rango";
+}
+
+if (estadoCompra === "ruta_cercana") {
+  return "Ruta cercana";
+}
+
+  if (
     estadoCompra === "ruta_cercana" &&
     evaluacionEntrada?.modalidadEntrada === "construccion" &&
     !evaluacionEntrada?.puedeSepararHoy &&
