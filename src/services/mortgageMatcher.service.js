@@ -2732,6 +2732,75 @@ function buildHomeRecommendation({
     plannedMonths > 0 &&
     plannedFuturePrice >= targetPrice;
 
+    const targetAlmostViableWithPlannedEntry =
+  !hasImmediateViableMortgage &&
+  targetPrice > 0 &&
+  plannedFuturePrice > 0 &&
+  capacidadEntradaMensual > 0 &&
+  plannedMonths > 0 &&
+  plannedFuturePrice < targetPrice &&
+  plannedFuturePrice >= targetPrice * 0.97;
+
+if (targetAlmostViableWithPlannedEntry) {
+  const gapAmount = Math.max(0, targetPrice - plannedFuturePrice);
+
+  return {
+    type: "target_near_future_entry_route",
+    title: "Tu meta está muy cerca de ser viable construyendo la entrada.",
+    subtitle: `Hoy no tienes entrada suficiente para comprar una vivienda de ${formatMoneyShort(
+      targetPrice
+    )}, pero si ahorras aproximadamente ${formatMoneyShort(
+      capacidadEntradaMensual
+    )} al mes durante ${plannedMonths} meses, podrías acercarte a ${formatMoneyShort(
+      plannedFuturePrice
+    )}.`,
+
+    mainMessage:
+      "Tu meta no está descartada. Está muy cerca del rango proyectado si completas entrada durante obra.",
+
+    detailMessage: `La diferencia estimada frente a tu meta actual es de aproximadamente ${formatMoneyShort(
+      gapAmount
+    )}. Podrías revisar propiedades apenas más bajas, negociar condiciones de entrada o aumentar ligeramente tu ahorro mensual.`,
+
+    cta: {
+      label: "Ver proyectos con entrada en cuotas",
+      path: "/marketplace",
+    },
+
+    actionHints: [
+      "Prioriza proyectos en construcción o preventa.",
+      "Busca propiedades cercanas al rango proyectado.",
+      "Confirma si el proyecto permite pagar la entrada durante obra.",
+    ],
+
+    blockers: {
+      primary: "entrada",
+      immediateApproval: false,
+    },
+
+    immediateGuidance: null,
+    monthlyPaymentReference: plannedEntry?.estimatedMonthlyPayment || null,
+
+    alternatives,
+    targetEvaluation,
+
+    goalSummary: {
+      targetPropertyValue: targetPrice,
+    },
+
+    realityCheck: {
+      targetPropertyValue: targetPrice,
+      currentMaxPropertyValue: estimatedMaxPropertyValue,
+      projectedMaxPropertyValue: plannedFuturePrice,
+      projectedEntryAmount: plannedFutureEntry,
+      projectedMonths: plannedMonths,
+      gapAmount,
+    },
+
+    profileProgramsThatCouldWorkIfRangeAdjusted: topStructuralOptions,
+  };
+}
+
   if (targetCouldBecomeViableWithPlannedEntry) {
     actionableSteps.push(
       `Hoy tu principal limitante es la entrada, pero sí podrías cerrar esa brecha si mantienes un ahorro aproximado de ${formatMoneyShort(
