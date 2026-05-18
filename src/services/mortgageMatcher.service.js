@@ -2532,6 +2532,26 @@ function buildImmediateApprovalGuidance({ financialCapacity, ctx = {} }) {
     };
   }
 
+  const hasImmediateViableMortgage =
+  financialCapacity?.hasImmediateViableMortgage === true;
+
+if (
+  hasImmediateViableMortgage &&
+  targetPrice > 0 &&
+  targetPrice <= estimatedMaxPropertyValue + 1
+) {
+  return {
+    recommendedImmediateTargetPrice: Math.round(estimatedMaxPropertyValue),
+    recommendedImmediateTargetRange: {
+      min: Math.round(estimatedMaxPropertyValue * 0.92),
+      max: Math.round(estimatedMaxPropertyValue),
+    },
+    message: `Tu precio meta de ${formatMoneyShort(
+      targetPrice
+    )} está dentro del rango estimado para tu ruta hipotecaria actual.`,
+  };
+}
+
   let recommendedMax = estimatedMaxPropertyValue;
 
   if (limitingFactor === "cuota") {

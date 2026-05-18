@@ -131,7 +131,11 @@ function selectBestMortgageForProperty(property, rankedMortgages = []) {
     return normalized && allowed.includes(normalized);
   });
 
-  return compatible[0] || viable[0] || null;
+  if (allowed.length && !compatible.length) {
+  return null;
+}
+
+return compatible[0] || viable[0] || null;
 }
 
 function checkPropertyRules(property, ctx) {
