@@ -3547,10 +3547,29 @@ export function runMortgageMatcher(input = {}) {
   else if (creditAdjustedScore >= 60) creditAdjustedProbability = "Media";
   else if (creditAdjustedScore < 40) creditAdjustedProbability = "Muy baja";
 
-  const matchedProperties = matchPropertiesToProfile({
-    ctx,
-    mortgageResult: baseResult,
-  });
+const creditBlocked =
+  creditAssessment?.blocksBankSubmission === true ||
+  readinessStatus === "credit_repair_needed";
+
+const rawMatchedProperties = matchPropertiesToProfile({
+  ctx,
+  mortgageResult: baseResult,
+  creditAssessment,
+  readinessStatus,
+});
+
+const matchedProperties = creditBlocked
+  ? rawMatchedProperties.map((p) => ({
+      ...p,
+      estadoCompra: "credit_repair_needed",
+      viableProyecto: false,
+      matchBadgeCalculado: "Revisar buró",
+      matchReasonCalculado:
+        creditAssessment?.recommendedAction ||
+        "Antes de avanzar con banco o cooperativa, conviene revisar tu historial financiero declarado.",
+      mortgageSelected: null,
+    }))
+  : rawMatchedProperties;
 
   const cuotaMaxUsuario = Math.max(
     0,
@@ -3583,18 +3602,60 @@ export function runMortgageMatcher(input = {}) {
   const primaryHousingAlternative = rankedHousingAlternatives[0] || null;
   const secondaryHousingAlternative = rankedHousingAlternatives[1] || null;
 
-  const homeRecommendation = buildHomeRecommendation({
-    ctx,
-    financialCapacity: baseResult?.financialCapacity,
-    profileEligibility: baseResult?.profileEligibility || {},
-    targetEvaluation: baseResult?.targetEvaluation || {},
-  });
+ const rawHomeRecommendation = buildHomeRecommendation({
+  ctx,
+  financialCapacity: baseResult?.financialCapacity,
+  profileEligibility: baseResult?.profileEligibility || {},
+  targetEvaluation: baseResult?.targetEvaluation || {},
+});
+
+const homeRecommendation = creditBlocked
+  ? {
+      type: "credit_repair_needed",
+      title: "Primero revisa tu historial financiero.",
+      subtitle:
+        "Aunque tu perfil pueda mostrar una capacidad referencial, una mora activa declarada puede bloquear una conversación financiera real.",
+      mainMessage:
+        "HabitaLibre puede orientarte, pero antes de avanzar con banco, cooperativa o promotor conviene resolver o aclarar este punto.",
+      detailMessage:
+        creditAssessment?.recommendedAction ||
+        "Revisa tu historial financiero, valida si existe mora activa y evita enviar tu caso como listo para banco hasta tener más claridad.",
+      cta: {
+        label: "Actualizar historial financiero",
+        path: "/journey/full",
+      },
+      actionHints: creditAssessment?.reasons || [],
+      blockers: {
+        primary: "buro",
+        immediateApproval: false,
+      },
+      immediateGuidance: null,
+      monthlyPaymentReference: baseResult?.cuotaEstimada || null,
+      alternatives: [],
+      creditAssessment,
+      readinessStatus,
+    }
+  : rawHomeRecommendation;
 
  return {
   ...baseResult,
 
   creditAssessment,
   readinessStatus,
+
+  bancoSugerido: creditBlocked ? null : baseResult?.bancoSugerido,
+  productoSugerido: creditBlocked ? null : baseResult?.productoSugerido,
+  sinOferta: creditBlocked ? true : baseResult?.sinOferta,
+
+  financialCapacity: {
+    ...(baseResult?.financialCapacity || {}),
+    hasImmediateViableMortgage: creditBlocked
+      ? false
+      : baseResult?.financialCapacity?.hasImmediateViableMortgage === true,
+    bankSubmissionBlocked: creditBlocked,
+    bankSubmissionBlockReason: creditBlocked ? "credit_repair_needed" : null,
+  },
+
 
   scoreBase: baseResult?.score ?? null,
   score: creditAdjustedScore,
