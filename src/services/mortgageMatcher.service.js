@@ -2882,6 +2882,55 @@ function buildHomeRecommendation({
     };
   }
 
+const hasFutureEntryRouteWithoutCurrentRoute =
+  !hasImmediateViableMortgage &&
+  targetPrice <= 0 &&
+  estimatedMaxPropertyValue <= 0 &&
+  plannedFuturePrice > 0 &&
+  capacidadEntradaMensual > 0 &&
+  plannedMonths > 0;
+
+if (hasFutureEntryRouteWithoutCurrentRoute) {
+  return {
+    type: "future_entry_route",
+    title: "Puedes construir tu entrada durante obra.",
+    subtitle: `Hoy no tienes entrada suficiente para una compra inmediata, pero si ahorras aproximadamente ${formatMoneyShort(
+      capacidadEntradaMensual
+    )} al mes durante ${plannedMonths} meses, podrías acercarte a una vivienda de hasta ${formatMoneyShort(
+      plannedFuturePrice
+    )}.`,
+    mainMessage:
+      "Tu ruta no es compra inmediata. Tu mejor camino hoy es buscar proyectos en construcción que permitan completar la entrada durante la obra.",
+    detailMessage: `Con una entrada futura proyectada de aproximadamente ${formatMoneyShort(
+      plannedFutureEntry
+    )}, podrías abrir una ruta hipotecaria referencial más adelante.`,
+    cta: {
+      label: "Ver proyectos con entrada en cuotas",
+      path: "/marketplace",
+    },
+    actionHints: [
+      "Prioriza proyectos en construcción o preventa.",
+      "Confirma si el proyecto permite pagar la entrada en cuotas.",
+      "Evita asumir nuevas deudas mientras construyes la entrada.",
+    ],
+    blockers: {
+      primary: "entrada",
+      immediateApproval: false,
+    },
+    immediateGuidance: null,
+    monthlyPaymentReference: plannedEntry?.estimatedMonthlyPayment || null,
+    alternatives,
+    targetEvaluation,
+    realityCheck: {
+      currentMaxPropertyValue: estimatedMaxPropertyValue,
+      projectedMaxPropertyValue: plannedFuturePrice,
+      projectedEntryAmount: plannedFutureEntry,
+      projectedMonths: plannedMonths,
+    },
+    profileProgramsThatCouldWorkIfRangeAdjusted: topStructuralOptions,
+  };
+}
+
   if (estimatedMaxPropertyValue > 0) {
     if (limitingFactor === "cuota") {
       if (targetPrice > estimatedMaxPropertyValue) {
@@ -3336,11 +3385,20 @@ const primaryCapacityScenario =
   const topLevelRate = primaryCapacityScenario?.annualRate ?? null;
   const topLevelLoan = primaryCapacityScenario?.montoPrestamo ?? 0;
 
-  const bancoSugerido =
-    bestMortgage?.label ?? primaryCapacityScenario?.label ?? null;
+const hasCurrentConcreteRoute =
+  !!bestMortgage ||
+  n(primaryCapacityScenario?.precioMaxVivienda, 0) > 0;
 
-  const productoSugerido =
-    bestMortgage?.segment ?? primaryCapacityScenario?.segment ?? null;
+const bancoSugerido = hasCurrentConcreteRoute
+  ? bestMortgage?.label ?? primaryCapacityScenario?.label ?? null
+  : null;
+
+const productoSugerido = hasCurrentConcreteRoute
+  ? bestMortgage?.segment ??
+    primaryCapacityScenario?.segment ??
+    primaryCapacityScenario?.mortgage?.segment ??
+    null
+  : null;
 
   const topLevelScore = hasTargetPropertyValue
     ? bestMortgage?.score ?? primaryCapacityScenario?.score ?? 0
