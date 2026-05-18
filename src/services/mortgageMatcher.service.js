@@ -780,6 +780,24 @@ const termMonths = termMeta.termMonths || effectiveYears * 12;
     precioMaxPrograma
   );
 
+  const propertyMin = n(caps.propertyMin, 0);
+const reachesProductMin =
+  propertyMin <= 0 || precioMaxPerfil >= propertyMin - 1e-6;
+
+const hasProfileCapacity = precioMaxPerfil > 0;
+
+const canUseProductRange = hasProfileCapacity && reachesProductMin;
+
+const rangeReasons = [];
+
+if (hasProfileCapacity && !reachesProductMin) {
+  rangeReasons.push(
+    `Capacidad estimada debajo del mínimo del producto: ${money(
+      precioMaxPerfil
+    )} < ${money(propertyMin)}`
+  );
+}
+
   const precioMaxVivienda = precioMaxPerfil;
 
   const EPS = 1e-6;
@@ -946,6 +964,18 @@ requestedLoan,
    Evalúa elegibilidad estructural por perfil
    Ignora la meta puntual de vivienda del usuario.
 =========================================================== */
+/* ===========================================================
+   Evalúa elegibilidad estructural por perfil
+   Ignora la meta puntual de vivienda del usuario.
+
+   Ajuste importante:
+   - Si el producto tiene propertyMin y la capacidad estimada
+     del usuario no llega a ese mínimo, el producto NO debe
+     considerarse viable por perfil.
+   - Esto evita que BIESS_MEDIA / BIESS_ALTA / BIESS_LUJO
+     aparezcan como viables cuando el usuario solo alcanza
+     un rango menor.
+=========================================================== */
 function evaluateMortgageProfileFit(
   product,
   ctx,
@@ -1000,23 +1030,38 @@ function evaluateMortgageProfileFit(
       name: product.name,
       provider: product.channel || null,
       segment: product.segment,
+      category: product.category,
       type: "mortgage_profile_fit",
+
       structurallyEligible: false,
       couldWorkIfRangeAdjusted: false,
+
       annualRate: null,
       cuota: 0,
       montoPrestamo: 0,
-      precioMaxVivienda: 0,
+      cuotaMax: 0,
+      subsidyAmount: n(subsidyAmount),
+      ltvMax: n(product?.risk?.ltvMax, 0),
+      dtiMax: n(product?.risk?.dtiMax, 0),
+
+      precioMaxProgramaHipoteca: 0,
+      precioMaxProgramaSubsidio: 0,
+      precioMaxPrograma: 0,
       precioMaxPorCuota: 0,
       precioMaxPorEntrada: 0,
-      precioMaxPrograma: 0,
+      precioMaxPerfil: 0,
       factorLimitante: null,
+      precioMaxVivienda: 0,
+
       flags: baseEligibility.flags,
+
       reasons: Object.entries(baseEligibility.flags)
         .filter(([, v]) => v === false)
         .map(([k]) => `Falla en ${k}`),
+
       score: 0,
       probabilidad: null,
+      scoreHL: null,
       product,
     };
   }
@@ -1028,6 +1073,8 @@ function evaluateMortgageProfileFit(
 
   const propertyCap =
     caps.propertyMax == null ? Infinity : n(caps.propertyMax, Infinity);
+
+  const propertyMin = n(caps.propertyMin, 0);
 
   const propertyForRate =
     propertyCap === Infinity
@@ -1051,42 +1098,50 @@ function evaluateMortgageProfileFit(
       name: product.name,
       provider: product.channel || null,
       segment: product.segment,
+      category: product.category,
       type: "mortgage_profile_fit",
+
       structurallyEligible: false,
       couldWorkIfRangeAdjusted: false,
+
       annualRate: null,
       cuota: 0,
       montoPrestamo: 0,
-      precioMaxVivienda: 0,
+      cuotaMax,
+      subsidyAmount: n(subsidyAmount),
+      ltvMax,
+      dtiMax,
+
+      precioMaxProgramaHipoteca: 0,
+      precioMaxProgramaSubsidio: 0,
+      precioMaxPrograma: 0,
       precioMaxPorCuota: 0,
       precioMaxPorEntrada: 0,
-      precioMaxPrograma: 0,
+      precioMaxPerfil: 0,
       factorLimitante: null,
+      precioMaxVivienda: 0,
+
       flags: {
         ...baseEligibility.flags,
         rateOk: false,
       },
-      reasons: ["No hay tasa resolvible para este producto"],
+
+      reasons: ["No hay tasa resolvible para este producto/perfil."],
+
       score: 0,
       probabilidad: null,
+      scoreHL: null,
       product,
     };
   }
 
   const monthlyRate = annualRate / 12;
-const termMeta = buildTermMetadata(product, effectiveYears);
-const termMonths = termMeta.termMonths || effectiveYears * 12;
+  const termMeta = buildTermMetadata(product, effectiveYears);
+  const termMonths = termMeta.termMonths || effectiveYears * 12;
 
   const montoMaxPorCuota = pvFromPayment(monthlyRate, termMonths, cuotaMax);
 
-  const priceCapByLoanProgram =
-    caps.loanCap == null
-      ? Infinity
-      : ltvMax > 0
-      ? n(caps.loanCap) / ltvMax
-      : Infinity;
-
-  const precioMaxProgramaHipoteca = Math.min(propertyCap, priceCapByLoanProgram);
+  const precioMaxProgramaHipoteca = propertyCap;
 
   const precioMaxProgramaSubsidio =
     subsidyProduct?.caps?.propertyMax == null
@@ -1106,21 +1161,39 @@ const termMonths = termMeta.termMonths || effectiveYears * 12;
       ? (n(ctx.entradaDisponible) + n(subsidyAmount)) / (1 - ltvMax)
       : Infinity;
 
-  const precioMaxPerfil = Math.min(
+  const precioMaxPerfilRaw = Math.min(
     precioMaxPorCuota,
     precioMaxPorEntrada,
     precioMaxPrograma
   );
 
   const EPS = 1e-6;
+
+  const reachesProductMin =
+    propertyMin <= 0 || precioMaxPerfilRaw >= propertyMin - EPS;
+
+  const precioMaxPerfil = reachesProductMin ? precioMaxPerfilRaw : 0;
+
   let factorLimitante = "programa";
 
-  if (Math.abs(precioMaxPerfil - precioMaxPorEntrada) < EPS) {
+  if (!reachesProductMin) {
+    factorLimitante = "rango_minimo_producto";
+  } else if (Math.abs(precioMaxPerfilRaw - precioMaxPorEntrada) < EPS) {
     factorLimitante = "entrada";
-  } else if (Math.abs(precioMaxPerfil - precioMaxPorCuota) < EPS) {
+  } else if (Math.abs(precioMaxPerfilRaw - precioMaxPorCuota) < EPS) {
     factorLimitante = "cuota";
-  } else if (Math.abs(precioMaxPerfil - precioMaxPrograma) < EPS) {
+  } else if (Math.abs(precioMaxPerfilRaw - precioMaxPrograma) < EPS) {
     factorLimitante = "programa";
+  }
+
+  const rangeReasons = [];
+
+  if (!reachesProductMin) {
+    rangeReasons.push(
+      `Capacidad estimada debajo del mínimo del producto: ${money(
+        precioMaxPerfilRaw
+      )} < ${money(propertyMin)}`
+    );
   }
 
   const montoPrestamoPerfil = Math.max(
@@ -1131,7 +1204,8 @@ const termMonths = termMeta.termMonths || effectiveYears * 12;
     )
   );
 
-  const cuotaPerfil = pmt(monthlyRate, termMonths, montoPrestamoPerfil);
+  const cuotaPerfil =
+    montoPrestamoPerfil > 0 ? pmt(monthlyRate, termMonths, montoPrestamoPerfil) : 0;
 
   let tipoCredito = "default";
 
@@ -1170,6 +1244,7 @@ const termMonths = termMeta.termMonths || effectiveYears * 12;
   if (factorLimitante === "entrada") scoreBase -= 8;
   if (factorLimitante === "cuota") scoreBase -= 6;
   if (factorLimitante === "programa") scoreBase -= 4;
+  if (factorLimitante === "rango_minimo_producto") scoreBase -= 18;
 
   if (ctx.tipoIngreso === "Dependiente") {
     if (ctx.tipoContrato === "indefinido") scoreBase += 3;
@@ -1188,11 +1263,17 @@ const termMonths = termMeta.termMonths || effectiveYears * 12;
   let score = Math.round((scoreBase + n(scoreHL?.score, scoreBase)) / 2);
   score = clamp(score, 0, 100);
 
+  if (!reachesProductMin && score >= 60) {
+    score = 59;
+  }
+
   let probabilidad = "Baja";
 
   if (score >= 80) probabilidad = "Alta";
   else if (score >= 60) probabilidad = "Media";
   else if (score < 40) probabilidad = "Muy baja";
+
+  const canUseProductRange = reachesProductMin && precioMaxPerfil > 0;
 
   return {
     id: product.id,
@@ -1201,11 +1282,14 @@ const termMonths = termMeta.termMonths || effectiveYears * 12;
     segment: product.segment,
     category: product.category,
     type: "mortgage_profile_fit",
+
     structurallyEligible: true,
-    couldWorkIfRangeAdjusted: precioMaxPerfil > 0,
-annualRate,
-...termMeta,
-cuota: cuotaPerfil,
+    couldWorkIfRangeAdjusted: canUseProductRange,
+
+    annualRate,
+    ...termMeta,
+
+    cuota: cuotaPerfil,
     montoPrestamo: montoPrestamoPerfil,
     cuotaMax,
     subsidyAmount: n(subsidyAmount),
@@ -1217,15 +1301,27 @@ cuota: cuotaPerfil,
     precioMaxPrograma,
     precioMaxPorCuota,
     precioMaxPorEntrada,
+
+    // Mantengo ambos:
+    // - precioMaxPerfilRaw: capacidad teórica calculada antes del mínimo.
+    // - precioMaxPerfil: 0 si no llega al mínimo del producto.
+    precioMaxPerfilRaw,
     precioMaxPerfil,
+
+    propertyMin,
+    reachesProductMin,
+
     factorLimitante,
-    precioMaxVivienda: precioMaxPerfil,
+    precioMaxVivienda: canUseProductRange ? precioMaxPerfil : 0,
 
     flags: {
       ...baseEligibility.flags,
       rateOk: true,
+      productRangeOk: reachesProductMin,
     },
-    reasons: [],
+
+    reasons: [...rangeReasons],
+
     score,
     probabilidad,
     scoreHL,
