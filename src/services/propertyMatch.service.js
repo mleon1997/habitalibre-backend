@@ -493,9 +493,29 @@ function computeEstadoCompra({
   const hipotecaHoyViable =
     mortgageCompatibleHoy === true && evaluacionHipotecaHoy?.viable === true;
 
-  const hipotecaFuturaViable = evaluacionHipotecaFutura?.viable === true;
+ const hipotecaFuturaViable = evaluacionHipotecaFutura?.viable === true;
 
-  if (esConstruccion) {
+const userPrefersUsed =
+  String(ctx?.tipoVivienda || "").toLowerCase() === "usada" ||
+  ctx?.viviendaEstrenar === false;
+
+const propertyIsNew =
+  property?.proyectoNuevo === true ||
+  String(property?.tipoEntrega || "").toLowerCase() === "construccion";
+
+const propertyTypeMismatch = userPrefersUsed && propertyIsNew;
+
+if (
+  propertyTypeMismatch &&
+  (hipotecaHoyViable ||
+    hipotecaFuturaViable ||
+    viableEntrada ||
+    puedeCompletarEntradaDuranteObra)
+) {
+  return "tipo_vivienda_no_preferido";
+}
+
+if (esConstruccion) {
     if (entradaCompletaHoy && (hipotecaHoyViable || hipotecaFuturaViable)) {
       return "top_match";
     }
@@ -546,13 +566,17 @@ function buildMatchReason({
   creditAssessment,
 }) {
   if (estadoCompra === "credit_repair_needed") {
-    return (
-      creditAssessment?.recommendedAction ||
-      "Antes de avanzar con banco o cooperativa, conviene revisar tu historial financiero declarado."
-    );
-  }
+  return (
+    creditAssessment?.recommendedAction ||
+    "Antes de avanzar con banco o cooperativa, conviene revisar tu historial financiero declarado."
+  );
+}
 
-  if (estadoCompra === "top_match") {
+if (estadoCompra === "tipo_vivienda_no_preferido") {
+  return "Esta propiedad puede calzar financieramente, pero no coincide con tu preferencia de vivienda usada.";
+}
+
+if (estadoCompra === "top_match") {
     if (property?.tipoEntrega === "construccion") {
       return "Proyecto compatible con tu perfil y tu ruta estimada";
     }
@@ -592,7 +616,13 @@ function buildMatchReason({
 function buildMatchBadge({ property, estadoCompra, evaluacionEntrada }) {
   if (estadoCompra === "credit_repair_needed") return "Revisar buró";
 
-  if (estadoCompra === "top_match") return "Top match";
+if (estadoCompra === "fuera_de_reglas") return "No aplica";
+
+if (estadoCompra === "tipo_vivienda_no_preferido") {
+  return "Alternativa nueva";
+}
+
+if (estadoCompra === "top_match") return "Top match";
 
   if (estadoCompra === "entrada_viable_hipoteca_futura_viable") {
     return "Ruta futura";
@@ -645,9 +675,10 @@ function getEstadoRank(estadoCompra) {
     entrada_viable_hipoteca_futura_viable: 2,
     entrada_viable_hipoteca_futura_debil: 3,
     ruta_cercana: 4,
-    entrada_no_viable: 5,
-    credit_repair_needed: 6,
-    fuera_de_reglas: 7,
+    tipo_vivienda_no_preferido: 5,
+    entrada_no_viable: 6,
+    credit_repair_needed: 7,
+    fuera_de_reglas: 8,
   };
 
   return map[estadoCompra] || 99;
