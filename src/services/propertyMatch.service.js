@@ -100,6 +100,37 @@ function getAllowedProductIds(property) {
   return raw.map(normalizeMortgageProductId).filter(Boolean);
 }
 
+function getStrictPolicyProductIds(mortgageResult) {
+  const strictIds =
+    mortgageResult?.propertyRecommendationPolicy?.strictProductIds || [];
+
+  return strictIds.map(normalizeMortgageProductId).filter(Boolean);
+}
+
+function propertyMatchesStrictPolicy(property, mortgageResult) {
+  const strictProductIds = getStrictPolicyProductIds(mortgageResult);
+
+  const propertyProductIds = getAllowedProductIds(property);
+
+  if (!strictProductIds.length) {
+    return {
+      hasStrictPolicy: false,
+      ok: true,
+      strictProductIds: [],
+      propertyProductIds,
+    };
+  }
+
+  const ok = propertyProductIds.some((id) => strictProductIds.includes(id));
+
+  return {
+    hasStrictPolicy: true,
+    ok,
+    strictProductIds,
+    propertyProductIds,
+  };
+}
+
 function propertyAcceptsMortgage(property, rankedMortgages = []) {
   const allowed = getAllowedProductIds(property);
 
@@ -132,10 +163,10 @@ function selectBestMortgageForProperty(property, rankedMortgages = []) {
   });
 
   if (allowed.length && !compatible.length) {
-  return null;
-}
+    return null;
+  }
 
-return compatible[0] || viable[0] || null;
+  return compatible[0] || viable[0] || null;
 }
 
 function checkPropertyRules(property, ctx) {
@@ -147,6 +178,7 @@ function checkPropertyRules(property, ctx) {
     !!profile.requiresMiduviQualifiedProject;
 
   const firstHomeOk = requiresFirstHome ? !!ctx.primeraVivienda : true;
+
   const newConstructionOk = requiresNewConstruction
     ? !!property.proyectoNuevo
     : true;
@@ -174,6 +206,7 @@ function getProjectFinancing(property) {
   );
 
   const mortgagePctRaw = n(financing?.mortgagePct, 1 - downPaymentPct);
+
   const mortgagePct =
     mortgagePctRaw > 0 ? mortgagePctRaw : Math.max(0, 1 - downPaymentPct);
 
@@ -448,12 +481,17 @@ function computeEstadoCompra({
   ctx,
   creditAssessment,
   readinessStatus,
+  policyMatch,
 }) {
   if (isCreditBlocked(creditAssessment, readinessStatus)) {
     return "credit_repair_needed";
   }
 
   if (!reglasPropiedad?.ok) return "fuera_de_reglas";
+
+  if (policyMatch?.hasStrictPolicy && !policyMatch?.ok) {
+    return "fuera_de_ruta_recomendada";
+  }
 
   const esConstruccion = evaluacionEntrada?.modalidadEntrada === "construccion";
 
@@ -493,29 +531,29 @@ function computeEstadoCompra({
   const hipotecaHoyViable =
     mortgageCompatibleHoy === true && evaluacionHipotecaHoy?.viable === true;
 
- const hipotecaFuturaViable = evaluacionHipotecaFutura?.viable === true;
+  const hipotecaFuturaViable = evaluacionHipotecaFutura?.viable === true;
 
-const userPrefersUsed =
-  String(ctx?.tipoVivienda || "").toLowerCase() === "usada" ||
-  ctx?.viviendaEstrenar === false;
+  const userPrefersUsed =
+    String(ctx?.tipoVivienda || "").toLowerCase() === "usada" ||
+    ctx?.viviendaEstrenar === false;
 
-const propertyIsNew =
-  property?.proyectoNuevo === true ||
-  String(property?.tipoEntrega || "").toLowerCase() === "construccion";
+  const propertyIsNew =
+    property?.proyectoNuevo === true ||
+    String(property?.tipoEntrega || "").toLowerCase() === "construccion";
 
-const propertyTypeMismatch = userPrefersUsed && propertyIsNew;
+  const propertyTypeMismatch = userPrefersUsed && propertyIsNew;
 
-if (
-  propertyTypeMismatch &&
-  (hipotecaHoyViable ||
-    hipotecaFuturaViable ||
-    viableEntrada ||
-    puedeCompletarEntradaDuranteObra)
-) {
-  return "tipo_vivienda_no_preferido";
-}
+  if (
+    propertyTypeMismatch &&
+    (hipotecaHoyViable ||
+      hipotecaFuturaViable ||
+      viableEntrada ||
+      puedeCompletarEntradaDuranteObra)
+  ) {
+    return "tipo_vivienda_no_preferido";
+  }
 
-if (esConstruccion) {
+  if (esConstruccion) {
     if (entradaCompletaHoy && (hipotecaHoyViable || hipotecaFuturaViable)) {
       return "top_match";
     }
@@ -566,17 +604,21 @@ function buildMatchReason({
   creditAssessment,
 }) {
   if (estadoCompra === "credit_repair_needed") {
-  return (
-    creditAssessment?.recommendedAction ||
-    "Antes de avanzar con banco o cooperativa, conviene revisar tu historial financiero declarado."
-  );
-}
+    return (
+      creditAssessment?.recommendedAction ||
+      "Antes de avanzar con banco o cooperativa, conviene revisar tu historial financiero declarado."
+    );
+  }
 
-if (estadoCompra === "tipo_vivienda_no_preferido") {
-  return "Esta propiedad puede calzar financieramente, pero no coincide con tu preferencia de vivienda usada.";
-}
+  if (estadoCompra === "tipo_vivienda_no_preferido") {
+    return "Esta propiedad puede calzar financieramente, pero no coincide con tu preferencia de vivienda usada.";
+  }
 
-if (estadoCompra === "top_match") {
+  if (estadoCompra === "fuera_de_ruta_recomendada") {
+    return "Esta propiedad puede calzar financieramente, pero no coincide con la ruta hipotecaria recomendada para tu perfil.";
+  }
+
+  if (estadoCompra === "top_match") {
     if (property?.tipoEntrega === "construccion") {
       return "Proyecto compatible con tu perfil y tu ruta estimada";
     }
@@ -585,7 +627,7 @@ if (estadoCompra === "top_match") {
   }
 
   if (estadoCompra === "entrada_viable_hipoteca_futura_viable") {
-    return `Podrías completar la entrada durante la obra y luego aplicar a hipoteca`;
+    return "Podrías completar la entrada durante la obra y luego aplicar a hipoteca";
   }
 
   if (estadoCompra === "entrada_viable_hipoteca_futura_debil") {
@@ -616,13 +658,17 @@ if (estadoCompra === "top_match") {
 function buildMatchBadge({ property, estadoCompra, evaluacionEntrada }) {
   if (estadoCompra === "credit_repair_needed") return "Revisar buró";
 
-if (estadoCompra === "fuera_de_reglas") return "No aplica";
+  if (estadoCompra === "fuera_de_reglas") return "No aplica";
 
-if (estadoCompra === "tipo_vivienda_no_preferido") {
-  return "Alternativa nueva";
-}
+  if (estadoCompra === "tipo_vivienda_no_preferido") {
+    return "Alternativa nueva";
+  }
 
-if (estadoCompra === "top_match") return "Top match";
+  if (estadoCompra === "fuera_de_ruta_recomendada") {
+    return "Otra ruta";
+  }
+
+  if (estadoCompra === "top_match") return "Top match";
 
   if (estadoCompra === "entrada_viable_hipoteca_futura_viable") {
     return "Ruta futura";
@@ -633,17 +679,6 @@ if (estadoCompra === "top_match") return "Top match";
   }
 
   if (
-  estadoCompra === "ruta_cercana" &&
-  property?.tipoEntrega === "inmediata"
-) {
-  return "Fuera de rango";
-}
-
-if (estadoCompra === "ruta_cercana") {
-  return "Ruta cercana";
-}
-
-  if (
     estadoCompra === "ruta_cercana" &&
     evaluacionEntrada?.modalidadEntrada === "construccion" &&
     !evaluacionEntrada?.puedeSepararHoy &&
@@ -651,6 +686,17 @@ if (estadoCompra === "ruta_cercana") {
       evaluacionEntrada?.puedeCubrirCuota)
   ) {
     return "Te falta reserva";
+  }
+
+  if (
+    estadoCompra === "ruta_cercana" &&
+    property?.tipoEntrega === "inmediata"
+  ) {
+    return "Fuera de rango";
+  }
+
+  if (estadoCompra === "ruta_cercana") {
+    return "Ruta cercana";
   }
 
   if (estadoCompra === "entrada_no_viable") {
@@ -675,10 +721,11 @@ function getEstadoRank(estadoCompra) {
     entrada_viable_hipoteca_futura_viable: 2,
     entrada_viable_hipoteca_futura_debil: 3,
     ruta_cercana: 4,
-    tipo_vivienda_no_preferido: 5,
-    entrada_no_viable: 6,
-    credit_repair_needed: 7,
-    fuera_de_reglas: 8,
+    fuera_de_ruta_recomendada: 5,
+    tipo_vivienda_no_preferido: 6,
+    entrada_no_viable: 7,
+    credit_repair_needed: 8,
+    fuera_de_reglas: 9,
   };
 
   return map[estadoCompra] || 99;
@@ -704,6 +751,8 @@ export function matchPropertiesToProfile({
   const evaluated = filteredByCity
     .map((property) => {
       const reglasPropiedad = checkPropertyRules(property, ctx);
+
+      const policyMatch = propertyMatchesStrictPolicy(property, mortgageResult);
 
       const mortgageCompatibleHoy = propertyAcceptsMortgage(
         property,
@@ -755,6 +804,7 @@ export function matchPropertiesToProfile({
         ctx,
         creditAssessment,
         readinessStatus,
+        policyMatch,
       });
 
       const viableProyecto =
@@ -763,7 +813,9 @@ export function matchPropertiesToProfile({
           estadoCompra === "entrada_viable_hipoteca_futura_viable");
 
       const mortgageSelected =
-        estadoCompra === "top_match" && selectedMortgageHoy
+        estadoCompra === "fuera_de_ruta_recomendada"
+          ? null
+          : estadoCompra === "top_match" && selectedMortgageHoy
           ? selectedMortgageHoy
           : evaluacionHipotecaFutura?.mortgageSelected ||
             selectedMortgageHoy ||
@@ -773,6 +825,7 @@ export function matchPropertiesToProfile({
         ...property,
         financing,
         matchedProducts: getAllowedProductIds(property),
+        evaluacionRutaRecomendada: policyMatch,
         evaluacionReglasPropiedad: reglasPropiedad,
         evaluacionHipotecaHoy,
         evaluacionHipotecaFutura,
@@ -797,24 +850,29 @@ export function matchPropertiesToProfile({
     .sort((a, b) => {
       const estadoA = getEstadoRank(a?.estadoCompra);
       const estadoB = getEstadoRank(b?.estadoCompra);
+
       if (estadoA !== estadoB) return estadoA - estadoB;
 
       const cuotaEntradaA = n(
         a?.evaluacionEntrada?.cuotaEntradaMensual,
         Number.MAX_SAFE_INTEGER
       );
+
       const cuotaEntradaB = n(
         b?.evaluacionEntrada?.cuotaEntradaMensual,
         Number.MAX_SAFE_INTEGER
       );
+
       if (cuotaEntradaA !== cuotaEntradaB) return cuotaEntradaA - cuotaEntradaB;
 
       const scoreFuturoA = n(a?.evaluacionHipotecaFutura?.score, 0);
       const scoreFuturoB = n(b?.evaluacionHipotecaFutura?.score, 0);
+
       if (scoreFuturoB !== scoreFuturoA) return scoreFuturoB - scoreFuturoA;
 
       const scoreHoyA = n(a?.evaluacionHipotecaHoy?.score, 0);
       const scoreHoyB = n(b?.evaluacionHipotecaHoy?.score, 0);
+
       if (scoreHoyB !== scoreHoyA) return scoreHoyB - scoreHoyA;
 
       return (
