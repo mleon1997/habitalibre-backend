@@ -32,6 +32,19 @@ function cityMatches(property, ciudadCompra) {
   return fields.some((f) => f.includes(target) || target.includes(f));
 }
 
+const ESTADOS_SIN_MORTGAGE_SELECTED = new Set([
+  "fuera_de_ruta_recomendada",
+  "fuera_de_reglas",
+  "credit_repair_needed",
+  "tipo_vivienda_no_preferido",
+  "entrada_no_viable",
+  "entrada_viable_hipoteca_futura_debil",
+]);
+
+function shouldHideMortgageSelected(estadoCompra) {
+  return ESTADOS_SIN_MORTGAGE_SELECTED.has(estadoCompra);
+}
+
 function normalizeMortgageProductId(id) {
   const s = String(id || "").trim().toUpperCase();
 
@@ -747,6 +760,17 @@ function getEstadoRank(estadoCompra) {
   return map[estadoCompra] || 99;
 }
 
+function sanitizePropertyMatchOutput(property) {
+  if (shouldHideMortgageSelected(property?.estadoCompra)) {
+    return {
+      ...property,
+      mortgageSelected: null,
+    };
+  }
+
+  return property;
+}
+
 export function matchPropertiesToProfile({
   ctx,
   mortgageResult,
@@ -834,14 +858,16 @@ export function matchPropertiesToProfile({
         (estadoCompra === "top_match" ||
           estadoCompra === "entrada_viable_hipoteca_futura_viable");
 
-      const mortgageSelected =
-        estadoCompra === "fuera_de_ruta_recomendada"
-          ? null
-          : estadoCompra === "top_match" && selectedMortgageHoy
+      const mortgageSelectedRaw =
+        estadoCompra === "top_match" && selectedMortgageHoy
           ? selectedMortgageHoy
           : evaluacionHipotecaFutura?.mortgageSelected ||
             selectedMortgageHoy ||
             null;
+
+      const mortgageSelected = shouldHideMortgageSelected(estadoCompra)
+        ? null
+        : mortgageSelectedRaw;
 
       return {
         ...property,
@@ -866,7 +892,9 @@ export function matchPropertiesToProfile({
           estadoCompra,
           evaluacionEntrada,
         }),
-        mortgageSelected,
+        mortgageSelected: shouldHideMortgageSelected(estadoCompra)
+          ? null
+          : mortgageSelected,
       };
     })
     .sort((a, b) => {
@@ -901,7 +929,8 @@ export function matchPropertiesToProfile({
         n(a?.precio, Number.MAX_SAFE_INTEGER) -
         n(b?.precio, Number.MAX_SAFE_INTEGER)
       );
-    });
+    })
+    .map(sanitizePropertyMatchOutput);
 
   return evaluated;
 }
