@@ -2676,15 +2676,27 @@ if (
   targetPrice > 0 &&
   targetPrice <= estimatedMaxPropertyValue + 1
 ) {
+  const targetRounded = Math.round(targetPrice);
+  const maxRounded = Math.round(estimatedMaxPropertyValue);
+
+  const bufferedMin = Math.round(estimatedMaxPropertyValue * 0.92);
+
+  const rangeMin = Math.max(
+    0,
+    Math.min(targetRounded, bufferedMin)
+  );
+
   return {
-    recommendedImmediateTargetPrice: Math.round(estimatedMaxPropertyValue),
+    recommendedImmediateTargetPrice: maxRounded,
     recommendedImmediateTargetRange: {
-      min: Math.round(estimatedMaxPropertyValue * 0.92),
-      max: Math.round(estimatedMaxPropertyValue),
+      min: rangeMin,
+      max: maxRounded,
     },
     message: `Tu precio meta de ${formatMoneyShort(
       targetPrice
-    )} está dentro del rango estimado para tu ruta hipotecaria actual.`,
+    )} está dentro del rango estimado para tu ruta hipotecaria actual. Puedes buscar propiedades cercanas a tu meta o explorar opciones de hasta ${formatMoneyShort(
+      estimatedMaxPropertyValue
+    )}.`,
   };
 }
 
