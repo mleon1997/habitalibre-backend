@@ -109,7 +109,6 @@ function getStrictPolicyProductIds(mortgageResult) {
 
 function propertyMatchesStrictPolicy(property, mortgageResult) {
   const strictProductIds = getStrictPolicyProductIds(mortgageResult);
-
   const propertyProductIds = getAllowedProductIds(property);
 
   if (!strictProductIds.length) {
@@ -145,28 +144,41 @@ function propertyAcceptsMortgage(property, rankedMortgages = []) {
   });
 }
 
-function selectBestMortgageForProperty(property, rankedMortgages = []) {
+function selectBestMortgageForProperty(
+  property,
+  rankedMortgages = [],
+  mortgageResult = null
+) {
   const allowed = getAllowedProductIds(property);
+  const strictProductIds = getStrictPolicyProductIds(mortgageResult);
 
   const viable = rankedMortgages.filter((m) => !!m?.viable);
 
   if (!viable.length) return null;
 
-  const compatible = viable.filter((m) => {
-    if (!allowed.length) return true;
+  const normalizeMortgage = (m) =>
+    normalizeMortgageProductId(m?.mortgageId || m?.segment || m?.label);
 
-    const normalized = normalizeMortgageProductId(
-      m?.mortgageId || m?.segment || m?.label
-    );
+  const compatible = viable.filter((m) => {
+    const normalized = normalizeMortgage(m);
+
+    if (!allowed.length) return true;
 
     return normalized && allowed.includes(normalized);
   });
 
-  if (allowed.length && !compatible.length) {
-    return null;
+  if (!compatible.length) return null;
+
+  if (strictProductIds.length) {
+    const strictCompatible = compatible.filter((m) => {
+      const normalized = normalizeMortgage(m);
+      return normalized && strictProductIds.includes(normalized);
+    });
+
+    return strictCompatible[0] || null;
   }
 
-  return compatible[0] || viable[0] || null;
+  return compatible[0] || null;
 }
 
 function checkPropertyRules(property, ctx) {
@@ -359,7 +371,12 @@ function buildProjectedCtx(ctx, property, evaluacionEntrada = null) {
   };
 }
 
-function buildFutureMortgageEvaluation({ property, ctx, evaluacionEntrada }) {
+function buildFutureMortgageEvaluation({
+  property,
+  ctx,
+  evaluacionEntrada,
+  mortgageResult = null,
+}) {
   const projectedCtx = buildProjectedCtx(ctx, property, evaluacionEntrada);
   const projectedMortgageResult = runMortgageMatcherCore(projectedCtx);
 
@@ -387,6 +404,7 @@ function buildFutureMortgageEvaluation({ property, ctx, evaluacionEntrada }) {
   );
 
   const allowed = getAllowedProductIds(property);
+  const strictProductIds = getStrictPolicyProductIds(mortgageResult);
 
   const compatibleMortgages = rankedMortgages.filter((m) => {
     const normalized = normalizeMortgageProductId(
@@ -410,7 +428,15 @@ function buildFutureMortgageEvaluation({ property, ctx, evaluacionEntrada }) {
     return !!m?.viable && allowedOk && cubrePrecio && cubreMonto;
   });
 
-  const selectedMortgage = compatibleMortgages[0] || null;
+  const selectedMortgage = strictProductIds.length
+    ? compatibleMortgages.find((m) => {
+        const normalized = normalizeMortgageProductId(
+          m?.mortgageId || m?.segment || m?.label
+        );
+
+        return normalized && strictProductIds.includes(normalized);
+      }) || null
+    : compatibleMortgages[0] || null;
 
   if (!selectedMortgage) {
     return {
@@ -761,7 +787,8 @@ export function matchPropertiesToProfile({
 
       const selectedMortgageHoy = selectBestMortgageForProperty(
         property,
-        rankedMortgagesHoy
+        rankedMortgagesHoy,
+        mortgageResult
       );
 
       const evaluacionHipotecaHoyBase = buildHipotecaEvaluation(
@@ -791,7 +818,12 @@ export function matchPropertiesToProfile({
 
       const evaluacionHipotecaFutura =
         evaluacionEntrada?.modalidadEntrada === "construccion"
-          ? buildFutureMortgageEvaluation({ property, ctx, evaluacionEntrada })
+          ? buildFutureMortgageEvaluation({
+              property,
+              ctx,
+              evaluacionEntrada,
+              mortgageResult,
+            })
           : null;
 
       const estadoCompra = computeEstadoCompra({
