@@ -37,19 +37,9 @@ function normalizeMortgageProductId(id) {
 
   if (!s) return null;
 
-  if (
-    [
-      "BIESS_CREDICASA",
-      "BIESS_VIS_VIP",
-      "BIESS_MEDIA",
-      "BIESS_ALTA",
-      "BIESS_LUJO",
-      "BIESS_STD",
-    ].includes(s)
-  ) {
-    return "BIESS_STD";
-  }
-
+  // Mantener cada tramo BIESS separado.
+  // No colapsar BIESS_MEDIA, BIESS_ALTA, BIESS_VIS_VIP, etc. en BIESS_STD,
+  // porque eso rompe la política estricta de recomendación por ruta.
   if (s === "VIS_II") return "VIS";
 
   return s;
