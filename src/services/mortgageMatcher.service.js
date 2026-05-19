@@ -748,7 +748,20 @@ const termMonths = termMeta.termMonths || effectiveYears * 12;
   const dtiMax = n(risk.dtiMax, 0.4);
   const ltvMax = n(risk.ltvMax, 0.85);
 
-  const cuotaMax = Math.max(0, ingresoDisponible * dtiMax);
+const deudasMensuales = n(ctx.otrasDeudasMensuales, 0);
+
+const capacidadMaxEndeudamiento = Math.max(0, ingresoTotal * dtiMax);
+
+const cuotaMax = Math.max(
+  0,
+  capacidadMaxEndeudamiento - deudasMensuales
+);
+
+const existingDebtRatio =
+  ingresoTotal > 0 ? deudasMensuales / ingresoTotal : 0;
+
+const existingDebtExceedsDti =
+  deudasMensuales >= capacidadMaxEndeudamiento - 1e-6;
   const montoMaxPorCuota = pvFromPayment(monthlyRate, termMonths, cuotaMax);
 
   const capHipoteca = propertyMax;
@@ -790,10 +803,18 @@ const canUseProductRange = hasProfileCapacity && reachesProductMin;
 
 const rangeReasons = [];
 
-if (hasProfileCapacity && !reachesProductMin) {
+if (existingDebtExceedsDti) {
+  rangeReasons.push(
+    `Las deudas actuales ya superan la capacidad máxima recomendada de endeudamiento: ${money(
+      deudasMensuales
+    )} >= ${money(capacidadMaxEndeudamiento)}`
+  );
+}
+
+if (!reachesProductMin) {
   rangeReasons.push(
     `Capacidad estimada debajo del mínimo del producto: ${money(
-      precioMaxPerfil
+      precioMaxPerfilRaw
     )} < ${money(propertyMin)}`
   );
 }
@@ -1069,7 +1090,20 @@ function evaluateMortgageProfileFit(
   const dtiMax = n(risk.dtiMax, 0.4);
   const ltvMax = n(risk.ltvMax, 0.85);
 
-  const cuotaMax = Math.max(0, ingresoDisponible * dtiMax);
+  const deudasMensuales = n(ctx.otrasDeudasMensuales, 0);
+
+const capacidadMaxEndeudamiento = Math.max(0, ingresoTotal * dtiMax);
+
+const cuotaMax = Math.max(
+  0,
+  capacidadMaxEndeudamiento - deudasMensuales
+);
+
+const existingDebtRatio =
+  ingresoTotal > 0 ? deudasMensuales / ingresoTotal : 0;
+
+const existingDebtExceedsDti =
+  deudasMensuales >= capacidadMaxEndeudamiento - 1e-6;
 
   const propertyCap =
     caps.propertyMax == null ? Infinity : n(caps.propertyMax, Infinity);
@@ -1186,6 +1220,10 @@ function evaluateMortgageProfileFit(
     factorLimitante = "programa";
   }
 
+  if (existingDebtExceedsDti) {
+  factorLimitante = "deudas";
+}
+
   const rangeReasons = [];
 
   if (!reachesProductMin) {
@@ -1273,8 +1311,10 @@ function evaluateMortgageProfileFit(
   else if (score >= 60) probabilidad = "Media";
   else if (score < 40) probabilidad = "Muy baja";
 
-  const canUseProductRange = reachesProductMin && precioMaxPerfil > 0;
+const hasRealMortgageCapacity = cuotaMax > 0 && montoMaxPorCuota > 0;
 
+const canUseProductRange =
+  reachesProductMin && precioMaxPerfil > 0 && hasRealMortgageCapacity;
   return {
     id: product.id,
     name: product.name,
