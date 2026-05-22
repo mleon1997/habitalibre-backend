@@ -4,7 +4,7 @@ console.log("✅ CARGADO mortgageMatcher.service.js NUEVO");
 
 import { mortgageCatalog, SBU } from "../config/mortgageCatalog.js";
 import scoreHabitaLibre from "../lib/scoreHabitaLibre.js";
-import matchPropertiesToProfile from "./propertyMatch.service.js";
+import { matchPropertiesToProfileFromDB } from "./propertyMatch.service.js";
 import { evaluateCreditRisk } from "./creditRisk.service.js";
 
 /* ===========================================================
@@ -3816,7 +3816,7 @@ function buildReadinessStatus({ baseResult = {}, creditAssessment = {} }) {
 /* ===========================================================
    API principal del matcher
 =========================================================== */
-export function runMortgageMatcher(input = {}) {
+export async function runMortgageMatcher(input = {}) {
   const ctx = normalizeInput(input);
   const hasTargetPropertyValue = n(ctx.valorVivienda, 0) > 0;
 
@@ -3846,7 +3846,7 @@ const creditBlocked =
   creditAssessment?.blocksBankSubmission === true ||
   readinessStatus === "credit_repair_needed";
 
-const rawMatchedProperties = matchPropertiesToProfile({
+const rawMatchedProperties = await matchPropertiesToProfileFromDB({
   ctx,
   mortgageResult: baseResult,
   creditAssessment,

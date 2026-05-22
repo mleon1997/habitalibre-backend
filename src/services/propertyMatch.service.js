@@ -1,6 +1,6 @@
 // src/services/propertyMatch.service.js
 
-import mockProperties from "../data/mockProperties.js";
+import Property from "../models/Property.js";
 import { evaluarEntradaProyecto } from "../utils/evaluarEntradaProyecto.js";
 import { runMortgageMatcherCore } from "./mortgageMatcher.service.js";
 
@@ -771,13 +771,85 @@ function sanitizePropertyMatchOutput(property) {
   return property;
 }
 
+
+function normalizePropertyForMatcher(property = {}) {
+  const p = property?.toObject ? property.toObject() : property;
+
+  return {
+    ...p,
+    id: p.id || String(p._id || ""),
+    precio: n(p.precio),
+    m2: n(p.m2),
+    dormitorios: n(p.dormitorios),
+    banos: n(p.banos),
+    parqueaderos: n(p.parqueaderos),
+    proyectoNuevo: !!p.proyectoNuevo,
+    permiteEntradaEnCuotas: !!p.permiteEntradaEnCuotas,
+    mesesConstruccionRestantes: n(p.mesesConstruccionRestantes),
+    porcentajeEntradaRequerida: n(p.porcentajeEntradaRequerida, 0.1),
+    reservaMinima: n(p.reservaMinima),
+    financing: {
+      downPaymentPct: n(
+        p.financing?.downPaymentPct,
+        p.porcentajeEntradaRequerida ?? 0.1
+      ),
+      mortgagePct: n(p.financing?.mortgagePct, 0.9),
+      allowInstallments:
+        p.financing?.allowInstallments ?? p.permiteEntradaEnCuotas ?? false,
+      reserveMin: n(p.financing?.reserveMin, p.reservaMinima ?? 0),
+      monthsConstruction: n(
+        p.financing?.monthsConstruction,
+        p.mesesConstruccionRestantes ?? 0
+      ),
+    },
+    mortgageProfile: {
+      productIds: Array.isArray(p.mortgageProfile?.productIds)
+        ? p.mortgageProfile.productIds
+        : [],
+      requiresFirstHome: !!p.mortgageProfile?.requiresFirstHome,
+      requiresNewConstruction: !!p.mortgageProfile?.requiresNewConstruction,
+      requiresMiduviQualifiedProject:
+        !!p.mortgageProfile?.requiresMiduviQualifiedProject,
+    },
+  };
+}
+
+export async function getMatchablePropertiesFromDB() {
+  const properties = await Property.find({
+    publicado: true,
+    estadoComercial: "disponible",
+  })
+    .sort({ orden: 1, precio: 1, createdAt: -1 })
+    .lean();
+
+  return properties.map(normalizePropertyForMatcher);
+}
+
+export async function matchPropertiesToProfileFromDB({
+  ctx,
+  mortgageResult,
+  creditAssessment = null,
+  readinessStatus = null,
+}) {
+  const properties = await getMatchablePropertiesFromDB();
+
+  return matchPropertiesToProfile({
+    ctx,
+    mortgageResult,
+    creditAssessment,
+    readinessStatus,
+    properties,
+  });
+}
+
 export function matchPropertiesToProfile({
   ctx,
   mortgageResult,
   creditAssessment = null,
   readinessStatus = null,
-  properties = mockProperties,
+  properties = [],
 }) {
+  
   const rankedMortgagesHoy = Array.isArray(mortgageResult?.rankedMortgages)
     ? mortgageResult.rankedMortgages
     : [];

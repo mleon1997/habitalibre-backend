@@ -13,6 +13,8 @@ import { verifySmtp } from "./utils/mailer.js";
 import Lead from "./models/Lead.js";
 import igRoutes from "./routes/ig.routes.js";
 import casosActivacionRoutes from "./routes/casosActivacion.routes.js";
+import propertiesRoutes from "./routes/properties.routes.js";
+
 
 
 
@@ -468,6 +470,7 @@ app.use("/api/user-app-state", userAppStateRoutes);
 app.use("/api/diag/mailer", diagMailerRoutes);
 app.use("/api/diag", diagRoutes);
 app.use("/api/precalificar", precalificarRoutes);
+app.use("/api/properties", propertiesRoutes);
 app.use("/api/mortgage", mortgageRoutes);
 app.use("/api/snapshots", snapshotsRoutes);
 app.use("/api/health", healthRoutes);
