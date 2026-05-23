@@ -1,4 +1,5 @@
 // src/controllers/properties.controller.js
+import mongoose from "mongoose";
 import Property from "../models/Property.js";
 
 function buildPropertyFilter(query = {}) {
@@ -49,6 +50,32 @@ function buildPropertyFilter(query = {}) {
   return filter;
 }
 
+function buildPropertyLookup(identifier) {
+  const value = String(identifier || "").trim();
+
+  if (!value) {
+    return { id: "__missing_property_id__" };
+  }
+
+  if (mongoose.Types.ObjectId.isValid(value)) {
+    return { _id: value };
+  }
+
+  return { id: value };
+}
+
+function sanitizeUpdatePayload(payload = {}) {
+  const cleanPayload = { ...payload };
+
+  delete cleanPayload._id;
+  delete cleanPayload.id;
+  delete cleanPayload.createdAt;
+  delete cleanPayload.updatedAt;
+  delete cleanPayload.__v;
+
+  return cleanPayload;
+}
+
 export async function listarPropiedades(req, res) {
   try {
     const filter = buildPropertyFilter(req.query);
@@ -78,9 +105,7 @@ export async function obtenerPropiedad(req, res) {
   try {
     const { id } = req.params;
 
-    const property = await Property.findOne({
-      $or: [{ id }, { _id: id }],
-    }).lean();
+    const property = await Property.findOne(buildPropertyLookup(id)).lean();
 
     if (!property) {
       return res.status(404).json({
@@ -140,15 +165,11 @@ export async function crearPropiedad(req, res) {
 export async function actualizarPropiedad(req, res) {
   try {
     const { id } = req.params;
-    const payload = req.body || {};
-
-    delete payload._id;
-    delete payload.createdAt;
-    delete payload.updatedAt;
+    const payload = sanitizeUpdatePayload(req.body || {});
 
     const property = await Property.findOneAndUpdate(
-      { $or: [{ id }, { _id: id }] },
-      payload,
+      buildPropertyLookup(id),
+      { $set: payload },
       { new: true, runValidators: true }
     );
 
@@ -187,9 +208,16 @@ export async function cambiarEstadoPropiedad(req, res) {
       update.publicado = publicado;
     }
 
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Debes enviar estadoComercial y/o publicado.",
+      });
+    }
+
     const property = await Property.findOneAndUpdate(
-      { $or: [{ id }, { _id: id }] },
-      update,
+      buildPropertyLookup(id),
+      { $set: update },
       { new: true, runValidators: true }
     );
 
@@ -217,9 +245,7 @@ export async function eliminarPropiedad(req, res) {
   try {
     const { id } = req.params;
 
-    const property = await Property.findOneAndDelete({
-      $or: [{ id }, { _id: id }],
-    });
+    const property = await Property.findOneAndDelete(buildPropertyLookup(id));
 
     if (!property) {
       return res.status(404).json({
@@ -230,7 +256,8 @@ export async function eliminarPropiedad(req, res) {
 
     return res.json({
       ok: true,
-      message: "Propiedad eliminada.",
+      message: "Propiedad eliminada correctamente.",
+      property,
     });
   } catch (error) {
     console.error("[properties] Error eliminarPropiedad:", error);
