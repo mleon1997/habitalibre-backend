@@ -8,43 +8,44 @@ import {
   cambiarEstadoPropiedad,
   eliminarPropiedad,
 } from "../controllers/properties.controller.js";
+import adminAuth from "../middlewares/adminAuth.js";
 
 const router = express.Router();
 
-function requirePropertyAdminKey(req, res, next) {
-  const expectedKey = process.env.PROPERTY_ADMIN_KEY;
-
-  if (!expectedKey) {
-    return res.status(500).json({
+/**
+ * Público para mobile / web.
+ * Solo debe devolver propiedades publicadas/disponibles.
+ */
+router.get("/", (req, res, next) => {
+  if (req.query?.publicado === "all") {
+    return res.status(403).json({
       ok: false,
-      message: "PROPERTY_ADMIN_KEY no está configurado en el servidor.",
+      message: "No autorizado para ver inventario completo.",
     });
   }
 
-  const receivedKey = req.header("x-admin-key");
-
-  if (!receivedKey || receivedKey !== expectedKey) {
-    return res.status(401).json({
-      ok: false,
-      message: "No autorizado para administrar propiedades.",
-    });
-  }
-
-  return next();
-}
+  return listarPropiedades(req, res, next);
+});
 
 /**
- * Públicas para mobile / web
+ * Admin: inventario completo.
  */
-router.get("/", listarPropiedades);
+router.get("/admin/all", adminAuth, (req, res, next) => {
+  req.query.publicado = "all";
+  return listarPropiedades(req, res, next);
+});
+
+/**
+ * Público: detalle de propiedad.
+ */
 router.get("/:id", obtenerPropiedad);
 
 /**
- * Admin protegido por x-admin-key
+ * Admin protegido por login admin JWT.
  */
-router.post("/", requirePropertyAdminKey, crearPropiedad);
-router.put("/:id", requirePropertyAdminKey, actualizarPropiedad);
-router.patch("/:id/status", requirePropertyAdminKey, cambiarEstadoPropiedad);
-router.delete("/:id", requirePropertyAdminKey, eliminarPropiedad);
+router.post("/", adminAuth, crearPropiedad);
+router.put("/:id", adminAuth, actualizarPropiedad);
+router.patch("/:id/status", adminAuth, cambiarEstadoPropiedad);
+router.delete("/:id", adminAuth, eliminarPropiedad);
 
 export default router;
