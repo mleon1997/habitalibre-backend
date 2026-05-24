@@ -698,13 +698,32 @@ function parseNumber(value, fallback = 0) {
 
   s = s.replace(/\$/g, "").replace(/\s/g, "");
 
-  if (s.includes(",") && s.includes(".")) {
-    s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",")) {
-    s = s.replace(",", ".");
-  } else {
+  // Si viene tipo "$52,900", la coma es separador de miles.
+  // Si viene tipo "52,90", la coma probablemente es decimal.
+  if (s.includes(",") && !s.includes(".")) {
+    const parts = s.split(",");
+
+    if (parts.length === 2 && parts[1]?.length === 3) {
+      s = parts.join("");
+    } else {
+      s = s.replace(",", ".");
+    }
+  } else if (s.includes(",") && s.includes(".")) {
+    // Caso tipo "1,250.50" o "1.250,50"
+    const commaIndex = s.lastIndexOf(",");
+    const dotIndex = s.lastIndexOf(".");
+
+    if (commaIndex > dotIndex) {
+      // Formato latino: 1.250,50
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      // Formato US: 1,250.50
+      s = s.replace(/,/g, "");
+    }
+  } else if (s.includes(".")) {
     const parts = s.split(".");
 
+    // Caso tipo "52.900" usado como miles
     if (parts.length === 2 && parts[1]?.length === 3) {
       s = parts.join("");
     }
