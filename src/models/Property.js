@@ -127,7 +127,7 @@ const PropertySchema = new mongoose.Schema(
     // Tipo de inmueble
     tipoInmueble: {
       type: String,
-      enum: ["departamento", "suite", "casa", "terreno"],
+      enum: ["departamento", "suite", "estudio", "casa", "terreno"],
       default: "departamento",
       index: true,
     },
