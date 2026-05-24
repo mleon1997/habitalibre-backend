@@ -17,11 +17,7 @@ const router = express.Router();
  * Importante: esta ruta va ANTES de "/:id".
  */
 router.get("/admin/all", adminAuth, (req, res, next) => {
-  req.query = {
-    ...(req.query || {}),
-    publicado: "all",
-  };
-
+  req.adminPropertiesAll = true;
   return listarPropiedades(req, res, next);
 });
 

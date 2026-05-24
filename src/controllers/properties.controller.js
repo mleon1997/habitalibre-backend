@@ -457,8 +457,12 @@ function sanitizeUpdatePayload(payload = {}) {
 
 export async function listarPropiedades(req, res) {
   try {
-    const filter = buildPropertyFilter(req.query);
+const query = {
+  ...(req.query || {}),
+  ...(req.adminPropertiesAll ? { publicado: "all" } : {}),
+};
 
+const filter = buildPropertyFilter(query);
     const limit = Math.min(Number(req.query.limit) || 100, 300);
 
     const properties = await Property.find(filter)
