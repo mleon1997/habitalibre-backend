@@ -3,6 +3,8 @@ import XLSX from "xlsx";
 import Property from "../models/Property.js";
 import {
   PROPERTY_ALLOWED_VALUES,
+  PROPERTY_FIELD_GUIDE,
+  PROPERTY_INSTRUCTIONS,
   PROPERTY_TEMPLATE_COLUMNS,
   buildPropertyTemplateRows,
   normalizePropertyExcelRow,
@@ -37,16 +39,52 @@ export async function descargarPlantillaPropiedades(req, res) {
   try {
     const workbook = XLSX.utils.book_new();
 
+    const instructionsSheet = XLSX.utils.aoa_to_sheet(PROPERTY_INSTRUCTIONS);
+    instructionsSheet["!cols"] = [{ wch: 34 }, { wch: 95 }];
+    XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucciones");
+
     const templateRows = buildPropertyTemplateRows();
 
     const templateSheet = XLSX.utils.json_to_sheet(templateRows, {
       header: PROPERTY_TEMPLATE_COLUMNS,
     });
 
+    templateSheet["!cols"] = PROPERTY_TEMPLATE_COLUMNS.map((column) => {
+      if (["descripcion", "direccionReferencial", "googleMapsUrl", "imagen", "galeria"].includes(column)) {
+        return { wch: 34 };
+      }
+
+      if (["titulo", "proyecto", "developer"].includes(column)) {
+        return { wch: 24 };
+      }
+
+      if (["fechaEntregaEstimada", "fechaEscrituraEstimada", "fechaLimiteEntrada"].includes(column)) {
+        return { wch: 18 };
+      }
+
+      return { wch: 15 };
+    });
+
     XLSX.utils.book_append_sheet(workbook, templateSheet, "Propiedades");
 
-    const dictionarySheet = XLSX.utils.json_to_sheet(PROPERTY_ALLOWED_VALUES);
-    XLSX.utils.book_append_sheet(workbook, dictionarySheet, "Diccionario");
+    const guideSheet = XLSX.utils.json_to_sheet(PROPERTY_FIELD_GUIDE);
+    guideSheet["!cols"] = [
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 42 },
+      { wch: 34 },
+      { wch: 80 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, guideSheet, "Guia de campos");
+
+    const allowedValuesSheet = XLSX.utils.json_to_sheet(PROPERTY_ALLOWED_VALUES);
+    allowedValuesSheet["!cols"] = [
+      { wch: 32 },
+      { wch: 70 },
+      { wch: 38 },
+      { wch: 80 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, allowedValuesSheet, "Valores permitidos");
 
     const buffer = XLSX.write(workbook, {
       bookType: "xlsx",
