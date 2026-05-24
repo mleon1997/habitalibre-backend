@@ -457,13 +457,24 @@ function sanitizeUpdatePayload(payload = {}) {
 
 export async function listarPropiedades(req, res) {
   try {
-const query = {
-  ...(req.query || {}),
-  ...(req.adminPropertiesAll ? { publicado: "all" } : {}),
-};
+    const query = {
+      ...(req.query || {}),
+      ...(req.adminPropertiesAll ? { publicado: "all" } : {}),
+    };
 
-const filter = buildPropertyFilter(query);
-    const limit = Math.min(Number(req.query.limit) || 100, 300);
+    const filter = buildPropertyFilter(query);
+
+    const isAdminAll = req.adminPropertiesAll === true;
+
+    const defaultLimit = isAdminAll ? 1000 : 100;
+    const maxLimit = isAdminAll ? 2000 : 300;
+
+    const limit = Math.min(
+      Math.max(Number(req.query.limit) || defaultLimit, 1),
+      maxLimit
+    );
+
+    const total = await Property.countDocuments(filter);
 
     const properties = await Property.find(filter)
       .sort({ orden: 1, precio: 1, createdAt: -1 })
@@ -473,6 +484,8 @@ const filter = buildPropertyFilter(query);
     return res.json({
       ok: true,
       count: properties.length,
+      total,
+      limit,
       properties,
     });
   } catch (error) {
