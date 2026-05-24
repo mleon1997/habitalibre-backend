@@ -13,27 +13,23 @@ import adminAuth from "../middlewares/adminAuth.js";
 const router = express.Router();
 
 /**
- * Público para mobile / web.
- * Solo debe devolver propiedades publicadas/disponibles.
+ * Admin: inventario completo.
+ * Importante: esta ruta va ANTES de "/:id".
  */
-router.get("/", (req, res, next) => {
-  if (req.query?.publicado === "all") {
-    return res.status(403).json({
-      ok: false,
-      message: "No autorizado para ver inventario completo.",
-    });
-  }
+router.get("/admin/all", adminAuth, (req, res, next) => {
+  req.query = {
+    ...(req.query || {}),
+    publicado: "all",
+  };
 
   return listarPropiedades(req, res, next);
 });
 
 /**
- * Admin: inventario completo.
+ * Público para mobile / web.
+ * Solo debe devolver propiedades publicadas/disponibles.
  */
-router.get("/admin/all", adminAuth, (req, res, next) => {
-  req.query.publicado = "all";
-  return listarPropiedades(req, res, next);
-});
+router.get("/", listarPropiedades);
 
 /**
  * Público: detalle de propiedad.
