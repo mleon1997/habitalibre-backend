@@ -142,10 +142,19 @@ const corsOptions = {
     console.warn(`🚫 CORS bloqueado para: ${origin}`);
     return cb(new Error(`CORS bloqueado para origen: ${origin}`), false);
   },
+
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
-  credentials: false,
-  optionsSuccessStatus: 204,
+allowedHeaders: [
+  "Content-Type",
+  "Authorization",
+  "Accept",
+  "Origin",
+  "x-api-key",
+  "x-admin-key",
+  "X-Admin-Key",
+],
+credentials: false,
+optionsSuccessStatus: 204,
 };
 
 app.use(cors(corsOptions));
