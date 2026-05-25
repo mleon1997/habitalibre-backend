@@ -2810,6 +2810,85 @@ function buildHomeRecommendation({
 
   const alternatives = [];
 
+  const ingresoTotal = n(ctx?.ingresoNetoMensual, 0) + n(ctx?.ingresoPareja, 0);
+
+  const extraEntradaProyectada = Math.max(
+    0,
+    plannedFutureEntry - entradaDisponible
+  );
+
+  const preparationTargetPrice =
+    estimatedMaxPropertyValue > 0 &&
+    extraEntradaProyectada > 0 &&
+    plannedMonths > 0
+      ? Math.round(
+          Math.min(
+            estimatedMaxPropertyValue * 1.55,
+            estimatedMaxPropertyValue + extraEntradaProyectada * 4
+          ) / 100
+        ) * 100
+      : 0;
+
+  const currentLoanReference = Math.max(
+    1,
+    estimatedMaxPropertyValue - entradaDisponible
+  );
+
+  const monthlyPaymentPerLoanDollar =
+    estimatedMonthlyPayment > 0
+      ? estimatedMonthlyPayment / currentLoanReference
+      : 0;
+
+  const targetLoanWithProjectedEntry = Math.max(
+    0,
+    preparationTargetPrice - plannedFutureEntry
+  );
+
+  const estimatedPaymentForPreparationTarget =
+    monthlyPaymentPerLoanDollar > 0
+      ? targetLoanWithProjectedEntry * monthlyPaymentPerLoanDollar
+      : 0;
+
+  const debtReductionNeededForPreparationTarget = Math.ceil(
+    Math.max(
+      0,
+      estimatedPaymentForPreparationTarget - estimatedMonthlyPayment
+    ) / 10
+  ) * 10;
+
+  const targetDebtAfterReduction = Math.max(
+    0,
+    otrasDeudasMensuales - debtReductionNeededForPreparationTarget
+  );
+
+  const debtReductionAlt =
+    limitingFactor === "cuota" &&
+    otrasDeudasMensuales > 0 &&
+    preparationTargetPrice > estimatedMaxPropertyValue * 1.1 &&
+    debtReductionNeededForPreparationTarget > 0
+      ? {
+          kind: "debt_reduction_route",
+          title: "Subir tu rango reduciendo deudas",
+          alternativePrice: preparationTargetPrice,
+          currentDebt: otrasDeudasMensuales,
+          debtReductionNeeded: debtReductionNeededForPreparationTarget,
+          targetDebtAfterReduction,
+          futureEntry: plannedFutureEntry,
+          months: plannedMonths,
+          estimatedMonthlyPayment: estimatedPaymentForPreparationTarget,
+          description: `Con tu entrada proyectada de aproximadamente ${formatMoneyShort(
+            plannedFutureEntry
+          )} y reduciendo cerca de ${formatMoneyShort(
+            debtReductionNeededForPreparationTarget
+          )} de deudas mensuales antes de la hipoteca, podrías apuntar hacia un rango cercano a ${formatMoneyShort(
+            preparationTargetPrice
+          )}.`,
+          ctaLabel: "Ver ruta de preparación",
+          ctaPath: "/ruta",
+        }
+      : null;
+
+
   const rangeSearchAlt =
     estimatedMaxPropertyValue > 0
       ? {
@@ -2843,8 +2922,9 @@ function buildHomeRecommendation({
         }
       : null;
 
-  if (rangeSearchAlt) alternatives.push(rangeSearchAlt);
+    if (rangeSearchAlt) alternatives.push(rangeSearchAlt);
   if (entryInstallmentsAlt) alternatives.push(entryInstallmentsAlt);
+  if (debtReductionAlt) alternatives.push(debtReductionAlt);
 
   const actionableSteps = [];
 
@@ -2856,6 +2936,16 @@ function buildHomeRecommendation({
     if (limitingFactor === "cuota") {
       actionableSteps.push(
         "Mantener deudas bajas y no subir tu carga mensual te ayudará a conservar mejores opciones hipotecarias."
+      );
+    }
+
+        if (debtReductionAlt) {
+      actionableSteps.push(
+        `Tu capacidad actual es conservadora por tus deudas mensuales. Si durante tu horizonte de ${plannedMonths} meses reduces cerca de ${formatMoneyShort(
+          debtReductionNeededForPreparationTarget
+        )} de deudas mensuales y mantienes tu ahorro de entrada, podrías apuntar a un rango más cercano a ${formatMoneyShort(
+          preparationTargetPrice
+        )}.`
       );
     }
 
@@ -2888,7 +2978,20 @@ function buildHomeRecommendation({
       },
       immediateGuidance,
       monthlyPaymentReference: estimatedMonthlyPayment || null,
-      alternatives,
+           alternatives,
+      preparationUpside: debtReductionAlt
+        ? {
+            currentMaxPropertyValue: estimatedMaxPropertyValue,
+            projectedTargetPropertyValue: preparationTargetPrice,
+            projectedEntryAmount: plannedFutureEntry,
+            projectedMonths: plannedMonths,
+            currentMonthlyDebt: otrasDeudasMensuales,
+            debtReductionNeeded: debtReductionNeededForPreparationTarget,
+            targetDebtAfterReduction,
+            estimatedMonthlyPaymentForTarget:
+              estimatedPaymentForPreparationTarget,
+          }
+        : null,
       targetEvaluation,
       profileProgramsThatCouldWorkIfRangeAdjusted: topStructuralOptions,
     };
