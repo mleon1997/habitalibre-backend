@@ -9,7 +9,12 @@ const FinancingSchema = new mongoose.Schema(
     reserveMin: { type: Number, default: 0, min: 0 },
     monthsConstruction: { type: Number, default: 0, min: 0 },
 
-    // Nuevos campos comerciales
+    // Campos comerciales
+    downPaymentAmount: { type: Number, default: null, min: 0 },
+    monthlyPaymentEstimate: { type: Number, default: null, min: 0 },
+    referenceRate: { type: Number, default: null, min: 0 },
+    termYears: { type: Number, default: null, min: 0 },
+
     promesaAmount: { type: Number, default: 0, min: 0 },
     entryInstallmentsCount: { type: Number, default: 0, min: 0 },
     entryDeadlineDate: { type: Date, default: null },
@@ -30,7 +35,6 @@ const MortgageProfileSchema = new mongoose.Schema(
     requiresNewConstruction: { type: Boolean, default: false },
     requiresMiduviQualifiedProject: { type: Boolean, default: false },
 
-    // Nuevos campos objetivos / operativos
     acceptsMortgageCredit: { type: Boolean, default: true },
     acceptsBIESS: { type: Boolean, default: true },
     acceptsPrivateBank: { type: Boolean, default: true },
@@ -40,13 +44,20 @@ const MortgageProfileSchema = new mongoose.Schema(
     alliedBank: { type: String, default: "", trim: true },
 
     // No es "califica VIP/VIS", sino estado documental/comercial del proyecto.
-    // La categoría estimada debe calcularla HabitaLibre por precio/reglas.
     miduviQualificationStatus: {
       type: String,
       enum: ["si", "no", "pendiente", "no_aplica"],
       default: "no_aplica",
       index: true,
     },
+  },
+  { _id: false }
+);
+
+const LocationSchema = new mongoose.Schema(
+  {
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -62,6 +73,21 @@ const PropertySchema = new mongoose.Schema(
     },
 
     developer: {
+      type: String,
+      default: "GLS Constructores",
+      trim: true,
+      index: true,
+    },
+
+    // Alias comerciales para frontend / Excel
+    constructora: {
+      type: String,
+      default: "GLS Constructores",
+      trim: true,
+      index: true,
+    },
+
+    promotor: {
       type: String,
       default: "GLS Constructores",
       trim: true,
@@ -132,6 +158,14 @@ const PropertySchema = new mongoose.Schema(
       index: true,
     },
 
+    // Alias más natural para frontend / Excel
+    tipoPropiedad: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
     tipoProyecto: {
       type: String,
       enum: ["edificio", "conjunto", "urbanizacion", "independiente", "otro"],
@@ -160,7 +194,6 @@ const PropertySchema = new mongoose.Schema(
       min: 0,
     },
 
-    // Nuevos campos más claros
     m2Construccion: {
       type: Number,
       default: 0,
@@ -241,6 +274,28 @@ const PropertySchema = new mongoose.Schema(
       trim: true,
     },
 
+    lat: {
+      type: Number,
+      default: null,
+      index: true,
+    },
+
+    lng: {
+      type: Number,
+      default: null,
+      index: true,
+    },
+
+    ubicacion: {
+      type: LocationSchema,
+      default: () => ({}),
+    },
+
+    location: {
+      type: LocationSchema,
+      default: () => ({}),
+    },
+
     // Legacy: proyectoNuevo se mantiene porque el matcher actual probablemente lo usa.
     proyectoNuevo: {
       type: Boolean,
@@ -248,7 +303,6 @@ const PropertySchema = new mongoose.Schema(
       index: true,
     },
 
-    // Nuevo nombre más natural
     viviendaNueva: {
       type: Boolean,
       default: true,
@@ -275,10 +329,25 @@ const PropertySchema = new mongoose.Schema(
       index: true,
     },
 
+    // Texto comercial para PropertyDetail
+    estadoProyecto: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
     fechaEntregaEstimada: {
       type: Date,
       default: null,
       index: true,
+    },
+
+    // Texto visible en la app, por ejemplo: "Diciembre 2026"
+    fechaEntrega: {
+      type: String,
+      default: "",
+      trim: true,
     },
 
     fechaEscrituraEstimada: {
@@ -298,11 +367,30 @@ const PropertySchema = new mongoose.Schema(
       min: 0,
     },
 
+    // Alias visible para PropertyDetail / Excel
+    mesesConstruccion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     porcentajeEntradaRequerida: {
       type: Number,
       default: 0.1,
       min: 0,
       max: 1,
+    },
+
+    entradaMinima: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    entradaRequerida: {
+      type: Number,
+      default: null,
+      min: 0,
     },
 
     reservaMinima: {
@@ -326,6 +414,42 @@ const PropertySchema = new mongoose.Schema(
     fechaLimiteEntrada: {
       type: Date,
       default: null,
+    },
+
+    cuotaEstimada: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    cuota: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    tasaReferencial: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    tasa: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    plazoAnios: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    plazo: {
+      type: Number,
+      default: null,
+      min: 0,
     },
 
     financing: {
@@ -356,7 +480,78 @@ const PropertySchema = new mongoose.Schema(
       trim: true,
     },
 
+    image: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    imageUrl: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
     galeria: {
+      type: [String],
+      default: [],
+    },
+
+    gallery: {
+      type: [String],
+      default: [],
+    },
+
+    imagenes: {
+      type: [String],
+      default: [],
+    },
+
+    planoUrl: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    plano: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    floorPlan: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    floorPlanUrl: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    nearby: {
+      type: [String],
+      default: [],
+    },
+
+    cercaDe: {
+      type: [String],
+      default: [],
+    },
+
+    entorno: {
+      type: [String],
+      default: [],
+    },
+
+    amenities: {
+      type: [String],
+      default: [],
+    },
+
+    amenidades: {
       type: [String],
       default: [],
     },
@@ -428,6 +623,26 @@ PropertySchema.pre("validate", function normalizeProperty(next) {
     this.m2 = this.m2Construccion;
   }
 
+  if (!this.tipoPropiedad && this.tipoInmueble) {
+    this.tipoPropiedad = this.tipoInmueble;
+  }
+
+  if (!this.tipoInmueble && this.tipoPropiedad) {
+    this.tipoInmueble = String(this.tipoPropiedad).toLowerCase();
+  }
+
+  if (!this.constructora && this.developer) {
+    this.constructora = this.developer;
+  }
+
+  if (!this.promotor && this.constructora) {
+    this.promotor = this.constructora;
+  }
+
+  if (!this.developer && this.constructora) {
+    this.developer = this.constructora;
+  }
+
   if (this.viviendaNueva == null) {
     this.viviendaNueva = this.proyectoNuevo !== false;
   }
@@ -441,9 +656,149 @@ PropertySchema.pre("validate", function normalizeProperty(next) {
     this.mesesConstruccionRestantes = monthsUntil(this.fechaEntregaEstimada);
   }
 
+  if (!this.mesesConstruccion && this.mesesConstruccionRestantes) {
+    this.mesesConstruccion = this.mesesConstruccionRestantes;
+  }
+
+  if (!this.mesesConstruccionRestantes && this.mesesConstruccion) {
+    this.mesesConstruccionRestantes = this.mesesConstruccion;
+  }
+
   // Si no hay número de cuotas, usamos meses restantes como aproximación.
   if (!this.numeroCuotasEntrada && this.mesesConstruccionRestantes) {
     this.numeroCuotasEntrada = this.mesesConstruccionRestantes;
+  }
+
+  // Entrada mínima / requerida
+  if (!this.entradaRequerida && this.entradaMinima) {
+    this.entradaRequerida = this.entradaMinima;
+  }
+
+  if (!this.entradaMinima && this.entradaRequerida) {
+    this.entradaMinima = this.entradaRequerida;
+  }
+
+  if (
+    this.entradaMinima != null &&
+    this.precio > 0 &&
+    this.entradaMinima >= 0
+  ) {
+    this.porcentajeEntradaRequerida = Math.min(
+      1,
+      Math.max(0, this.entradaMinima / this.precio)
+    );
+  }
+
+  if (!this.cuota && this.cuotaEstimada) {
+    this.cuota = this.cuotaEstimada;
+  }
+
+  if (!this.cuotaEstimada && this.cuota) {
+    this.cuotaEstimada = this.cuota;
+  }
+
+  if (!this.tasa && this.tasaReferencial) {
+    this.tasa = this.tasaReferencial;
+  }
+
+  if (!this.tasaReferencial && this.tasa) {
+    this.tasaReferencial = this.tasa;
+  }
+
+  if (!this.plazo && this.plazoAnios) {
+    this.plazo = this.plazoAnios;
+  }
+
+  if (!this.plazoAnios && this.plazo) {
+    this.plazoAnios = this.plazo;
+  }
+
+  if (!this.imagen && this.image) {
+    this.imagen = this.image;
+  }
+
+  if (!this.image && this.imagen) {
+    this.image = this.imagen;
+  }
+
+  if (!this.imageUrl && this.imagen) {
+    this.imageUrl = this.imagen;
+  }
+
+  if ((!this.gallery || !this.gallery.length) && this.galeria?.length) {
+    this.gallery = this.galeria;
+  }
+
+  if ((!this.galeria || !this.galeria.length) && this.gallery?.length) {
+    this.galeria = this.gallery;
+  }
+
+  if ((!this.imagenes || !this.imagenes.length) && this.galeria?.length) {
+    this.imagenes = this.galeria;
+  }
+
+  if (!this.plano && this.planoUrl) {
+    this.plano = this.planoUrl;
+  }
+
+  if (!this.planoUrl && this.plano) {
+    this.planoUrl = this.plano;
+  }
+
+  if (!this.floorPlan && this.planoUrl) {
+    this.floorPlan = this.planoUrl;
+  }
+
+  if (!this.floorPlanUrl && this.planoUrl) {
+    this.floorPlanUrl = this.planoUrl;
+  }
+
+  if ((!this.cercaDe || !this.cercaDe.length) && this.nearby?.length) {
+    this.cercaDe = this.nearby;
+  }
+
+  if ((!this.nearby || !this.nearby.length) && this.cercaDe?.length) {
+    this.nearby = this.cercaDe;
+  }
+
+  if ((!this.entorno || !this.entorno.length) && this.nearby?.length) {
+    this.entorno = this.nearby;
+  }
+
+  if ((!this.amenidades || !this.amenidades.length) && this.amenities?.length) {
+    this.amenidades = this.amenities;
+  }
+
+  if ((!this.amenities || !this.amenities.length) && this.amenidades?.length) {
+    this.amenities = this.amenidades;
+  }
+
+  if (this.lat != null || this.lng != null) {
+    this.ubicacion = {
+      ...(this.ubicacion || {}),
+      lat: this.lat ?? this.ubicacion?.lat ?? null,
+      lng: this.lng ?? this.ubicacion?.lng ?? null,
+    };
+
+    this.location = {
+      ...(this.location || {}),
+      lat: this.lat ?? this.location?.lat ?? null,
+      lng: this.lng ?? this.location?.lng ?? null,
+    };
+  }
+
+  if (!this.estadoProyecto) {
+    if (this.etapaProyecto === "entrega_inmediata") {
+      this.estadoProyecto = "Entrega inmediata";
+    } else if (this.etapaProyecto === "entrega_proxima") {
+      this.estadoProyecto = "Entrega próxima";
+    } else if (this.etapaProyecto === "planos") {
+      this.estadoProyecto = "En planos";
+    } else if (this.etapaProyecto === "terminado") {
+      this.estadoProyecto = "Terminado";
+    } else {
+      this.estadoProyecto = this.proyectoNuevo ? "Proyecto nuevo" : "En construcción";
+    }
   }
 
   // Mantener financing sincronizado.
@@ -459,6 +814,10 @@ PropertySchema.pre("validate", function normalizeProperty(next) {
     allowInstallments: this.permiteEntradaEnCuotas !== false,
     reserveMin: this.reservaMinima || 0,
     monthsConstruction: this.mesesConstruccionRestantes || 0,
+    downPaymentAmount: this.entradaMinima ?? null,
+    monthlyPaymentEstimate: this.cuotaEstimada ?? null,
+    referenceRate: this.tasaReferencial ?? null,
+    termYears: this.plazoAnios ?? null,
     promesaAmount: this.montoFirmaPromesa || 0,
     entryInstallmentsCount: this.numeroCuotasEntrada || 0,
     entryDeadlineDate: this.fechaLimiteEntrada || null,
@@ -486,6 +845,9 @@ PropertySchema.index({
   torre: "text",
   manzana: "text",
   lote: "text",
+  descripcion: "text",
+  constructora: "text",
+  promotor: "text",
 });
 
 const Property =

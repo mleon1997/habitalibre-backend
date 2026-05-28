@@ -14,16 +14,25 @@ function toNumberOrDefault(value, fallback) {
 }
 
 function toBoolean(value, fallback = false) {
-  if (value === true || value === "true" || value === "sí" || value === "si") {
+  const raw = String(value ?? "").trim().toLowerCase();
+
+  if (
+    value === true ||
+    raw === "true" ||
+    raw === "sí" ||
+    raw === "si" ||
+    raw === "yes" ||
+    raw === "1"
+  ) {
     return true;
   }
 
   if (
     value === false ||
-    value === "false" ||
-    value === "no" ||
+    raw === "false" ||
+    raw === "no" ||
     value === 0 ||
-    value === "0"
+    raw === "0"
   ) {
     return false;
   }
@@ -57,6 +66,16 @@ function cleanArray(value) {
   }
 
   return [];
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function normalizeMiduviStatus(value) {
@@ -116,7 +135,7 @@ function normalizeEstadoComercial(value) {
 function normalizeTipoInmueble(value) {
   const raw = cleanString(value).toLowerCase();
 
-  if (["departamento", "suite", "casa", "terreno"].includes(raw)) {
+  if (["departamento", "suite", "estudio", "casa", "terreno"].includes(raw)) {
     return raw;
   }
 
@@ -143,6 +162,29 @@ function normalizeUso(value) {
   return "vivienda_principal";
 }
 
+function normalizeEstadoProyectoTexto(value, etapaProyecto, tipoEntrega, proyectoNuevo) {
+  const explicit = cleanString(value);
+  if (explicit) return explicit;
+
+  if (etapaProyecto === "entrega_inmediata" || tipoEntrega === "inmediata") {
+    return "Entrega inmediata";
+  }
+
+  if (etapaProyecto === "entrega_proxima") {
+    return "Entrega próxima";
+  }
+
+  if (etapaProyecto === "planos" || tipoEntrega === "planos") {
+    return "En planos";
+  }
+
+  if (etapaProyecto === "terminado") {
+    return "Terminado";
+  }
+
+  return proyectoNuevo ? "Proyecto nuevo" : "En construcción";
+}
+
 function normalizePropertyPayload(payload = {}, { isUpdate = false } = {}) {
   const cleanPayload = { ...payload };
 
@@ -158,47 +200,97 @@ function normalizePropertyPayload(payload = {}, { isUpdate = false } = {}) {
   const tipoEntrega = normalizeTipoEntrega(cleanPayload.tipoEntrega);
   const estadoComercial = normalizeEstadoComercial(cleanPayload.estadoComercial);
 
-  const porcentajeEntradaRequerida = toNumberOrDefault(
-    cleanPayload.porcentajeEntradaRequerida ??
-      cleanPayload.financing?.downPaymentPct,
+  const precio = toNumberOrDefault(
+    firstNonEmpty(
+      cleanPayload.precio,
+      cleanPayload.price,
+      cleanPayload.valor,
+      cleanPayload.listPrice
+    ),
+    0
+  );
+
+  const entradaMinima = toNumberOrNull(
+    firstNonEmpty(
+      cleanPayload.entradaMinima,
+      cleanPayload.entradaRequerida,
+      cleanPayload.downPaymentAmount,
+      cleanPayload.financing?.downPaymentAmount
+    )
+  );
+
+  const porcentajeEntradaRequeridaRaw = toNumberOrDefault(
+    firstNonEmpty(
+      cleanPayload.porcentajeEntradaRequerida,
+      cleanPayload.financing?.downPaymentPct
+    ),
     0.1
   );
 
+  const porcentajeEntradaRequerida =
+    entradaMinima != null && precio > 0
+      ? Math.min(1, Math.max(0, entradaMinima / precio))
+      : porcentajeEntradaRequeridaRaw;
+
   const reservaMinima = toNumberOrDefault(
-    cleanPayload.reservaMinima ?? cleanPayload.financing?.reserveMin,
+    firstNonEmpty(cleanPayload.reservaMinima, cleanPayload.financing?.reserveMin),
     0
   );
 
   const mesesConstruccionRestantes = toNumberOrDefault(
-    cleanPayload.mesesConstruccionRestantes ??
-      cleanPayload.financing?.monthsConstruction,
+    firstNonEmpty(
+      cleanPayload.mesesConstruccionRestantes,
+      cleanPayload.mesesConstruccion,
+      cleanPayload.mesesEntrega,
+      cleanPayload.financing?.monthsConstruction
+    ),
     0
   );
 
   const montoFirmaPromesa = toNumberOrDefault(
-    cleanPayload.montoFirmaPromesa ?? cleanPayload.financing?.promesaAmount,
+    firstNonEmpty(
+      cleanPayload.montoFirmaPromesa,
+      cleanPayload.financing?.promesaAmount
+    ),
     0
   );
 
   const numeroCuotasEntrada = toNumberOrDefault(
-    cleanPayload.numeroCuotasEntrada ??
-      cleanPayload.financing?.entryInstallmentsCount,
+    firstNonEmpty(
+      cleanPayload.numeroCuotasEntrada,
+      cleanPayload.financing?.entryInstallmentsCount
+    ),
     0
   );
 
   const m2Construccion = toNumberOrDefault(
-    cleanPayload.m2Construccion ?? cleanPayload.m2,
+    firstNonEmpty(
+      cleanPayload.m2Construccion,
+      cleanPayload.m2,
+      cleanPayload.area,
+      cleanPayload.metros,
+      cleanPayload.metros2
+    ),
     0
   );
 
-  const m2 = toNumberOrDefault(cleanPayload.m2 ?? cleanPayload.m2Construccion, 0);
+  const m2 = toNumberOrDefault(
+    firstNonEmpty(
+      cleanPayload.m2,
+      cleanPayload.m2Construccion,
+      cleanPayload.area,
+      cleanPayload.metros,
+      cleanPayload.metros2
+    ),
+    0
+  );
 
   const productIds = Array.isArray(cleanPayload.mortgageProfile?.productIds)
     ? cleanPayload.mortgageProfile.productIds
     : cleanArray(cleanPayload.productIds || cleanPayload.mortgageProfile?.productIds);
 
   const viviendaNueva = toBoolean(
-    cleanPayload.viviendaNueva ?? cleanPayload.proyectoNuevo,
+    firstNonEmpty(cleanPayload.viviendaNueva, cleanPayload.proyectoNuevo),
     true
   );
 
@@ -207,10 +299,144 @@ function normalizePropertyPayload(payload = {}, { isUpdate = false } = {}) {
       ? false
       : toBoolean(cleanPayload.publicado, true);
 
+  const cuotaEstimada = toNumberOrNull(
+    firstNonEmpty(
+      cleanPayload.cuotaEstimada,
+      cleanPayload.cuota,
+      cleanPayload.monthlyPaymentEstimate,
+      cleanPayload.financing?.monthlyPaymentEstimate
+    )
+  );
+
+  const tasaReferencial = toNumberOrNull(
+    firstNonEmpty(
+      cleanPayload.tasaReferencial,
+      cleanPayload.tasa,
+      cleanPayload.referenceRate,
+      cleanPayload.financing?.referenceRate
+    )
+  );
+
+  const plazoAnios = toNumberOrNull(
+    firstNonEmpty(
+      cleanPayload.plazoAnios,
+      cleanPayload.plazoAños,
+      cleanPayload.plazo,
+      cleanPayload.termYears,
+      cleanPayload.financing?.termYears
+    )
+  );
+
+  const lat = toNumberOrNull(
+    firstNonEmpty(
+      cleanPayload.lat,
+      cleanPayload.latitude,
+      cleanPayload.ubicacion?.lat,
+      cleanPayload.location?.lat
+    )
+  );
+
+  const lng = toNumberOrNull(
+    firstNonEmpty(
+      cleanPayload.lng,
+      cleanPayload.lon,
+      cleanPayload.longitude,
+      cleanPayload.ubicacion?.lng,
+      cleanPayload.location?.lng
+    )
+  );
+
+  const developer = cleanString(
+    firstNonEmpty(
+      cleanPayload.developer,
+      cleanPayload.constructora,
+      cleanPayload.promotor,
+      "GLS Constructores"
+    )
+  );
+
+  const constructora = cleanString(
+    firstNonEmpty(
+      cleanPayload.constructora,
+      cleanPayload.developer,
+      cleanPayload.promotor,
+      "GLS Constructores"
+    )
+  );
+
+  const promotor = cleanString(
+    firstNonEmpty(
+      cleanPayload.promotor,
+      cleanPayload.constructora,
+      cleanPayload.developer,
+      "GLS Constructores"
+    )
+  );
+
+  const tipoInmueble = normalizeTipoInmueble(
+    firstNonEmpty(cleanPayload.tipoInmueble, cleanPayload.tipoPropiedad)
+  );
+
+  const etapaProyecto = normalizeEtapaProyecto(cleanPayload.etapaProyecto, tipoEntrega);
+
+  const fechaEntregaEstimada = toDateOrNull(
+    firstNonEmpty(cleanPayload.fechaEntregaEstimada, cleanPayload.fechaEntrega)
+  );
+
+  const fechaEntrega = cleanString(
+    firstNonEmpty(cleanPayload.fechaEntrega, cleanPayload.fechaEntregaEstimada)
+  );
+
+  const estadoProyecto = normalizeEstadoProyectoTexto(
+    firstNonEmpty(cleanPayload.estadoProyecto, cleanPayload.statusProyecto),
+    etapaProyecto,
+    tipoEntrega,
+    viviendaNueva
+  );
+
+  const imagen = cleanString(
+    firstNonEmpty(cleanPayload.imagen, cleanPayload.image, cleanPayload.imageUrl)
+  );
+
+  const galeria = cleanArray(
+    firstNonEmpty(
+      cleanPayload.galeria,
+      cleanPayload.gallery,
+      cleanPayload.imagenes,
+      cleanPayload.images,
+      cleanPayload.fotos
+    )
+  );
+
+  const planoUrl = cleanString(
+    firstNonEmpty(
+      cleanPayload.planoUrl,
+      cleanPayload.plano,
+      cleanPayload.floorPlan,
+      cleanPayload.floorPlanUrl
+    )
+  );
+
+  const nearby = cleanArray(
+    firstNonEmpty(
+      cleanPayload.nearby,
+      cleanPayload.cercaDe,
+      cleanPayload.entorno,
+      cleanPayload.puntosCercanos
+    )
+  );
+
+  const amenities = cleanArray(
+    firstNonEmpty(cleanPayload.amenities, cleanPayload.amenidades)
+  );
+
   const normalized = {
     ...cleanPayload,
 
-    developer: cleanString(cleanPayload.developer || "GLS Constructores"),
+    developer,
+    constructora,
+    promotor,
+
     proyecto: cleanString(cleanPayload.proyecto),
     titulo: cleanString(cleanPayload.titulo),
     descripcion: cleanString(cleanPayload.descripcion),
@@ -222,43 +448,84 @@ function normalizePropertyPayload(payload = {}, { isUpdate = false } = {}) {
     manzana: cleanString(cleanPayload.manzana),
     lote: cleanString(cleanPayload.lote),
 
-    tipoInmueble: normalizeTipoInmueble(cleanPayload.tipoInmueble),
+    tipoInmueble,
+    tipoPropiedad: cleanString(
+      firstNonEmpty(cleanPayload.tipoPropiedad, cleanPayload.tipoInmueble, tipoInmueble)
+    ),
     tipoProyecto: normalizeTipoProyecto(cleanPayload.tipoProyecto),
     uso: normalizeUso(cleanPayload.uso),
 
-    precio: toNumberOrDefault(cleanPayload.precio, 0),
+    precio,
     m2,
     m2Construccion,
     m2Terreno: toNumberOrDefault(cleanPayload.m2Terreno, 0),
 
-    dormitorios: toNumberOrDefault(cleanPayload.dormitorios, 0),
-    banos: toNumberOrDefault(cleanPayload.banos, 0),
-    parqueaderos: toNumberOrDefault(cleanPayload.parqueaderos, 0),
+    dormitorios: toNumberOrDefault(
+      firstNonEmpty(cleanPayload.dormitorios, cleanPayload.bedrooms, cleanPayload.habitaciones),
+      0
+    ),
+    banos: toNumberOrDefault(
+      firstNonEmpty(cleanPayload.banos, cleanPayload.baños, cleanPayload.bathrooms, cleanPayload.baths),
+      0
+    ),
+    parqueaderos: toNumberOrDefault(
+      firstNonEmpty(cleanPayload.parqueaderos, cleanPayload.parking, cleanPayload.garajes),
+      0
+    ),
     bodega: toBoolean(cleanPayload.bodega, false),
     alicuotaEstimada: toNumberOrDefault(cleanPayload.alicuotaEstimada, 0),
 
     ciudad: cleanString(cleanPayload.ciudad || "Quito"),
-    zona: cleanString(cleanPayload.zona || "Quito"),
+    zona: cleanString(cleanPayload.zona || cleanPayload.sector || "Quito"),
     ciudadZona: cleanString(cleanPayload.ciudadZona),
     sector: cleanString(cleanPayload.sector),
     direccionReferencial: cleanString(cleanPayload.direccionReferencial),
     googleMapsUrl: cleanString(cleanPayload.googleMapsUrl),
 
+    lat,
+    lng,
+    ubicacion: {
+      ...(cleanPayload.ubicacion || {}),
+      lat,
+      lng,
+    },
+    location: {
+      ...(cleanPayload.location || {}),
+      lat,
+      lng,
+    },
+
     viviendaNueva,
     proyectoNuevo: viviendaNueva,
 
     tipoEntrega,
-    etapaProyecto: normalizeEtapaProyecto(cleanPayload.etapaProyecto, tipoEntrega),
-    fechaEntregaEstimada: toDateOrNull(cleanPayload.fechaEntregaEstimada),
+    etapaProyecto,
+    estadoProyecto,
+    fechaEntregaEstimada,
+    fechaEntrega,
     fechaEscrituraEstimada: toDateOrNull(cleanPayload.fechaEscrituraEstimada),
 
     permiteEntradaEnCuotas: toBoolean(cleanPayload.permiteEntradaEnCuotas, true),
     mesesConstruccionRestantes,
+    mesesConstruccion: mesesConstruccionRestantes,
+
     porcentajeEntradaRequerida,
+    entradaMinima,
+    entradaRequerida: entradaMinima,
+
     reservaMinima,
     montoFirmaPromesa,
     numeroCuotasEntrada,
     fechaLimiteEntrada: toDateOrNull(cleanPayload.fechaLimiteEntrada),
+
+    cuotaEstimada,
+    cuota: cuotaEstimada,
+
+    tasaReferencial,
+    tasa: tasaReferencial,
+
+    plazoAnios,
+    plazo: plazoAnios,
 
     financing: {
       ...(cleanPayload.financing || {}),
@@ -267,6 +534,10 @@ function normalizePropertyPayload(payload = {}, { isUpdate = false } = {}) {
       allowInstallments: toBoolean(cleanPayload.permiteEntradaEnCuotas, true),
       reserveMin: reservaMinima,
       monthsConstruction: mesesConstruccionRestantes,
+      downPaymentAmount: entradaMinima,
+      monthlyPaymentEstimate: cuotaEstimada,
+      referenceRate: tasaReferencial,
+      termYears: plazoAnios,
       promesaAmount: montoFirmaPromesa,
       entryInstallmentsCount: numeroCuotasEntrada,
       entryDeadlineDate: toDateOrNull(cleanPayload.fechaLimiteEntrada),
@@ -276,68 +547,106 @@ function normalizePropertyPayload(payload = {}, { isUpdate = false } = {}) {
       ...(cleanPayload.mortgageProfile || {}),
       productIds,
       requiresFirstHome: toBoolean(
-        cleanPayload.requiresFirstHome ??
-          cleanPayload.mortgageProfile?.requiresFirstHome,
+        firstNonEmpty(
+          cleanPayload.requiresFirstHome,
+          cleanPayload.mortgageProfile?.requiresFirstHome
+        ),
         false
       ),
       requiresNewConstruction: toBoolean(
-        cleanPayload.requiresNewConstruction ??
-          cleanPayload.mortgageProfile?.requiresNewConstruction,
+        firstNonEmpty(
+          cleanPayload.requiresNewConstruction,
+          cleanPayload.mortgageProfile?.requiresNewConstruction
+        ),
         viviendaNueva
       ),
       requiresMiduviQualifiedProject: toBoolean(
-        cleanPayload.requiresMiduviQualifiedProject ??
-          cleanPayload.mortgageProfile?.requiresMiduviQualifiedProject,
+        firstNonEmpty(
+          cleanPayload.requiresMiduviQualifiedProject,
+          cleanPayload.mortgageProfile?.requiresMiduviQualifiedProject
+        ),
         false
       ),
 
       acceptsMortgageCredit: toBoolean(
-        cleanPayload.aceptaCreditoHipotecario ??
-          cleanPayload.acceptsMortgageCredit ??
-          cleanPayload.mortgageProfile?.acceptsMortgageCredit,
+        firstNonEmpty(
+          cleanPayload.aceptaCreditoHipotecario,
+          cleanPayload.acceptsMortgageCredit,
+          cleanPayload.mortgageProfile?.acceptsMortgageCredit
+        ),
         true
       ),
       acceptsBIESS: toBoolean(
-        cleanPayload.aceptaBIESS ??
-          cleanPayload.acceptsBIESS ??
-          cleanPayload.mortgageProfile?.acceptsBIESS,
+        firstNonEmpty(
+          cleanPayload.aceptaBIESS,
+          cleanPayload.acceptsBIESS,
+          cleanPayload.mortgageProfile?.acceptsBIESS
+        ),
         true
       ),
       acceptsPrivateBank: toBoolean(
-        cleanPayload.aceptaBancaPrivada ??
-          cleanPayload.acceptsPrivateBank ??
-          cleanPayload.mortgageProfile?.acceptsPrivateBank,
+        firstNonEmpty(
+          cleanPayload.aceptaBancaPrivada,
+          cleanPayload.acceptsPrivateBank,
+          cleanPayload.mortgageProfile?.acceptsPrivateBank
+        ),
         true
       ),
       acceptsCooperatives: toBoolean(
-        cleanPayload.aceptaCooperativas ??
-          cleanPayload.acceptsCooperatives ??
-          cleanPayload.mortgageProfile?.acceptsCooperatives,
+        firstNonEmpty(
+          cleanPayload.aceptaCooperativas,
+          cleanPayload.acceptsCooperatives,
+          cleanPayload.mortgageProfile?.acceptsCooperatives
+        ),
         false
       ),
       acceptsCash: toBoolean(
-        cleanPayload.aceptaContado ??
-          cleanPayload.acceptsCash ??
-          cleanPayload.mortgageProfile?.acceptsCash,
+        firstNonEmpty(
+          cleanPayload.aceptaContado,
+          cleanPayload.acceptsCash,
+          cleanPayload.mortgageProfile?.acceptsCash
+        ),
         true
       ),
       alliedBank: cleanString(
-        cleanPayload.bancoAliado ||
-          cleanPayload.alliedBank ||
+        firstNonEmpty(
+          cleanPayload.bancoAliado,
+          cleanPayload.alliedBank,
           cleanPayload.mortgageProfile?.alliedBank
+        )
       ),
       miduviQualificationStatus: normalizeMiduviStatus(
-        cleanPayload.proyectoCalificadoMiduvi ||
-          cleanPayload.miduviQualificationStatus ||
+        firstNonEmpty(
+          cleanPayload.proyectoCalificadoMiduvi,
+          cleanPayload.miduviQualificationStatus,
           cleanPayload.mortgageProfile?.miduviQualificationStatus
+        )
       ),
     },
 
     matchReason: cleanString(cleanPayload.matchReason),
     matchBadge: cleanString(cleanPayload.matchBadge),
 
-    imagen: cleanString(cleanPayload.imagen),
-    galeria: cleanArray(cleanPayload.galeria),
+    imagen,
+    image: imagen,
+    imageUrl: imagen,
+
+    galeria,
+    gallery: galeria,
+    imagenes: galeria,
+
+    planoUrl,
+    plano: planoUrl,
+    floorPlan: planoUrl,
+    floorPlanUrl: planoUrl,
+
+    nearby,
+    cercaDe: nearby,
+    entorno: nearby,
+
+    amenities,
+    amenidades: amenities,
+
     brochureUrl: cleanString(cleanPayload.brochureUrl),
     videoUrl: cleanString(cleanPayload.videoUrl),
 
@@ -389,6 +698,10 @@ function buildPropertyFilter(query = {}) {
 
   if (query.tipoInmueble) {
     filter.tipoInmueble = String(query.tipoInmueble).trim();
+  }
+
+  if (query.tipoPropiedad) {
+    filter.tipoPropiedad = new RegExp(String(query.tipoPropiedad).trim(), "i");
   }
 
   if (query.tipoEntrega) {
@@ -587,6 +900,16 @@ export async function actualizarPropiedad(req, res) {
       mortgageProfile: {
         ...(current.mortgageProfile || {}),
         ...(rawPayload.mortgageProfile || {}),
+      },
+
+      ubicacion: {
+        ...(current.ubicacion || {}),
+        ...(rawPayload.ubicacion || {}),
+      },
+
+      location: {
+        ...(current.location || {}),
+        ...(rawPayload.location || {}),
       },
     };
 
