@@ -985,6 +985,42 @@ function parseNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseCoordinate(value) {
+  if (value === "" || value == null) return null;
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+
+    if (Math.abs(value) <= 180) return value;
+
+    const dividedBy1000 = value / 1000;
+    if (Math.abs(dividedBy1000) <= 180) return dividedBy1000;
+
+    const dividedBy10000 = value / 10000;
+    if (Math.abs(dividedBy10000) <= 180) return dividedBy10000;
+
+    return null;
+  }
+
+  const s = String(value).trim().replace(",", ".");
+
+  if (!s) return null;
+
+  const n = Number(s);
+
+  if (!Number.isFinite(n)) return null;
+
+  if (Math.abs(n) <= 180) return n;
+
+  const dividedBy1000 = n / 1000;
+  if (Math.abs(dividedBy1000) <= 180) return dividedBy1000;
+
+  const dividedBy10000 = n / 10000;
+  if (Math.abs(dividedBy10000) <= 180) return dividedBy10000;
+
+  return null;
+}
+
 function parseBoolean(value, fallback = false) {
   if (value === "" || value == null) return fallback;
 
@@ -1294,13 +1330,13 @@ export function normalizePropertyExcelRow(rawRow, rowNumber) {
     get(row, ["plazoAnios", "plazo años", "plazoAños", "plazo", "termYears"], "")
   );
 
-  const lat = parseNumberOrNull(
-    get(row, ["lat", "latitude", "latitud"], "")
-  );
+const lat = parseCoordinate(
+  get(row, ["lat", "latitude", "latitud"], "")
+);
 
-  const lng = parseNumberOrNull(
-    get(row, ["lng", "lon", "longitude", "longitud"], "")
-  );
+const lng = parseCoordinate(
+  get(row, ["lng", "lon", "longitude", "longitud"], "")
+);
 
   const aceptaBIESS = parseBoolean(
     get(row, ["aceptaBIESS", "acepta biess"], true),
