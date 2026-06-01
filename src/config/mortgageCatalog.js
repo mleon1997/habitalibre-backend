@@ -227,15 +227,18 @@ export const mortgageCatalog = [
   },
 
   // ===============================
-  // BIESS VIS / VIP
-  // 71,505 - 105,000
-  // 4.99%
-  // Hasta 95%
+  // BIESS VIS / VIP - MITI MITI 4.99%
+  // Desde 71,505 hasta 229 SBU
+  // Tasa preferencial 4.99%
+  // Ingreso familiar máx. 6.34 SBU
+  // Primera vivienda, nueva, primer uso
+  // Proyecto calificado
+  // Hasta 95% financiamiento
   // Plazo referencial: hasta 25 años
   // ===============================
   {
     id: "BIESS_VIS_VIP",
-    name: "BIESS Vivienda VIS / VIP",
+    name: "BIESS Vivienda VIS / VIP 4.99%",
     segment: "BIESS",
     channel: "BIESS",
     biessTier: "VIS_VIP",
@@ -253,16 +256,16 @@ export const mortgageCatalog = [
       optionsYears: [15, 20, 25],
       policyLabel: "Hasta 25 años",
       notes:
-        "BIESS publica vivienda nueva o usada hasta 25 años para productos hipotecarios generales. La aprobación final depende del perfil del afiliado o jubilado.",
+        "Producto preferencial VIS/VIP tipo Miti-Miti. La tasa preferencial aplica solo si el solicitante cumple las condiciones normativas de ingreso, primera vivienda, proyecto calificado, capacidad de pago y políticas de la entidad financiera.",
       allowsUserPreference: false,
     },
 
     caps: {
       propertyMin: 71505,
-      propertyMax: 105000,
+      propertyMax: 229 * SBU,
       incomeMin: 0,
-      incomeMax: null,
-      loanCap: 99750, // 95% de 105,000
+      incomeMax: 6.34 * SBU,
+      loanCap: 0.95 * (229 * SBU),
     },
 
     rules: {
@@ -290,8 +293,12 @@ export const mortgageCatalog = [
       minContribTotalMonthsDisability: 18,
       requirePensionForRetirees: true,
 
-      firstHome: false,
-      newConstruction: false,
+      // Reglas normativas VIS/VIP preferencial
+      firstHome: true,
+      newConstruction: true,
+      firstUseOnly: true,
+      noOtherProperty: true,
+      noPriorHousingSubsidy: true,
       requiresMiduviQualifiedProject: true,
 
       minYearsEmployedDep: 1,
