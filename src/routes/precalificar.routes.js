@@ -170,6 +170,18 @@ router.post("/", optionalCustomerAuth, async (req, res) => {
     const { input, respuesta: respuestaBase } = precalificarHL(body);
     const respuesta = enrichRespuestaBancos(respuestaBase);
 
+if (respuestaBase?.selectedProperty && !respuesta.selectedProperty) {
+  respuesta.selectedProperty = respuestaBase.selectedProperty;
+  respuesta.propertyContext = respuestaBase.propertyContext || respuestaBase.selectedProperty;
+}
+
+if (respuestaBase?.propertyFit && !respuesta.propertyFit) {
+  respuesta.propertyFit = respuestaBase.propertyFit;
+  respuesta.resultadoPropiedad =
+    respuestaBase.resultadoPropiedad || respuestaBase.propertyFit;
+}
+
+
     console.log("➡️ POST /api/precalificar (normalizado):", {
       ingresoNetoMensual: input.ingresoNetoMensual,
       ingresoPareja: input.ingresoPareja,

@@ -650,10 +650,20 @@ function normalizePropertyPayload(payload = {}, { isUpdate = false } = {}) {
     brochureUrl: cleanString(cleanPayload.brochureUrl),
     videoUrl: cleanString(cleanPayload.videoUrl),
 
-    estadoComercial,
-    publicado,
-    orden: toNumberOrDefault(cleanPayload.orden, 0),
-    fuenteCarga: cleanPayload.fuenteCarga || "manual",
+   estadoComercial,
+publicado,
+
+// SEO / vitrina pública
+slug: cleanString(cleanPayload.slug).toLowerCase(),
+destacadaLanding: toBoolean(cleanPayload.destacadaLanding, false),
+seoTitle: cleanString(cleanPayload.seoTitle),
+seoDescription: cleanString(cleanPayload.seoDescription),
+publicDescription: cleanString(
+  firstNonEmpty(cleanPayload.publicDescription, cleanPayload.descripcion)
+),
+
+orden: toNumberOrDefault(cleanPayload.orden, 0),
+fuenteCarga: cleanPayload.fuenteCarga || "manual",
   };
 
   if (!isUpdate) {
@@ -766,6 +776,309 @@ function sanitizeUpdatePayload(payload = {}) {
   delete cleanPayload.__v;
 
   return cleanPayload;
+}
+
+
+function formatUsdLabel(value) {
+  const n = Number(value || 0);
+
+  if (!Number.isFinite(n) || n <= 0) {
+    return "";
+  }
+
+  return new Intl.NumberFormat("es-EC", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
+
+function getPrimaryImage(property = {}) {
+  return (
+    cleanString(property.imagen) ||
+    cleanString(property.imageUrl) ||
+    cleanString(property.image) ||
+    cleanString(property.galeria?.[0]) ||
+    cleanString(property.gallery?.[0]) ||
+    cleanString(property.imagenes?.[0]) ||
+    ""
+  );
+}
+
+function getPublicSlug(property = {}) {
+  return cleanString(property.slug) || cleanString(property.id);
+}
+
+function toPublicProperty(property = {}) {
+  const area = property.m2Construccion || property.m2 || 0;
+  const primaryImage = getPrimaryImage(property);
+
+  return {
+    _id: property._id,
+    id: property.id,
+    slug: getPublicSlug(property),
+
+    titulo: property.titulo,
+    proyecto: property.proyecto,
+    descripcion: property.publicDescription || property.descripcion || "",
+    publicDescription: property.publicDescription || property.descripcion || "",
+
+    seoTitle:
+      property.seoTitle ||
+      `${property.titulo} desde ${formatUsdLabel(property.precio)} | ${
+        property.sector || property.ciudad || "Ecuador"
+      }`,
+    seoDescription:
+      property.seoDescription ||
+      `${property.titulo} en ${property.sector || property.ciudad}. ${
+        area ? `${area} m², ` : ""
+      }${property.dormitorios || 0} dormitorios, desde ${formatUsdLabel(
+        property.precio
+      )}. Precalifícate con HabitaLibre.`,
+
+    precio: property.precio,
+    precioLabel: formatUsdLabel(property.precio),
+
+    ciudad: property.ciudad,
+    zona: property.zona,
+    sector: property.sector,
+    ciudadZona: property.ciudadZona,
+    direccionReferencial: property.direccionReferencial,
+    googleMapsUrl: property.googleMapsUrl,
+
+    tipoInmueble: property.tipoInmueble,
+    tipoPropiedad: property.tipoPropiedad,
+    tipoProyecto: property.tipoProyecto,
+    uso: property.uso,
+
+    m2: property.m2,
+    m2Construccion: property.m2Construccion,
+    m2Terreno: property.m2Terreno,
+    dormitorios: property.dormitorios,
+    banos: property.banos,
+    parqueaderos: property.parqueaderos,
+    bodega: property.bodega,
+
+    estadoProyecto: property.estadoProyecto,
+    etapaProyecto: property.etapaProyecto,
+    tipoEntrega: property.tipoEntrega,
+    fechaEntrega: property.fechaEntrega,
+    fechaEntregaEstimada: property.fechaEntregaEstimada,
+    mesesConstruccion: property.mesesConstruccion,
+
+    entradaMinima: property.entradaMinima,
+    entradaRequerida: property.entradaRequerida,
+    porcentajeEntradaRequerida: property.porcentajeEntradaRequerida,
+    reservaMinima: property.reservaMinima,
+    montoFirmaPromesa: property.montoFirmaPromesa,
+    numeroCuotasEntrada: property.numeroCuotasEntrada,
+    cuotaEstimada: property.cuotaEstimada,
+    tasaReferencial: property.tasaReferencial,
+    plazoAnios: property.plazoAnios,
+
+    financing: property.financing || null,
+    mortgageProfile: property.mortgageProfile || null,
+
+    matchBadge: property.matchBadge,
+    matchReason: property.matchReason,
+
+    developer: property.developer,
+    constructora: property.constructora,
+    promotor: property.promotor,
+
+    imagen: primaryImage,
+    imageUrl: primaryImage,
+    galeria: property.galeria || property.gallery || property.imagenes || [],
+    imagenes: property.imagenes || property.galeria || property.gallery || [],
+
+    planoUrl: property.planoUrl,
+    brochureUrl: property.brochureUrl,
+    videoUrl: property.videoUrl,
+
+    amenidades: property.amenidades || property.amenities || [],
+    amenities: property.amenities || property.amenidades || [],
+    cercaDe: property.cercaDe || property.nearby || property.entorno || [],
+    nearby: property.nearby || property.cercaDe || property.entorno || [],
+
+    estadoComercial: property.estadoComercial,
+    publicado: property.publicado,
+    destacadaLanding: property.destacadaLanding === true,
+    orden: property.orden || 0,
+
+    createdAt: property.createdAt,
+    updatedAt: property.updatedAt,
+  };
+}
+
+function buildPublicPropertyFilter(query = {}) {
+  const filter = {
+    publicado: true,
+    estadoComercial: "disponible",
+  };
+
+  const destacadas = firstNonEmpty(
+    query.destacadas,
+    query.destacada,
+    query.featured,
+    query.destacadaLanding
+  );
+
+  if (destacadas != null) {
+    filter.destacadaLanding = toBoolean(destacadas, true);
+  }
+
+  if (query.proyecto) {
+    filter.proyecto = new RegExp(String(query.proyecto).trim(), "i");
+  }
+
+  if (query.developer) {
+    filter.developer = new RegExp(String(query.developer).trim(), "i");
+  }
+
+  if (query.constructora) {
+    filter.constructora = new RegExp(String(query.constructora).trim(), "i");
+  }
+
+  if (query.promotor) {
+    filter.promotor = new RegExp(String(query.promotor).trim(), "i");
+  }
+
+  if (query.ciudad) {
+    filter.ciudad = new RegExp(String(query.ciudad).trim(), "i");
+  }
+
+  if (query.zona) {
+    filter.zona = new RegExp(String(query.zona).trim(), "i");
+  }
+
+  if (query.sector) {
+    filter.sector = new RegExp(String(query.sector).trim(), "i");
+  }
+
+  if (query.tipoInmueble) {
+    filter.tipoInmueble = String(query.tipoInmueble).trim();
+  }
+
+  if (query.tipoPropiedad) {
+    filter.tipoPropiedad = new RegExp(String(query.tipoPropiedad).trim(), "i");
+  }
+
+  const minPrecio = toNumberOrNull(
+    firstNonEmpty(query.minPrecio, query.minPrice, query.min)
+  );
+
+  const maxPrecio = toNumberOrNull(
+    firstNonEmpty(query.maxPrecio, query.maxPrice, query.max)
+  );
+
+  if (minPrecio != null || maxPrecio != null) {
+    filter.precio = {};
+
+    if (minPrecio != null) {
+      filter.precio.$gte = minPrecio;
+    }
+
+    if (maxPrecio != null) {
+      filter.precio.$lte = maxPrecio;
+    }
+  }
+
+  if (query.productId) {
+    filter["mortgageProfile.productIds"] = String(query.productId).trim();
+  }
+
+  if (query.search) {
+    filter.$text = { $search: String(query.search).trim() };
+  }
+
+  return filter;
+}
+
+export async function listarPropiedadesPublicas(req, res) {
+  try {
+    const filter = buildPublicPropertyFilter(req.query || {});
+
+    const limit = Math.min(
+      Math.max(Number(req.query.limit) || 12, 1),
+      50
+    );
+
+    const total = await Property.countDocuments(filter);
+
+    const properties = await Property.find(filter)
+      .sort({
+        destacadaLanding: -1,
+        orden: 1,
+        precio: 1,
+        createdAt: -1,
+      })
+      .limit(limit)
+      .lean();
+
+    return res.json({
+      ok: true,
+      count: properties.length,
+      total,
+      limit,
+      properties: properties.map(toPublicProperty),
+    });
+  } catch (error) {
+    console.error("[properties] Error listarPropiedadesPublicas:", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "No se pudieron cargar las propiedades públicas.",
+    });
+  }
+}
+
+export async function obtenerPropiedadPublicaPorSlug(req, res) {
+  try {
+    const { slug } = req.params;
+
+    const value = String(slug || "").trim();
+
+    if (!value) {
+      return res.status(400).json({
+        ok: false,
+        message: "Slug de propiedad requerido.",
+      });
+    }
+
+    const lookupConditions = [
+      { slug: value },
+      { id: value },
+    ];
+
+    if (mongoose.Types.ObjectId.isValid(value)) {
+      lookupConditions.push({ _id: value });
+    }
+
+    const property = await Property.findOne({
+      publicado: true,
+      estadoComercial: "disponible",
+      $or: lookupConditions,
+    }).lean();
+
+    if (!property) {
+      return res.status(404).json({
+        ok: false,
+        message: "Propiedad pública no encontrada.",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      property: toPublicProperty(property),
+    });
+  } catch (error) {
+    console.error("[properties] Error obtenerPropiedadPublicaPorSlug:", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "No se pudo cargar la propiedad pública.",
+    });
+  }
 }
 
 export async function listarPropiedades(req, res) {

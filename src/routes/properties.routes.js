@@ -9,6 +9,10 @@ import {
   actualizarPropiedad,
   cambiarEstadoPropiedad,
   eliminarPropiedad,
+
+  // ✅ Nuevas rutas públicas SEO / landing
+  listarPropiedadesPublicas,
+  obtenerPropiedadPublicaPorSlug,
 } from "../controllers/properties.controller.js";
 
 import {
@@ -76,13 +80,27 @@ router.post(
 );
 
 /**
- * Público para mobile / web.
- * Solo debe devolver propiedades publicadas/disponibles.
+ * Público SEO / Landing.
+ * Estas rutas van ANTES de "/:id" para que Express no interprete
+ * "public" como un id de propiedad.
+ *
+ * Ejemplos:
+ * GET /api/properties/public
+ * GET /api/properties/public?destacadas=true&limit=3
+ * GET /api/properties/public/high-garden-casa-tipo-1-tababela
+ */
+router.get("/public", listarPropiedadesPublicas);
+router.get("/public/:slug", obtenerPropiedadPublicaPorSlug);
+
+/**
+ * Público actual para mobile / web.
+ * Mantener para no romper lógica existente del sistema.
  */
 router.get("/", listarPropiedades);
 
 /**
- * Público: detalle de propiedad.
+ * Público actual: detalle de propiedad por id.
+ * Mantener por compatibilidad con /property/:id.
  */
 router.get("/:id", obtenerPropiedad);
 

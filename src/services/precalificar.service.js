@@ -210,6 +210,19 @@ export function normalizarInputHL(body = {}) {
     0
   );
 
+  const capacidadEntradaMensual = toNum(
+  pickFirstNonNull(
+    body.capacidadEntradaMensual,
+    body.capacidad_entrada_mensual,
+    body.abonoMensualEntrada,
+    body.abono_mensual_entrada,
+    body?.perfil?.capacidadEntradaMensual,
+    body?.metadata?.perfil?.capacidadEntradaMensual,
+    0
+  ),
+  0
+);
+
   const edad = toNum(
     pickFirstNonNull(
       body.edad,
@@ -268,6 +281,7 @@ export function normalizarInputHL(body = {}) {
     otrasDeudasMensuales,
     valorVivienda,
     entradaDisponible,
+    capacidadEntradaMensual,
     edad,
     tipoIngreso,
     aniosEstabilidad,
@@ -353,6 +367,339 @@ export function calcularSinOfertaHard(resultado = {}) {
   return false;
 }
 
+function pickSelectedPropertyFromInput(input = {}, rawBody = {}) {
+  const candidates = [
+    input?.selectedProperty,
+    input?.propertyContext,
+    rawBody?.selectedProperty,
+    rawBody?.propertyContext,
+    rawBody?.context?.selectedProperty,
+  ];
+
+  for (const item of candidates) {
+    if (!item || typeof item !== "object") continue;
+
+    const price = Number(
+      item.precio ??
+        item.price ??
+        item.selectedPropertyPrice ??
+        rawBody?.selectedPropertyPrice
+    );
+
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    const entradaReferencial =
+      toNumOrNull(
+        item.entradaReferencial ??
+          item.entradaMinima ??
+          item.entradaRequerida ??
+          item?.financing?.downPaymentAmount
+      ) || Math.round(price * 0.1);
+
+    const mesesHastaEntrega =
+      toNumOrNull(
+        item.mesesHastaEntrega ??
+          item.mesesConstruccion ??
+          item.numeroCuotasEntrada ??
+          item?.financing?.monthsConstruction ??
+          item?.financing?.entryInstallmentsCount
+      ) || 0;
+
+    const esProyectoEnConstruccion =
+      item.esProyectoEnConstruccion === true ||
+      mesesHastaEntrega > 0 ||
+      String(
+        item.estadoProyecto ||
+          item.etapaProyecto ||
+          item.tipoEntrega ||
+          item.tipoVivienda ||
+          ""
+      )
+        .toLowerCase()
+        .includes("constru");
+
+    return {
+      id: item.id || item.propertyId || rawBody?.selectedPropertyId || null,
+      slug: item.slug || item.propertySlug || rawBody?.selectedPropertySlug || null,
+      titulo: item.titulo || item.title || item.name || "Propiedad seleccionada",
+      proyecto: item.proyecto || item.project || null,
+      precio: price,
+      precioLabel:
+        item.precioLabel ||
+        `$${price.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+      ciudad: item.ciudad || null,
+      sector: item.sector || null,
+
+      entradaReferencial,
+      entradaMinima: toNumOrNull(item.entradaMinima) || entradaReferencial,
+      entradaRequerida: toNumOrNull(item.entradaRequerida) || entradaReferencial,
+      porcentajeEntrada:
+        toNumOrNull(
+          item.porcentajeEntrada ||
+            item.porcentajeEntradaRequerida ||
+            item?.financing?.downPaymentPct
+        ) || 0.1,
+
+      fechaEntrega: item.fechaEntrega || item.fechaEntregaEstimada || null,
+      mesesHastaEntrega,
+      mesesConstruccion: toNumOrNull(item.mesesConstruccion) || mesesHastaEntrega,
+      numeroCuotasEntrada:
+        toNumOrNull(item.numeroCuotasEntrada) || mesesHastaEntrega,
+      esProyectoEnConstruccion,
+      estadoProyecto: item.estadoProyecto || null,
+      etapaProyecto: item.etapaProyecto || null,
+      tipoEntrega: item.tipoEntrega || null,
+    };
+  }
+
+  const fallbackPrice = Number(rawBody?.selectedPropertyPrice);
+
+  if (Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+    return {
+      id: rawBody?.selectedPropertyId || null,
+      slug: rawBody?.selectedPropertySlug || null,
+      titulo: rawBody?.selectedPropertyTitle || "Propiedad seleccionada",
+      proyecto: rawBody?.selectedPropertyProject || null,
+      precio: fallbackPrice,
+      precioLabel: `$${fallbackPrice.toLocaleString("en-US", {
+        maximumFractionDigits: 0,
+      })}`,
+      ciudad: rawBody?.selectedPropertyCity || null,
+      sector: rawBody?.selectedPropertySector || null,
+      entradaReferencial: Math.round(fallbackPrice * 0.1),
+      entradaMinima: Math.round(fallbackPrice * 0.1),
+      entradaRequerida: Math.round(fallbackPrice * 0.1),
+      porcentajeEntrada: 0.1,
+      fechaEntrega: null,
+      mesesHastaEntrega: 0,
+      esProyectoEnConstruccion: false,
+    };
+  }
+
+  return null;
+}
+
+function buildPropertyFit(respuesta = {}, selectedProperty = null, input = {}) {
+  if (!selectedProperty?.precio) return null;
+
+  const propertyPrice = Number(selectedProperty.precio || 0);
+  const estimatedCapacity = Number(respuesta?.precioMaxVivienda || 0);
+  const estimatedLoanCapacity = Number(respuesta?.montoMaximo || 0);
+
+  if (!Number.isFinite(propertyPrice) || propertyPrice <= 0) return null;
+
+  const entradaActual = Number(input?.entradaDisponible || 0);
+  const abonoMensual = Number(input?.capacidadEntradaMensual || 0);
+  const mesesHastaEntrega = Number(selectedProperty?.mesesHastaEntrega || 0);
+
+  const entradaReferencial =
+    Number(
+      selectedProperty?.entradaReferencial ||
+        selectedProperty?.entradaMinima ||
+        selectedProperty?.entradaRequerida ||
+        0
+    ) || Math.round(propertyPrice * 0.1);
+
+  const abonoProyectado =
+    abonoMensual > 0 && mesesHastaEntrega > 0
+      ? abonoMensual * mesesHastaEntrega
+      : 0;
+
+  const entradaProyectada = entradaActual + abonoProyectado;
+
+  const planEntradaAplica =
+    selectedProperty?.esProyectoEnConstruccion === true &&
+    mesesHastaEntrega > 0 &&
+    entradaReferencial > 0;
+
+  const cumpleEntradaReferencial =
+    planEntradaAplica && entradaProyectada >= entradaReferencial;
+
+  const brechaEntrada = planEntradaAplica
+    ? entradaReferencial - entradaProyectada
+    : null;
+
+    const brechaEntradaAbs =
+  brechaEntrada != null ? Math.abs(brechaEntrada) : null;
+  
+  /**
+   * Capacidad proyectada:
+   * Si el usuario puede construir más entrada hasta la entrega,
+   * su capacidad total teórica podría aumentar por el monto adicional de entrada.
+   *
+   * Preferimos usar montoMaximo + entradaProyectada.
+   * Si montoMaximo no existe, usamos precioMaxVivienda actual + incremento de entrada.
+   */
+  const estimatedCapacityProjected =
+    Number.isFinite(estimatedLoanCapacity) && estimatedLoanCapacity > 0
+      ? estimatedLoanCapacity + entradaProyectada
+      : Number.isFinite(estimatedCapacity) && estimatedCapacity > 0
+        ? estimatedCapacity + Math.max(entradaProyectada - entradaActual, 0)
+        : null;
+
+  const projectedGap =
+    Number.isFinite(estimatedCapacityProjected)
+      ? estimatedCapacityProjected - propertyPrice
+      : null;
+
+  const projectedGapAbs =
+    projectedGap != null ? Math.abs(projectedGap) : null;
+
+const montoAFinanciarProyectado =
+  planEntradaAplica ? Math.max(propertyPrice - entradaProyectada, 0) : null;
+
+const montoMaximoCreditoEstimado =
+  Number.isFinite(estimatedLoanCapacity) && estimatedLoanCapacity > 0
+    ? estimatedLoanCapacity
+    : null;
+
+const brechaCreditoEntrega =
+  montoAFinanciarProyectado != null && montoMaximoCreditoEstimado != null
+    ? montoAFinanciarProyectado - montoMaximoCreditoEstimado
+    : null;
+
+const cumpleCreditoEstimado =
+  brechaCreditoEntrega != null ? brechaCreditoEntrega <= 0 : false;
+
+const creditoEntrega = planEntradaAplica
+  ? {
+      aplica: true,
+      montoAFinanciarProyectado,
+      montoMaximoCreditoEstimado,
+      brechaCreditoEntrega,
+      brechaCreditoEntregaAbs:
+        brechaCreditoEntrega != null ? Math.abs(brechaCreditoEntrega) : null,
+      cumpleCreditoEstimado,
+      status: cumpleCreditoEstimado
+        ? "credito_estimado_viable"
+        : "credito_estimado_corto",
+      label: cumpleCreditoEstimado
+        ? "El crédito proyectado podría estar dentro de rango"
+        : "El crédito proyectado todavía estaría ajustado",
+    }
+  : {
+      aplica: false,
+    };
+
+
+const planEntrada = planEntradaAplica
+  ? {
+      aplica: true,
+      mesesHastaEntrega,
+      entradaActual,
+      abonoMensual,
+      abonoProyectado,
+      entradaProyectada,
+      entradaReferencial,
+      cumpleEntradaReferencial,
+      brechaEntrada,
+      brechaEntradaAbs,
+      estimatedCapacityProjected,
+      projectedGap,
+      projectedGapAbs,
+
+      // ✅ Nueva lectura explícita
+      creditoEntrega,
+    }
+  : {
+      aplica: false,
+      creditoEntrega,
+    };
+
+  if (!Number.isFinite(estimatedCapacity) || estimatedCapacity <= 0) {
+    return {
+      status: "sin_capacidad_detectada",
+      statusActual: "sin_capacidad_detectada",
+      statusProyectado: null,
+      label: "Resultado pendiente de comparación",
+      message:
+        "Calculamos tu precalificación, pero no pudimos comparar automáticamente esta propiedad con tu capacidad estimada.",
+      selectedProperty,
+      propertyPrice,
+      propertyPriceLabel: selectedProperty.precioLabel,
+      estimatedCapacity: null,
+      gap: null,
+      gapAbs: null,
+      planEntrada,
+    };
+  }
+
+  const gap = estimatedCapacity - propertyPrice;
+  const gapAbs = Math.abs(gap);
+  const ratio = estimatedCapacity / propertyPrice;
+
+  let status = "fuera_de_rango";
+  let statusActual = "fuera_de_rango";
+  let statusProyectado = null;
+  let label = "Esta propiedad está por encima de tu capacidad estimada actual";
+  let message =
+    "Según tus datos declarados, esta propiedad estaría por encima de tu capacidad estimada actual.";
+
+  if (ratio >= 1) {
+    status = "dentro_de_rango";
+    statusActual = "dentro_de_rango";
+    statusProyectado = "alcanzable_hoy";
+    label = "Esta propiedad parece estar dentro de tu rango estimado";
+    message =
+      "Según tus datos declarados, esta propiedad parece estar dentro de tu capacidad estimada.";
+  } else if (ratio >= 0.9) {
+    status = "cerca";
+    statusActual = "cerca";
+    label = "Estás cerca de esta propiedad";
+    message =
+      "Esta propiedad está cerca de tu capacidad estimada. Podrías necesitar más entrada, menor deuda o una mejor ruta de financiamiento.";
+  }
+
+  if (planEntradaAplica && statusActual !== "dentro_de_rango") {
+  if (cumpleEntradaReferencial && cumpleCreditoEstimado) {
+    status = "entrada_y_credito_viables";
+    statusProyectado = "entrada_y_credito_viables";
+    label = "Esta propiedad podría estar dentro de tu rango al momento de la entrega";
+    message =
+      "Con tu entrada proyectada y tu perfil actual, esta propiedad podría estar dentro de tu rango estimado al momento de la entrega.";
+  } else if (cumpleEntradaReferencial && !cumpleCreditoEstimado) {
+    status = "cumple_entrada_pero_credito_corto";
+    statusProyectado = "cumple_entrada_pero_credito_corto";
+    label =
+      "Podrías completar la entrada, pero el crédito estimado todavía estaría corto";
+    message =
+      "Con tu abono mensual proyectado podrías llegar a la entrada referencial antes de la entrega. Sin embargo, según tu perfil actual, el monto de crédito requerido todavía estaría por encima de tu crédito estimado.";
+  } else if (
+    Number.isFinite(estimatedCapacityProjected) &&
+    estimatedCapacityProjected >= propertyPrice
+  ) {
+    status = "alcanzable_con_plan_entrada";
+    statusProyectado = "alcanzable_con_plan_entrada";
+    label = "Podrías acercarte a esta propiedad con un plan de entrada";
+    message =
+      "Hoy esta propiedad está por encima de tu capacidad estimada, pero con tu abono mensual proyectado podrías acercarte al valor requerido antes de la entrega.";
+  } else if (abonoMensual > 0) {
+    statusProyectado = "cerca_con_plan_entrada";
+    message =
+      "Tu abono mensual ayuda a acercarte, pero todavía podrías necesitar más entrada, más tiempo o una propiedad de menor precio.";
+  }
+}
+
+  return {
+    status,
+    statusActual,
+    statusProyectado,
+    label,
+    message,
+    selectedProperty,
+    propertyPrice,
+    propertyPriceLabel: selectedProperty.precioLabel,
+    estimatedCapacity,
+    estimatedCapacityProjected,
+    gap,
+    gapAbs,
+    projectedGap,
+    projectedGapAbs,
+    planEntrada,
+  };
+}
+
+
 /**
  * ✅ Servicio DRY: precalificar HL
  * - Normaliza input
@@ -361,6 +708,9 @@ export function calcularSinOfertaHard(resultado = {}) {
  * - Aplica sinOfertaHard
  * - Devuelve respuesta final
  */
+
+
+
 export function precalificarHL(body = {}) {
   const input = normalizarInputHL(body);
 
@@ -461,7 +811,19 @@ export function precalificarHL(body = {}) {
         aniosEstabilidad: input.aniosEstabilidad,
       },
     },
-  };
+   };
+
+  const selectedProperty = pickSelectedPropertyFromInput(input, body);
+const propertyFit = buildPropertyFit(respuesta, selectedProperty, input);
+  if (selectedProperty) {
+    respuesta.selectedProperty = selectedProperty;
+    respuesta.propertyContext = selectedProperty;
+  }
+
+  if (propertyFit) {
+    respuesta.propertyFit = propertyFit;
+    respuesta.resultadoPropiedad = propertyFit;
+  }
 
   return { input, resultado, respuesta };
 }
