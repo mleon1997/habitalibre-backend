@@ -1,0 +1,33 @@
+{
+  "id": "hl-story-documents-github-test-20260930",
+  "sourceDesignId": "DAHWruL7o-U",
+  "publicationDate": {
+    "dateTime": "2026-10-01T12:45:00",
+    "timezone": "America/Guayaquil"
+  },
+  "text": "",
+  "providers": [
+    {
+      "network": "instagram"
+    },
+    {
+      "network": "facebook"
+    }
+  ],
+  "media": [
+    "https://export-download.canva.com/13067f26-b330-4094-af1c-2d4726b3e839/0/0001-8439137334786470814.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAQYCGKMUH5AO7UJ26%2F20260930%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260930T090250Z&X-Amz-Expires=33795&X-Amz-Signature=705ee2c5a72b3350f62e710220c289dcfe7b4f07e8bdadc5fd1f0ff818c68453&X-Amz-SignedHeaders=host%3Bx-amz-expected-bucket-owner&response-expires=Wed%2C%2030%20Sep%202026%2018%3A26%3A05%20GMT"
+  ],
+  "mediaAltText": [
+    "HabitaLibre: ordena tus documentos antes de evaluar opciones de financiamiento."
+  ],
+  "draft": true,
+  "autoPublish": false,
+  "facebookData": {
+    "type": "STORY"
+  },
+  "instagramData": {
+    "type": "STORY",
+    "showReelOnFeed": true,
+    "isAiGenerated": true
+  }
+}
